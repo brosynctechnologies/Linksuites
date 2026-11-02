@@ -1,11 +1,66 @@
 # LinkSuite (6saas) — VPS deploy handoff
 
-**Status:** Not deployed yet. DNS done (all 10 names); code pushed; VPS deploy key waiting to be added on GitHub; Docker assets not started.  
+**Status:** **LIVE since 2 Nov 2026** on the Health Tutor VPS. All 10 hosts serve over HTTPS. Paystack, Brevo and R2 are **not configured yet** (see "Still open").  
 **Last updated:** 2 Nov 2026  
 **Owner:** Brosync Technologies (`brosynctechnologies@gmail.com`)  
 **Repo:** local `C:\Users\MichaelAyindePisiMob\source\repos\6saas` → https://github.com/brosynctechnologies/Linksuites (private; branch `main`; laptop remote `git@github-brosync:brosynctechnologies/Linksuites.git`; repo-local git identity Brosync Technologies)
 
 This document is for any Cursor session that continues the LinkSuite deploy. Read it before changing the VPS.
+
+---
+
+## Operations (current state — start here)
+
+| Item | Value |
+|------|-------|
+| Code on VPS | `/opt/linksuite` (clone of `Linksuites`, pulled with deploy key alias `github-linksuite`) |
+| Compose | `docker compose -f docker-compose.vps.yml` (project name `linksuite`), run from `/opt/linksuite` |
+| Secrets | `/opt/linksuite/.env` (root, mode 600). Template: `deploy/.env.vps.example`. Postgres password + JWT key were generated on the server; never copy them into git or chat |
+| Platform admin email | `brosynctechnologies@gmail.com` (`PLATFORM_ADMIN_EMAIL` in `.env`; overrides the `guysky19@gmail.com` default in `appsettings.json`) |
+| nginx | `/etc/nginx/sites-available/linksuite` (certbot-edited copy of `deploy/nginx/linksuite.conf`) + `/etc/nginx/sites-available/00-catch-all` (unknown hosts → 444; self-signed cert in `/etc/nginx/ssl/`) |
+| Certificate | Let's Encrypt cert name `linksuite`, all 10 hosts, auto-renew via `certbot.timer` (expires 2027-01-31 before renewal) |
+| Health Tutor nginx backup | `/root/smartplay.nginx.bak-<timestamp>` taken before LinkSuite sites were added |
+| DB | PostGIS container `linksuite-db-1`, volume `linksuite_pgdata`, `127.0.0.1:55432`, db `saas`, user `postgres` |
+| Uploads | Volume `linksuite_uploads` → `/app/uploads` in API (`Storage:Provider=Local` until R2 keys exist) |
+| Migrations | Run automatically on API start (`Database__MigrateOnStartup=true`); seeder only upserts plans (idempotent) |
+| Data protection keys | Stored in Postgres table `data_protection_keys` (survive rebuilds). Startup warning "No XML encryptor configured" is expected |
+| Resource caps | API 2 CPU / 3 GB, DB 1 CPU / 2 GB, each web app 0.5 CPU / 512 MB |
+
+### Verified at go-live (2 Nov 2026)
+
+- 11 containers up; all 10 `https://…linksuite.brosync.ng/` return 200 (API root 302 → `/docs`); `https://api.linksuite.brosync.ng/health` = Healthy; HTTP → HTTPS 301.
+- 65 EF migrations applied, 190 tables, plans seeded for all 7 products.
+- CORS allows LinkSuite origins only; web bundles contain `https://api.linksuite.brosync.ng` and no `localhost:5080`; hub links point at the product subdomains.
+- Health Tutor `https://healthtutor.api.brosync.ng/health` = 200 throughout (≈20 ms even during builds).
+- LinkSuite idle usage ≈ 1 GB RAM total.
+
+### Deploy an update
+
+1. Laptop: commit and `git push` in `6saas` (remote `git@github-brosync:brosynctechnologies/Linksuites.git`).
+2. VPS (builds one image at a time, then `up -d`):
+
+```bash
+ssh healthtutor-vps 'nohup bash /opt/linksuite/deploy/update-vps.sh > /root/linksuite-build.log 2>&1 &'
+ssh healthtutor-vps 'tail -n 30 /root/linksuite-build.log'
+```
+
+Rebuild only some services: `bash /opt/linksuite/deploy/update-vps.sh api orders`.  
+Changing any `*_URL` in `.env` requires rebuilding the web apps (values are baked into bundles); changing secrets only needs `docker compose -f docker-compose.vps.yml up -d api`.
+
+Useful: `docker compose -f docker-compose.vps.yml logs -f api`, `… ps`, `docker stats --no-stream`.
+
+From a Windows laptop, PowerShell mangles nested quotes in `ssh host "…"`. Pipe a script instead: `(Get-Content -Raw script.sh) -replace "`r","" | ssh healthtutor-vps "bash -s"`.
+
+### Still open
+
+| Item | Effect until done |
+|------|-------------------|
+| `PAYSTACK_SECRET_KEY` | Platform payments (plan upgrades, course sales, short-lets) fail |
+| `BREVO_API_KEY` (+ sender domain verified in Brevo) | Emails (verification, password reset, notifications) are only logged by the API, not sent |
+| R2 keys + `STORAGE_PROVIDER=R2` | Uploads stay on the VPS disk (volume); course video processing runs FFmpeg on the shared CPU |
+| Optional: basic auth / IP allow-list on `admin.linksuite.brosync.ng` | Admin login page is public (protected by app login only) |
+
+To add a secret: edit `/opt/linksuite/.env`, then `cd /opt/linksuite && docker compose -f docker-compose.vps.yml up -d api`.
 
 ---
 
