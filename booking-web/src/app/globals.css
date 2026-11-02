@@ -1,0 +1,208 @@
+@import "tailwindcss";
+
+/*
+ * BookLink design tokens. See docs/design/booklink.md for the plan these come from.
+ * Times are the hero: Archivo Expanded for times, dates and business names; normal width for UI.
+ */
+
+:root {
+  color-scheme: light;
+  --focus-ring: #c2255c;
+  /* A business's own brand colour (public pages override these inline). */
+  --brand: #c2255c;
+  --on-brand: #ffffff;
+  --brand-wash: rgba(194, 37, 92, 0.1);
+  --brand-line: rgba(194, 37, 92, 0.35);
+}
+
+@theme {
+  /* Palette */
+  --color-aubergine: #2b1838;
+  --color-aubergine-2: #3a2549;
+  --color-aubergine-3: #4b335c;
+  --color-on-aubergine: #d8cde2;
+  --color-mist: #f5f3f7;
+  --color-mist-2: #ece8f0;
+  --color-surface: #ffffff;
+  --color-line: #e6e1ec;
+  --color-line-soft: #efebf3;
+  --color-muted: #6a5e78;
+  --color-faint: #9a8fa6;
+
+  --color-rose: #c2255c;
+  --color-rose-dark: #a01c4b;
+  --color-rose-wash: #fbe9f0;
+  --color-rose-light: #f39ab9;
+
+  --color-mint: #2f8f6e;
+  --color-mint-dark: #21684f;
+  --color-mint-wash: #e4f3ed;
+  --color-amber: #a86a12;
+  --color-amber-text: #84520b;
+  --color-amber-wash: #f8eedc;
+  --color-brick: #b3261e;
+  --color-brick-dark: #8f1d17;
+  --color-brick-wash: #f9e7e5;
+
+  /* Neutral scale re-tuned towards aubergine, so any slate-* utility stays on-palette. */
+  --color-slate-50: #f9f7fa;
+  --color-slate-100: #f5f3f7;
+  --color-slate-200: #e6e1ec;
+  --color-slate-300: #cfc6d8;
+  --color-slate-400: #9a8fa6;
+  --color-slate-500: #6a5e78;
+  --color-slate-600: #574a66;
+  --color-slate-700: #44364f;
+  --color-slate-800: #352743;
+  --color-slate-900: #2b1838;
+
+  /* Type scale (rem): 0.8125, 0.875, 1, 1.125, 1.375, 1.75, 2.5, 3.5 */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 1rem;
+  --text-base--line-height: 1.55;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.5;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.3;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 1.2;
+  --text-3xl: 2.5rem;
+  --text-3xl--line-height: 1.1;
+  --text-4xl: 3.5rem;
+  --text-4xl--line-height: 1;
+
+  /* Radius by hierarchy: the appointment card, panels, controls (avatars and badges use rounded-full). */
+  --radius-card: 16px;
+  --radius-panel: 12px;
+  --radius-control: 10px;
+
+  /* Shadow only on the appointment card, sticky bars and modals. */
+  --shadow-card: 0 1px 2px rgb(43 24 56 / 0.06), 0 12px 32px -12px rgb(43 24 56 / 0.28);
+  --shadow-float: 0 2px 6px rgb(43 24 56 / 0.08), 0 16px 40px -8px rgb(43 24 56 / 0.32);
+  --shadow-bar: 0 -1px 0 rgb(43 24 56 / 0.06), 0 -8px 24px -12px rgb(43 24 56 / 0.25);
+
+  --animate-card-in: card-in 320ms cubic-bezier(0.2, 0.9, 0.25, 1.05) both;
+  --animate-fill: fill 180ms ease-out both;
+  --animate-sheet-up: sheet-up 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-pop-in: pop-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-fade-in: fade-in 180ms ease-out both;
+
+  @keyframes card-in {
+    from {
+      opacity: 0;
+      transform: translateY(14px) rotate(-1deg) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes fill {
+    from {
+      transform: scale(0.94);
+    }
+    to {
+      transform: none;
+    }
+  }
+  @keyframes sheet-up {
+    from {
+      transform: translateY(24px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      transform: translateY(6px) scale(0.98);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+@theme inline {
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --color-brand: var(--brand);
+  --color-on-brand: var(--on-brand);
+  --color-brand-wash: var(--brand-wash);
+  --color-brand-line: var(--brand-line);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--color-mist);
+    color: var(--color-aubergine);
+    font-size: 1rem;
+    line-height: 1.55;
+    /* Room for the support-view banner (its height, set by SupportBanner; 0 otherwise). */
+    padding-top: var(--support-bar, 0px);
+  }
+  :focus-visible {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  /* Focus ring that stays visible on the aubergine sidebar and bottom bar. */
+  .on-aubergine {
+    --focus-ring: #f39ab9;
+  }
+  ::selection {
+    background: #f6cadb;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+}
+
+/* Archivo Expanded: times, dates and business names. "10:30" set wide and heavy is the signature. */
+@utility font-expanded {
+  font-stretch: 125%;
+  font-variation-settings: "wdth" 125;
+  letter-spacing: -0.01em;
+}
+
+/* Times in lists and the calendar: tabular figures, never broken. */
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

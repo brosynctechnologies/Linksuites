@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+/*
+ * Admin console tokens (docs/design/adminlink.md).
+ * Graphite text, buttons and rail on Concrete; white Surface panels with hairline Line rules.
+ * Caution yellow is only for the console bar and the focus ring, never for buttons.
+ * Ok / Wait / Stop for status. IBM Plex Sans for UI, IBM Plex Mono only for values people copy or compare.
+ */
+
+@theme {
+  --color-graphite: #1d2228;
+  --color-graphite-2: #2a3038;
+  --color-graphite-3: #363d47;
+  --color-on-graphite: #c3c9d1;
+  --color-concrete: #e9ebee;
+  --color-concrete-2: #f3f4f6;
+  --color-surface: #ffffff;
+  --color-caution: #f5c518;
+  --color-line: #d3d7dd;
+  --color-line-soft: #e5e8ec;
+  --color-ok: #1e7b4a;
+  --color-ok-wash: #e4f2ea;
+  --color-wait: #9a6400;
+  --color-wait-wash: #f8efdc;
+  --color-stop: #b42318;
+  --color-stop-dark: #911c13;
+  --color-stop-wash: #fbe9e7;
+  --color-muted: #5b6470;
+  --color-highlight: #fff4c2;
+
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.45;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.45;
+  --text-lg: 1.0625rem;
+  --text-lg--line-height: 1.4;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.3;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.25;
+
+  /* 4px on inputs and buttons, 6px on panels. */
+  --radius-control: 4px;
+  --radius-panel: 6px;
+
+  /* The only shadow: dialogs and side panels. */
+  --shadow-dialog: 0 4px 12px rgb(29 34 40 / 0.12), 0 24px 48px -12px rgb(29 34 40 / 0.35);
+
+  --animate-dialog-in: dialog-in 160ms ease-out both;
+  --animate-panel-in: panel-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-sheet-in: sheet-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+
+  @keyframes dialog-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes panel-in {
+    from {
+      transform: translateX(24px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  @keyframes sheet-in {
+    from {
+      transform: translateY(24px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+}
+
+@theme inline {
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--color-concrete);
+    color: var(--color-graphite);
+    font-size: 0.9375rem;
+    line-height: 1.45;
+  }
+  /* The Caution focus ring, 2px, everywhere. A graphite inner ring keeps it visible on the yellow bar. */
+  :focus-visible {
+    outline: 2px solid var(--color-caution);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 2px var(--color-graphite);
+  }
+  svg {
+    flex-shrink: 0;
+  }
+  ::selection {
+    background: var(--color-highlight);
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  dialog {
+    color: inherit;
+  }
+  dialog::backdrop {
+    background: rgb(29 34 40 / 0.45);
+  }
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The console bar's graphite diagonal stripe. */
+@utility caution-stripe {
+  background-image: repeating-linear-gradient(-45deg, var(--color-graphite) 0 6px, transparent 6px 12px);
+}
+
+@layer components {
+  /* Dense hairline tables. Numbers right-aligned with tabular figures (add .num). */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+  .data-table th {
+    text-align: left;
+    font-weight: 500;
+    font-size: 0.8125rem;
+    color: var(--color-muted);
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-line);
+    white-space: nowrap;
+    background: var(--color-surface);
+  }
+  .data-table td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-line-soft);
+    vertical-align: top;
+  }
+  .data-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .data-table .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .data-table tbody tr.row-link:hover td {
+    background: var(--color-concrete-2);
+  }
+  .json-line {
+    display: block;
+    padding: 0 0.5rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .json-line.changed {
+    background: var(--color-highlight);
+    box-shadow: inset 3px 0 0 var(--color-wait);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

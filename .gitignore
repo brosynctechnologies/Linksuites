@@ -1,0 +1,27 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+api/run.log
+api/src/Saas.Api/uploads/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.env*.local
+
+# Secrets
+appsettings.*.local.json
+.env
+
+# Agent scratch output
+.superpowers/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

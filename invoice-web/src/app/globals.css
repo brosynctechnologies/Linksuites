@@ -1,0 +1,224 @@
+@import "tailwindcss";
+
+/*
+ * InvoiceLink design tokens.
+ * The app is a desk (cool grey); documents are white paper sitting on it.
+ * See docs/design/invoicelink.md for the plan these values come from.
+ */
+
+:root {
+  color-scheme: light;
+  --focus-ring: #2b47c9;
+}
+
+@theme {
+  /* Palette */
+  --color-graphite: #1e2430;
+  --color-graphite-2: #2a3140;
+  --color-graphite-3: #3a4252;
+  --color-desk: #edf0f4;
+  --color-desk-2: #e3e7ed;
+  --color-paper: #ffffff;
+  --color-rule: #d9dee6;
+  --color-rule-soft: #e8ebf0;
+  --color-muted: #5b6474;
+  --color-faint: #8a93a3;
+  --color-on-graphite: #c5ccd8;
+
+  --color-ink: #2b47c9;
+  --color-ink-dark: #1f37a6;
+  --color-ink-wash: #e9edfb;
+  --color-ink-light: #9db0ff;
+
+  --color-paid: #13795b;
+  --color-paid-wash: #e4f2ec;
+  --color-overdue: #b83227;
+  --color-overdue-dark: #962519;
+  --color-overdue-wash: #f8e8e6;
+  --color-amber: #a86a12;
+  --color-amber-text: #8a560c;
+  --color-amber-wash: #f7eedd;
+
+  /* Kept so older class names resolve to the ink blue. */
+  --color-brand: #2b47c9;
+  --color-brand-dark: #1f37a6;
+
+  /* Neutral scale re-tuned to the desk palette, so any slate-* utility stays on-brand. */
+  --color-slate-50: #f6f7f9;
+  --color-slate-100: #edf0f4;
+  --color-slate-200: #d9dee6;
+  --color-slate-300: #c3cad5;
+  --color-slate-400: #8a93a3;
+  --color-slate-500: #5b6474;
+  --color-slate-600: #4a5262;
+  --color-slate-700: #363d4b;
+  --color-slate-800: #2a3140;
+  --color-slate-900: #1e2430;
+
+  /* Type scale (rem): 0.8125, 0.875, 1, 1.125, 1.375, 1.75, 2.5, 3.5 */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 1rem;
+  --text-base--line-height: 1.55;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.5;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.3;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 1.2;
+  --text-3xl: 2.5rem;
+  --text-3xl--line-height: 1.1;
+  --text-4xl: 3.5rem;
+  --text-4xl--line-height: 1.04;
+
+  /* Radius by hierarchy: paper, panels, controls (badges use rounded-full). */
+  --radius-doc: 4px;
+  --radius-panel: 12px;
+  --radius-control: 8px;
+
+  /* Shadow only on paper and on floating things. */
+  --shadow-paper: 0 1px 1px rgb(30 36 48 / 0.05), 0 2px 6px rgb(30 36 48 / 0.06), 0 18px 40px -16px rgb(30 36 48 / 0.28);
+  --shadow-float: 0 2px 6px rgb(30 36 48 / 0.08), 0 16px 40px -8px rgb(30 36 48 / 0.3);
+
+  --animate-stamp: stamp-land 460ms cubic-bezier(0.2, 0.9, 0.25, 1.05) both;
+  --animate-sheet-up: sheet-up 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-pop-in: pop-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-fade-in: fade-in 180ms ease-out both;
+
+  @keyframes stamp-land {
+    0% {
+      opacity: 0;
+      transform: rotate(var(--stamp-rotate, -8deg)) scale(1.7);
+    }
+    55% {
+      opacity: 0.85;
+      transform: rotate(var(--stamp-rotate, -8deg)) scale(0.94);
+    }
+    100% {
+      opacity: 0.85;
+      transform: rotate(var(--stamp-rotate, -8deg)) scale(1);
+    }
+  }
+  @keyframes sheet-up {
+    from {
+      transform: translateY(24px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      transform: translateY(6px) scale(0.98);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+@theme inline {
+  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-display: var(--font-fraunces), Georgia, Cambria, "Times New Roman", serif;
+  --font-serif: Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--color-desk);
+    color: var(--color-graphite);
+    font-size: 1rem;
+    line-height: 1.55;
+    /* Room for the support-view banner (its height, set by SupportBanner; 0 otherwise). */
+    padding-top: var(--support-bar, 0px);
+  }
+  :focus-visible {
+    outline: 3px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  /* Focus ring that stays visible on the graphite sidebar and bottom bar. */
+  .on-graphite {
+    --focus-ring: #9db0ff;
+  }
+  ::selection {
+    background: #c9d3f7;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+}
+
+/* Every amount: tabular figures, never broken mid-number. */
+@utility amount {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Fraunces at display size, used for page titles, document titles and big figures. */
+@utility font-figure {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* The rubber stamp on a document. */
+@utility stamp {
+  display: inline-block;
+  transform: rotate(var(--stamp-rotate, -8deg));
+  opacity: 0.85;
+  border: 5px double currentColor;
+  border-radius: 6px;
+  padding: 0.3em 0.7em 0.25em;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  line-height: 1;
+  mix-blend-mode: multiply;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+}

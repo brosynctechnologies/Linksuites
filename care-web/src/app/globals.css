@@ -1,0 +1,198 @@
+@import "tailwindcss";
+
+/*
+ * CareLink design tokens (docs/design/carelink.md).
+ * Ink text on Gauze (cool green-white); Scrub (surgical teal #0F766E) for action, links, selection and focus; Scrub deep ("Theatre")
+ * for the app bar and rail; Rule for the lines between rows; Pass, Iodine and Arterial for states (Arterial also draws the allergy
+ * sticker). Red Hat Display for titles and figures; Red Hat Text for everything else. Light only.
+ */
+
+@theme {
+  --color-ink: #14211f;
+  --color-ink-2: #2b3a37;
+  --color-scrub: #0f766e;
+  --color-scrub-dark: #0b5f58;
+  --color-scrub-deep: #0a3a36;
+  --color-scrub-deep-2: #0f4a45;
+  --color-scrub-wash: #e3f1ee;
+  --color-scrub-line: #a7d3cb;
+  --color-on-scrub: #bfe3dc;
+  --color-gauze: #eef3f1;
+  --color-gauze-2: #e2eae7;
+  --color-surface: #ffffff;
+  --color-rule: #cbd8d4;
+  --color-rule-soft: #dfe8e5;
+  --color-muted: #4d5d59;
+  --color-faint: #7b8a86;
+
+  --color-pass: #2f6b3a;
+  --color-pass-wash: #e4f0e3;
+  --color-iodine: #9a5b0b;
+  --color-iodine-wash: #f7ebd9;
+  --color-arterial: #b42318;
+  --color-arterial-dark: #8e1b12;
+  --color-arterial-wash: #fbe9e7;
+  --color-whatsapp: #1da851;
+  --color-whatsapp-dark: #168a42;
+
+  /* Neutral scale re-tuned toward Ink with a little green, so any slate-* utility stays on-palette. */
+  --color-slate-50: #f5f8f7;
+  --color-slate-100: #eef3f1;
+  --color-slate-200: #d7e1de;
+  --color-slate-300: #bccbc7;
+  --color-slate-400: #7b8a86;
+  --color-slate-500: #5f6f6b;
+  --color-slate-600: #4d5d59;
+  --color-slate-700: #2b3a37;
+  --color-slate-800: #1e2c29;
+  --color-slate-900: #14211f;
+
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 1rem;
+  --text-base--line-height: 1.55;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.45;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.3;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 1.2;
+  --text-3xl: 2.25rem;
+  --text-3xl--line-height: 1.12;
+  --text-4xl: 3rem;
+  --text-4xl--line-height: 1.06;
+
+  --radius-control: 6px;
+  --radius-panel: 8px;
+
+  /* Dialogs and sheets only. Panels use a 1px Rule border. */
+  --shadow-float: 0 2px 6px rgb(20 33 31 / 0.08), 0 18px 40px -12px rgb(20 33 31 / 0.32);
+
+  --animate-sheet-up: sheet-up 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-fade-in: fade-in 160ms ease-out both;
+  --animate-step-in: step-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+
+  @keyframes sheet-up {
+    from {
+      transform: translateY(32px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  /* The landing page's visit path: each step slides in once, in order. */
+  @keyframes step-in {
+    from {
+      transform: translateX(-12px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+}
+
+@theme inline {
+  --font-sans: var(--font-redhat-text), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-display: var(--font-redhat-display), var(--font-redhat-text), ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--color-gauze);
+    color: var(--color-ink);
+    font-size: 1rem;
+    line-height: 1.55;
+    /* Room for the support-view banner (its height, set by SupportBanner; 0 otherwise). */
+    padding-top: var(--support-bar, 0px);
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus-ring, #0f766e);
+    outline-offset: 2px;
+  }
+  /* Focus ring that stays visible on the Theatre bar and rail. */
+  .on-scrub {
+    --focus-ring: #9fe0d5;
+  }
+  svg {
+    flex-shrink: 0;
+  }
+  ::selection {
+    background: #c6e6e0;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+}
+
+/* Red Hat Display for titles, the wordmark and big figures. */
+@utility display {
+  font-family: var(--font-display);
+  font-variant-numeric: lining-nums;
+  letter-spacing: -0.01em;
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer components {
+  /* The case sheet: a white panel with rules between rows. Rows are direct children (li or div) of .case-rows. */
+  .case-sheet {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--color-rule);
+    border-radius: var(--radius-panel);
+    background: var(--color-surface);
+  }
+  .case-rows > * + * {
+    border-top: 1px solid var(--color-rule-soft);
+  }
+  .case-pad {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  @media (min-width: 640px) {
+    .case-pad {
+      padding-left: 1.25rem;
+      padding-right: 1.25rem;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

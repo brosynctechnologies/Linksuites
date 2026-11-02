@@ -1,0 +1,21 @@
+# Local development database. Start with: docker compose up -d
+services:
+  postgres:
+    image: postgis/postgis:17-3.5
+    container_name: saas-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres # development only
+      POSTGRES_DB: saas
+    ports:
+      - "55432:5432"
+    volumes:
+      - saas-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  saas-pgdata:

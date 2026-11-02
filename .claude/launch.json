@@ -1,0 +1,120 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": [
+        "run",
+        "--project",
+        "api/src/Saas.Api",
+        "--launch-profile",
+        "http"
+      ],
+      "port": 5080
+    },
+    {
+      "name": "api-local-db",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": [
+        "run",
+        "--project",
+        "api/src/Saas.Api",
+        "--launch-profile",
+        "http"
+      ],
+      "env": {
+        "ConnectionStrings__Default": "Host=localhost;Port=55480;Database=saas;Username=postgres;Password=postgres"
+      },
+      "port": 5080
+    },
+    {
+      "name": "hub-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "hub-web",
+        "run",
+        "dev"
+      ],
+      "port": 3600
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "web",
+        "run",
+        "dev"
+      ],
+      "port": 3700
+    },
+    {
+      "name": "invoice-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "invoice-web",
+        "run",
+        "dev"
+      ],
+      "port": 3800
+    },
+    {
+      "name": "booking-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "booking-web",
+        "run",
+        "dev"
+      ],
+      "port": 3900
+    },
+    {
+      "name": "course-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "course-web",
+        "run",
+        "dev"
+      ],
+      "port": 4000
+    },
+    {
+      "name": "property-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "property-web",
+        "run",
+        "dev"
+      ],
+      "port": 4100
+    },
+    {
+      "name": "school-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "school-web",
+        "run",
+        "dev"
+      ],
+      "port": 4200
+    },
+    {
+      "name": "admin-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "admin-web",
+        "run",
+        "dev"
+      ],
+      "port": 4300
+    }
+  ]
+}
