@@ -58,7 +58,7 @@ From a Windows laptop, PowerShell mangles nested quotes in `ssh host "…"`. Pip
 | Item | Effect until done |
 |------|-------------------|
 | `PAYSTACK_SECRET_KEY` | Platform payments (plan upgrades, course sales, short-lets) fail |
-| `BREVO_API_KEY` (+ sender domain verified in Brevo) | Emails (verification, password reset, notifications) are only logged by the API, not sent |
+| Email via **Gmail SMTP** (decided 2 Nov 2026) | `.env` prefilled: `EMAIL_FROM`/`SMTP_USERNAME` = `brosynctechnologies@gmail.com`, port 587 StartTls. **Pending:** user sets the Google app password (`ssh -t healthtutor-vps bash /opt/linksuite/deploy/set-secret.sh SMTP_PASSWORD`), then set `SMTP_HOST=smtp.gmail.com` in `.env` and `docker compose -f docker-compose.vps.yml up -d api`. Until then emails are only logged. Gmail limit ≈ 500/day; later move to a `@brosync.ng` sender (Brevo or WhoGoHost) — needs SPF/DKIM records, and note `brosync.ng`/`mail.brosync.ng`/MX currently point at this VPS, which runs no mail server (user confirmed no `@brosync.ng` mailboxes are used) |
 | R2 keys + `STORAGE_PROVIDER=R2` | Uploads stay on the VPS disk (volume); course video processing runs FFmpeg on the shared CPU |
 | Optional: basic auth / IP allow-list on `admin.linksuite.brosync.ng` | Admin login page is public (protected by app login only) |
 
