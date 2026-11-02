@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -r
 ENV Video__FfmpegPath=ffmpeg
 WORKDIR /app
 COPY --from=build /app .
+# A named volume mounted here starts with this ownership, so the non-root app user can write uploads.
+RUN mkdir -p /app/uploads && chown $APP_UID /app/uploads
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
 USER $APP_UID

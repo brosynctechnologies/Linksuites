@@ -1,0 +1,135 @@
+# Production stack for the shared VPS (also runs Health Tutor). Every port binds to 127.0.0.1; nginx is the only public entry.
+#   cp deploy/.env.vps.example .env   # then fill in secrets
+#   docker compose -f docker-compose.vps.yml up -d --build
+name: linksuite
+
+x-web: &web
+  restart: unless-stopped
+  depends_on: [api]
+  deploy:
+    resources:
+      limits: { cpus: "0.5", memory: 512M }
+
+x-web-build-args: &web-build-args
+  NEXT_PUBLIC_API_URL: ${API_URL}
+  NEXT_PUBLIC_ADMIN_URL: ${ADMIN_URL}
+  NEXT_PUBLIC_ORDERLINK_URL: ${ORDERS_URL}
+  NEXT_PUBLIC_INVOICELINK_URL: ${INVOICES_URL}
+  NEXT_PUBLIC_BOOKLINK_URL: ${BOOK_URL}
+  NEXT_PUBLIC_LEARNLINK_URL: ${LEARN_URL}
+  NEXT_PUBLIC_PROPERTYLINK_URL: ${PROPERTY_URL}
+  NEXT_PUBLIC_SCHOOLLINK_URL: ${SCHOOL_URL}
+  NEXT_PUBLIC_CARELINK_URL: ${CARE_URL}
+
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: saas
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 2G }
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Default: Host=db;Port=5432;Database=saas;Username=postgres;Password=${POSTGRES_PASSWORD}
+      Database__MigrateOnStartup: "true"
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?set JWT_SIGNING_KEY in .env}
+      App__WebBaseUrl: ${ORDERS_URL}
+      App__ApiBaseUrl: ${API_URL}
+      App__ProductWebUrls__invoices: ${INVOICES_URL}
+      App__ProductWebUrls__bookings: ${BOOK_URL}
+      App__ProductWebUrls__courses: ${LEARN_URL}
+      App__ProductWebUrls__property: ${PROPERTY_URL}
+      App__ProductWebUrls__school: ${SCHOOL_URL}
+      App__ProductWebUrls__admin: ${ADMIN_URL}
+      App__ProductWebUrls__care: ${CARE_URL}
+      Cors__Origins__0: ${ORDERS_URL}
+      Cors__Origins__1: ${INVOICES_URL}
+      Cors__Origins__2: ${BOOK_URL}
+      Cors__Origins__3: ${LEARN_URL}
+      Cors__Origins__4: ${PROPERTY_URL}
+      Cors__Origins__5: ${SCHOOL_URL}
+      Cors__Origins__6: ${ADMIN_URL}
+      Cors__Origins__7: ${CARE_URL}
+      Cors__Origins__8: ${HUB_URL}
+      Email__FromEmail: ${EMAIL_FROM}
+      Email__FromName: ${EMAIL_FROM_NAME}
+      Email__BrevoApiKey: ${BREVO_API_KEY:-}
+      Paystack__SecretKey: ${PAYSTACK_SECRET_KEY:-}
+      Platform__AdminEmails__0: ${PLATFORM_ADMIN_EMAIL:?set PLATFORM_ADMIN_EMAIL in .env}
+      Storage__Provider: ${STORAGE_PROVIDER:-Local}
+      Storage__R2AccountId: ${R2_ACCOUNT_ID:-}
+      Storage__R2AccessKeyId: ${R2_ACCESS_KEY_ID:-}
+      Storage__R2SecretAccessKey: ${R2_SECRET_ACCESS_KEY:-}
+      Storage__R2Bucket: ${R2_BUCKET:-}
+      Storage__R2PublicBaseUrl: ${R2_PUBLIC_BASE_URL:-}
+    ports: ["127.0.0.1:5080:8080"]
+    volumes: [uploads:/app/uploads]
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 3G }
+
+  hub:
+    <<: *web
+    build: { context: ./hub-web, dockerfile: ../deploy/web.Dockerfile, args: { <<: *web-build-args, NEXT_PUBLIC_SITE_URL: "${HUB_URL}" } }
+    ports: ["127.0.0.1:3600:3000"]
+
+  orders:
+    <<: *web
+    build: { context: ./web, dockerfile: ../deploy/web.Dockerfile, args: { <<: *web-build-args, NEXT_PUBLIC_SITE_URL: "${ORDERS_URL}" } }
+    ports: ["127.0.0.1:3700:3000"]
+
+  invoices:
+    <<: *web
+    build: { context: ./invoice-web, dockerfile: ../deploy/web.Dockerfile, args: { <<: *web-build-args, NEXT_PUBLIC_SITE_URL: "${INVOICES_URL}" } }
+    ports: ["127.0.0.1:3800:3000"]
+
+  book:
+    <<: *web
+    build: { context: ./booking-web, dockerfile: ../deploy/web.Dockerfile, args: { <<: *web-build-args, NEXT_PUBLIC_SITE_URL: "${BOOK_URL}" } }
+    ports: ["127.0.0.1:3900:3000"]
+
+  learn:
+    <<: *web
+    build: { context: ./course-web, dockerfile: ../deploy/web.Dockerfile, args: { <<: *web-build-args, NEXT_PUBLIC_SITE_URL: "${LEARN_URL}" } }
+    ports: ["127.0.0.1:4000:3000"]
+
+  property:
+    <<: *web
+    build: { context: ./property-web, dockerfile: ../deploy/web.Dockerfile, args: { <<: *web-build-args, NEXT_PUBLIC_SITE_URL: "${PROPERTY_URL}" } }
+    ports: ["127.0.0.1:4100:3000"]
+
+  school:
+    <<: *web
+    build: { context: ./school-web, dockerfile: ../deploy/web.Dockerfile, args: { <<: *web-build-args, NEXT_PUBLIC_SITE_URL: "${SCHOOL_URL}" } }
+    ports: ["127.0.0.1:4200:3000"]
+
+  admin:
+    <<: *web
+    build: { context: ./admin-web, dockerfile: ../deploy/web.Dockerfile, args: { <<: *web-build-args, NEXT_PUBLIC_SITE_URL: "${ADMIN_URL}" } }
+    ports: ["127.0.0.1:4300:3000"]
+
+  care:
+    <<: *web
+    build: { context: ./care-web, dockerfile: ../deploy/web.Dockerfile, args: { <<: *web-build-args, NEXT_PUBLIC_SITE_URL: "${CARE_URL}" } }
+    ports: ["127.0.0.1:4400:3000"]
+
+volumes:
+  pgdata:
+  uploads:

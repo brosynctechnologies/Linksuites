@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   cacheComponents: true,
   partialPrefetching: true,
   // The whole console is client-rendered behind a session guard, so only segments that opt in with `instant` are checked.
