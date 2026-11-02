@@ -12,7 +12,8 @@ using Saas.Infrastructure.Persistence;
 namespace Saas.Infrastructure.Notifications;
 
 /// <param name="FromName">Display name for this email; null uses <see cref="EmailOptions.FromName"/>.</param>
-public sealed record EmailMessage(string To, string Subject, string Html, string Text, string? FromName = null);
+/// <param name="ReplyTo">Where replies go; null means replies go to the sending address.</param>
+public sealed record EmailMessage(string To, string Subject, string Html, string Text, string? FromName = null, string? ReplyTo = null);
 
 public interface IEmailSender
 {
@@ -41,7 +42,8 @@ public sealed class LogEmailSender(ILogger<LogEmailSender> logger) : IEmailSende
 {
     public Task SendAsync(EmailMessage m, CancellationToken ct)
     {
-        logger.LogInformation("EMAIL to {To} from {From}: {Subject}\n{Text}", m.To, m.FromName ?? "(default)", m.Subject, m.Text);
+        logger.LogInformation("EMAIL to {To} from {From} (reply-to {ReplyTo}): {Subject}\n{Text}",
+            m.To, m.FromName ?? "(default)", m.ReplyTo ?? "(default)", m.Subject, m.Text);
         return Task.CompletedTask;
     }
 }
@@ -58,10 +60,11 @@ public sealed class BrevoEmailSender(HttpClient http, IOptions<EmailOptions> opt
             {
                 sender = new { name = m.FromName ?? o.FromName, email = o.FromEmail },
                 to = new[] { new { email = m.To } },
+                replyTo = m.ReplyTo is null ? null : new { email = m.ReplyTo },
                 subject = m.Subject,
                 htmlContent = m.Html,
                 textContent = m.Text,
-            }),
+            }, options: new System.Text.Json.JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull }),
         };
         request.Headers.Add("api-key", o.BrevoApiKey);
         using var response = await http.SendAsync(request, ct);
@@ -79,6 +82,8 @@ public sealed class SmtpEmailSender(IOptions<EmailOptions> options) : IEmailSend
         var message = new MimeKit.MimeMessage();
         message.From.Add(new MimeKit.MailboxAddress(m.FromName ?? o.FromName, o.FromEmail));
         message.To.Add(MimeKit.MailboxAddress.Parse(m.To));
+        if (m.ReplyTo is not null && MimeKit.MailboxAddress.TryParse(m.ReplyTo, out var replyTo))
+            message.ReplyTo.Add(new MimeKit.MailboxAddress(m.FromName ?? o.FromName, replyTo.Address));
         message.Subject = m.Subject;
         message.Body = new MimeKit.BodyBuilder { TextBody = m.Text, HtmlBody = string.IsNullOrEmpty(m.Html) ? null : m.Html }.ToMessageBody();
 
@@ -329,6 +334,7 @@ public sealed class NotificationDispatcher(IServiceScopeFactory scopes, IOptions
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var sender = scope.ServiceProvider.GetRequiredService<IEmailSender>();
+        var replyTo = new Dictionary<Guid, string?>();
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var batch = await db.Notifications
@@ -339,7 +345,14 @@ public sealed class NotificationDispatcher(IServiceScopeFactory scopes, IOptions
             try
             {
                 if (n.Channel != NotificationChannel.Email) throw new NotSupportedException($"{n.Channel} is not set up yet.");
-                await sender.SendAsync(EmailTemplates.Render(n, email.Value.FromName), ct);
+                var message = EmailTemplates.Render(n, email.Value.FromName);
+                if (message.FromName is not null && n.TenantId is { } tenantId)
+                {
+                    if (!replyTo.TryGetValue(tenantId, out var address))
+                        replyTo[tenantId] = address = await BusinessReplyToAsync(db, tenantId, ct);
+                    message = message with { ReplyTo = address };
+                }
+                await sender.SendAsync(message, ct);
                 n.Status = NotificationStatus.Sent;
                 n.SentAt = DateTimeOffset.UtcNow;
                 n.Error = null;
@@ -356,5 +369,22 @@ public sealed class NotificationDispatcher(IServiceScopeFactory scopes, IOptions
         await tx.CommitAsync(ct);
         // Only report work done when something was sent, so a run of failures does not spin.
         return batch.Count(n => n.Status == NotificationStatus.Sent);
+    }
+
+    /// <summary>
+    /// Where a customer's reply to a business's email should go: the contact email the business set (InvoiceLink settings or the
+    /// BookLink business page), otherwise the owner's account email. Runs outside a request, so tenant filters are bypassed explicitly.
+    /// </summary>
+    internal static async Task<string?> BusinessReplyToAsync(AppDbContext db, Guid tenantId, CancellationToken ct)
+    {
+        var contacts = new[]
+        {
+            await db.BusinessSettings.IgnoreQueryFilters().AsNoTracking().Where(b => b.TenantId == tenantId).Select(b => b.Email).FirstOrDefaultAsync(ct),
+            await db.BookingBusinesses.IgnoreQueryFilters().AsNoTracking().Where(b => b.TenantId == tenantId).Select(b => b.Email).FirstOrDefaultAsync(ct),
+            await db.Memberships.IgnoreQueryFilters().AsNoTracking()
+                .Where(m => m.TenantId == tenantId && m.Role == MemberRole.Owner && m.Status == MembershipStatus.Active)
+                .OrderBy(m => m.CreatedAt).Select(m => m.User!.Email).FirstOrDefaultAsync(ct),
+        };
+        return contacts.Select(c => c?.Trim()).FirstOrDefault(c => c is not null && c.Contains('@') && MimeKit.MailboxAddress.TryParse(c, out _));
     }
 }

@@ -46,8 +46,9 @@ public class EmailSenderNameTests
     {
         var email = EmailTemplates.Render(N("receipt", new() { ["business"] = "Ada's\r\nBakery\tLtd " + new string('x', 100) }), "LinkSuite");
 
+        Assert.NotNull(email.FromName);
         Assert.DoesNotContain('\n', email.FromName);
         Assert.StartsWith("Ada's Bakery Ltd x", email.FromName);
-        Assert.True(email.FromName!.Length <= 70);
+        Assert.True(email.FromName.Length <= 70);
     }
 }
