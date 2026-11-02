@@ -1,9 +1,9 @@
 # LinkSuite (6saas) — VPS deploy handoff
 
-**Status:** Not deployed yet. DNS mostly done; code/Docker not started.  
+**Status:** Not deployed yet. DNS done (all 10 names); code pushed; VPS deploy key waiting to be added on GitHub; Docker assets not started.  
 **Last updated:** 2 Nov 2026  
 **Owner:** Brosync Technologies (`brosynctechnologies@gmail.com`)  
-**Repo:** `C:\Users\MichaelAyindePisiMob\source\repos\6saas` (local; **no commits / no remote yet**)
+**Repo:** local `C:\Users\MichaelAyindePisiMob\source\repos\6saas` → https://github.com/brosynctechnologies/Linksuites (private; branch `main`; laptop remote `git@github-brosync:brosynctechnologies/Linksuites.git`; repo-local git identity Brosync Technologies)
 
 This document is for any Cursor session that continues the LinkSuite deploy. Read it before changing the VPS.
 
@@ -69,7 +69,7 @@ Multi-product SaaS (“LinkSuite”) from *Six SaaS Product Build Plans*:
 - **API Dockerfile:** `api/Dockerfile` exists (includes FFmpeg).
 - **Web apps:** Next.js 16; **no** `output: "standalone"` yet; **no** production Dockerfiles.
 - **No** production `docker-compose` for full stack yet.
-- Git: local repo exists but **has zero commits** — cannot clone to VPS until committed + pushed.
+- Git: initial commit `7a9708c` pushed to `brosynctechnologies/Linksuites` (2 Nov 2026). `.superpowers/` (agent scratch) and all `.env*.local` are git-ignored.
 
 ---
 
@@ -86,15 +86,15 @@ DNS is at WhoGoHost (nameservers `nsa.whogohost.com` / `nsb.whogohost.com`), zon
 | BookLink | `https://book.linksuite.brosync.ng` | `book.linksuite` | `127.0.0.1:3900` | Resolves |
 | LearnLink | `https://learn.linksuite.brosync.ng` | `learn.linksuite` | `127.0.0.1:4000` | Resolves |
 | PropertyLink | `https://property.linksuite.brosync.ng` | `property.linksuite` | `127.0.0.1:4100` | Resolves |
-| SchoolLink | `https://school.linksuite.brosync.ng` | `school.linksuite` | `127.0.0.1:4200` | **Missing** |
-| CareLink | `https://care.linksuite.brosync.ng` | `care.linksuite` | `127.0.0.1:4400` | **Missing** |
+| SchoolLink | `https://school.linksuite.brosync.ng` | via wildcard `*.linksuite` | `127.0.0.1:4200` | Resolves |
+| CareLink | `https://care.linksuite.brosync.ng` | via wildcard `*.linksuite` | `127.0.0.1:4400` | Resolves |
 | Platform admin | `https://admin.linksuite.brosync.ng` | `admin.linksuite` | `127.0.0.1:4300` | Resolves |
 
 Example customer-facing links after deploy: store `https://orders.linksuite.brosync.ng/mama-put`, order `…/o/ABC123`, invoice `https://invoices.linksuite.brosync.ng/i/{token}`, booking page `https://book.linksuite.brosync.ng/{slug}`.
 
-### WhoGoHost record limit (blocker for school + care)
+### WhoGoHost record limit (resolved 2 Nov 2026)
 
-The user hit a limit after adding 8 records, so `school.linksuite` and `care.linksuite` are missing. Agreed approach, in order of preference:
+WhoGoHost allows only 8 records here. The user added the wildcard `*.linksuite` A → `2.24.52.244`; all 10 names plus any made-up `X.linksuite.brosync.ng` now resolve (verified via 8.8.8.8). Options that were considered, kept for reference:
 
 1. **Wildcard record (preferred):** delete one of the explicit `*.linksuite` records (e.g. `property.linksuite`), then add **one** record: host `*.linksuite`, type A, value `2.24.52.244`. A wildcard answers for every `X.linksuite.brosync.ng` that has no explicit record, so school, care and the deleted one all resolve, and future products need no new records. Verify with `Resolve-DnsName school.linksuite.brosync.ng -Server 8.8.8.8`.
 2. If WhoGoHost rejects `*`: ask WhoGoHost support to raise the limit or add the two records.
@@ -213,19 +213,26 @@ Copy answers into this section when received:
 ### 1. DNS / hostnames (required)
 
 - [x] URL scheme: one subdomain per app (table above)
-- [x] 8 of 10 A records resolve (verified 2 Nov 2026)
-- [ ] `school.linksuite` and `care.linksuite`: blocked by WhoGoHost record limit; fix via wildcard `*.linksuite` (see above)
+- [x] All 10 names resolve to `2.24.52.244` (wildcard `*.linksuite` covers school + care; verified 2 Nov 2026)
 
 ### 2. Git remote (required)
 
-- [ ] First commit of 6saas completed
-- [ ] Private GitHub repo under `brosynctechnologies` (suggested name: `linksuite` or `6saas`)
-- [ ] Deploy key on VPS for that repo (read-only), same pattern as Health Tutor
-- [ ] Clone URL:
+- [x] First commit of 6saas completed (`7a9708c`)
+- [x] Private GitHub repo: https://github.com/brosynctechnologies/Linksuites
+- [x] VPS deploy key generated: `/root/.ssh/linksuite_deploy` (comment `linksuite-vps`); SSH alias `github-linksuite` in `/root/.ssh/config` (Health Tutor keeps `Host github.com` → `smartplay_deploy`)
+- [ ] **User:** add the public key below as a **read-only** deploy key on the Linksuites repo (Settings → Deploy keys → Add deploy key, title `linksuite-vps`, leave "Allow write access" unchecked)
 
 ```
-(paste git@github.com:brosynctechnologies/....git)
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPHw/qPdmxoJnPFpkS8yehCW7SZTChJyXEQAdE2CfNUZ linksuite-vps
 ```
+
+VPS clone command once the key is added:
+
+```bash
+git clone git@github-linksuite:brosynctechnologies/Linksuites.git /opt/linksuite
+```
+
+Test access first: `ssh -T git@github-linksuite` should greet with the repo name.
 
 ### 3. Secrets / integrations (required for real traffic)
 
@@ -258,10 +265,11 @@ Copy answers into this section when received:
 | Assess fit on Health Tutor VPS | Yes | Plenty of RAM/disk; CPU contention from FFmpeg is main risk |
 | Document safeguards | Yes | Caps, R2, CI builds, localhost ports, separate PG |
 | URL layout | Yes | One subdomain per app |
-| DNS records | Partly | 8/10 resolve; school + care pending (record limit) |
+| DNS records | Yes | All 10 resolve (8 explicit + wildcard) |
+| First git commit / GitHub remote | Yes | `brosynctechnologies/Linksuites`, `main` |
+| VPS deploy key | Partly | Generated on VPS; user must add it on GitHub |
 | Production compose for LinkSuite | **No** | Need `docker-compose.vps.yml` |
 | Next.js Dockerfiles + `standalone` | **No** | |
-| First git commit / GitHub remote | **No** | Blocking for VPS `git clone` |
 | nginx + SSL for LinkSuite | **No** | After all DNS resolves |
 | Seed / migrate on VPS | **No** | After API up |
 
@@ -273,9 +281,9 @@ and chat transcript under smartplay agent-transcripts.
 
 ## Next steps for the next agent (in order)
 
-1. Check `school.linksuite.brosync.ng` and `care.linksuite.brosync.ng` resolve to `2.24.52.244` (wildcard or explicit records).
-2. Commit + push `6saas` to GitHub (`brosynctechnologies/...`); add VPS deploy key; clone to e.g. `/opt/linksuite`.
-3. Add production assets (see "Code changes required before deploy").
+1. Confirm the user added the deploy key (`ssh healthtutor-vps "ssh -T git@github-linksuite"`), then clone to `/opt/linksuite` (command above).
+2. Add production assets (see "Code changes required before deploy"), commit, push, `git pull` on the VPS.
+3. Laptop pushes use remote `origin` = `git@github-brosync:brosynctechnologies/Linksuites.git`.
 4. Create `/opt/linksuite/.env` (mode 600) with JWT, Postgres, App URLs, CORS origins, optional Paystack/Brevo/R2.
 5. nginx: site from "nginx sketch" + catch-all if wildcard DNS is used; certbot with all ten names.
 6. Smoke test: hub + API `/docs` + one product signup; confirm Health Tutor `https://healthtutor.api.brosync.ng/health` still 200.
@@ -323,4 +331,4 @@ These do not conflict with Health Tutor’s 3306 / 5000 / 5005 / 5010 / 15672.
 
 ## One-line summary for the user
 
-Provide: (1) `school` and `care` resolving (wildcard `*.linksuite` A → `2.24.52.244`), (2) GitHub repo once 6saas is pushed, (3) JWT/Postgres/Paystack/Brevo/R2/admin emails when ready for production traffic — then an agent can finish Docker + nginx + SSL without asking the same questions again.
+Provide: (1) the VPS deploy key added (read-only) on `brosynctechnologies/Linksuites`, (2) JWT/Postgres/Paystack/Brevo/R2/admin emails when ready for production traffic — then an agent can finish Docker + nginx + SSL without asking the same questions again.
