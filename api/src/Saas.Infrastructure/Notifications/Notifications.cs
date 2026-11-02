@@ -11,7 +11,8 @@ using Saas.Infrastructure.Persistence;
 
 namespace Saas.Infrastructure.Notifications;
 
-public sealed record EmailMessage(string To, string Subject, string Html, string Text);
+/// <param name="FromName">Display name for this email; null uses <see cref="EmailOptions.FromName"/>.</param>
+public sealed record EmailMessage(string To, string Subject, string Html, string Text, string? FromName = null);
 
 public interface IEmailSender
 {
@@ -40,7 +41,7 @@ public sealed class LogEmailSender(ILogger<LogEmailSender> logger) : IEmailSende
 {
     public Task SendAsync(EmailMessage m, CancellationToken ct)
     {
-        logger.LogInformation("EMAIL to {To}: {Subject}\n{Text}", m.To, m.Subject, m.Text);
+        logger.LogInformation("EMAIL to {To} from {From}: {Subject}\n{Text}", m.To, m.FromName ?? "(default)", m.Subject, m.Text);
         return Task.CompletedTask;
     }
 }
@@ -55,7 +56,7 @@ public sealed class BrevoEmailSender(HttpClient http, IOptions<EmailOptions> opt
         {
             Content = JsonContent.Create(new
             {
-                sender = new { name = o.FromName, email = o.FromEmail },
+                sender = new { name = m.FromName ?? o.FromName, email = o.FromEmail },
                 to = new[] { new { email = m.To } },
                 subject = m.Subject,
                 htmlContent = m.Html,
@@ -76,7 +77,7 @@ public sealed class SmtpEmailSender(IOptions<EmailOptions> options) : IEmailSend
     {
         var o = options.Value;
         var message = new MimeKit.MimeMessage();
-        message.From.Add(new MimeKit.MailboxAddress(o.FromName, o.FromEmail));
+        message.From.Add(new MimeKit.MailboxAddress(m.FromName ?? o.FromName, o.FromEmail));
         message.To.Add(MimeKit.MailboxAddress.Parse(m.To));
         message.Subject = m.Subject;
         message.Body = new MimeKit.BodyBuilder { TextBody = m.Text, HtmlBody = string.IsNullOrEmpty(m.Html) ? null : m.Html }.ToMessageBody();
@@ -272,7 +273,29 @@ public static class EmailTemplates
             _ => (appName, string.Join("\n", n.Payload.Select(kv => $"{kv.Key}: {kv.Value}"))),
         };
         var html = $"<div style=\"font-family:system-ui,sans-serif;font-size:15px;line-height:1.5\">{WebUtility.HtmlEncode(text).Replace("\n", "<br>")}</div>";
-        return new EmailMessage(n.Recipient, subject, html, text);
+        return new EmailMessage(n.Recipient, subject, html, text, SenderName(n));
+    }
+
+    /// <summary>
+    /// Emails a business sends to its own customers, clients, parents or patients go out under the business's name.
+    /// Everything else (sign-in, account, alerts to the business itself, marketplace) uses the platform name (null).
+    /// </summary>
+    public static string? SenderName(Notification n)
+    {
+        var key = n.TemplateKey switch
+        {
+            "invoice.sent" or "invoice.reminder" or "quote.sent" or "receipt" or "booking.confirmed" or "booking.reminder"
+                or "team.invite" => "business",
+            "school.guardian_invite" or "school.absent" or "school.results_published" or "school.receipt" or "school.fee_reminder"
+                or "school.announcement" or "school.message" => "school",
+            "care.appointment_booked" or "care.appointment_changed" or "care.appointment_reminder" or "care.result_ready"
+                or "care.summary_ready" or "care.bill_due" or "care.payment_received" or "care.patient_invite" => "clinic",
+            _ => null,
+        };
+        if (key is null || n.Payload.GetValueOrDefault(key) is not { } name) return null;
+        name = string.Join(' ', name.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)); // no line breaks in a header
+        if (name.Length == 0) return null;
+        return name.Length > 70 ? name[..70].TrimEnd() : name;
     }
 }
 
