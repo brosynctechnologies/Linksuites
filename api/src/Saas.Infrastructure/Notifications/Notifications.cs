@@ -23,8 +23,16 @@ public sealed class EmailOptions
     public const string Section = "Email";
     public string FromEmail { get; set; } = "no-reply@example.com";
     public string FromName { get; set; } = "OrderLink";
-    /// <summary>Brevo API key. When empty, emails are only written to the log (development).</summary>
+    /// <summary>Brevo API key. When empty (and no <see cref="SmtpHost"/>), emails are only written to the log (development).</summary>
     public string? BrevoApiKey { get; set; }
+    /// <summary>SMTP relay host. When set, it is used instead of Brevo.</summary>
+    public string? SmtpHost { get; set; }
+    public int SmtpPort { get; set; } = 25;
+    /// <summary>Optional; leave empty for a relay that trusts the sender's network (e.g. Postfix on the host).</summary>
+    public string? SmtpUsername { get; set; }
+    public string? SmtpPassword { get; set; }
+    /// <summary>None, StartTls, SslOnConnect or Auto (STARTTLS when the server offers it).</summary>
+    public string SmtpSecurity { get; set; } = "Auto";
 }
 
 /// <summary>Development sender: logs the email instead of sending it, so OTP codes show in the console.</summary>
@@ -58,6 +66,29 @@ public sealed class BrevoEmailSender(HttpClient http, IOptions<EmailOptions> opt
         using var response = await http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException($"Brevo returned {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(ct)}");
+    }
+}
+
+/// <summary>Sends through any SMTP server: a local Postfix relay, a mailbox provider, or Brevo's SMTP endpoint.</summary>
+public sealed class SmtpEmailSender(IOptions<EmailOptions> options) : IEmailSender
+{
+    public async Task SendAsync(EmailMessage m, CancellationToken ct)
+    {
+        var o = options.Value;
+        var message = new MimeKit.MimeMessage();
+        message.From.Add(new MimeKit.MailboxAddress(o.FromName, o.FromEmail));
+        message.To.Add(MimeKit.MailboxAddress.Parse(m.To));
+        message.Subject = m.Subject;
+        message.Body = new MimeKit.BodyBuilder { TextBody = m.Text, HtmlBody = string.IsNullOrEmpty(m.Html) ? null : m.Html }.ToMessageBody();
+
+        var security = Enum.TryParse<MailKit.Security.SecureSocketOptions>(o.SmtpSecurity, ignoreCase: true, out var s)
+            ? s : MailKit.Security.SecureSocketOptions.Auto;
+        using var client = new MailKit.Net.Smtp.SmtpClient();
+        await client.ConnectAsync(o.SmtpHost!, o.SmtpPort, security, ct); // only registered when SmtpHost is set
+        if (!string.IsNullOrEmpty(o.SmtpUsername))
+            await client.AuthenticateAsync(o.SmtpUsername, o.SmtpPassword ?? "", ct);
+        await client.SendAsync(message, ct);
+        await client.DisconnectAsync(quit: true, ct);
     }
 }
 

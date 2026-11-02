@@ -59,10 +59,12 @@ public static class DependencyInjection
         services.AddScoped<AccountActivityService>();
 
         services.Configure<EmailOptions>(config.GetSection(EmailOptions.Section));
-        if (string.IsNullOrWhiteSpace(config[$"{EmailOptions.Section}:BrevoApiKey"]))
-            services.AddScoped<IEmailSender, LogEmailSender>();
-        else
+        if (!string.IsNullOrWhiteSpace(config[$"{EmailOptions.Section}:SmtpHost"]))
+            services.AddScoped<IEmailSender, SmtpEmailSender>();
+        else if (!string.IsNullOrWhiteSpace(config[$"{EmailOptions.Section}:BrevoApiKey"]))
             services.AddHttpClient<IEmailSender, BrevoEmailSender>();
+        else
+            services.AddScoped<IEmailSender, LogEmailSender>();
         if (config.GetValue("Notifications:DispatcherEnabled", true))
             services.AddHostedService<NotificationDispatcher>();
 

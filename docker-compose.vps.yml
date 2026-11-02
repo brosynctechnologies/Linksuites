@@ -71,6 +71,11 @@ services:
       Email__FromEmail: ${EMAIL_FROM}
       Email__FromName: ${EMAIL_FROM_NAME}
       Email__BrevoApiKey: ${BREVO_API_KEY:-}
+      Email__SmtpHost: ${SMTP_HOST:-}
+      Email__SmtpPort: ${SMTP_PORT:-587}
+      Email__SmtpSecurity: ${SMTP_SECURITY:-StartTls}
+      Email__SmtpUsername: ${SMTP_USERNAME:-}
+      Email__SmtpPassword: ${SMTP_PASSWORD:-}
       Paystack__SecretKey: ${PAYSTACK_SECRET_KEY:-}
       Platform__AdminEmails__0: ${PLATFORM_ADMIN_EMAIL:?set PLATFORM_ADMIN_EMAIL in .env}
       Storage__Provider: ${STORAGE_PROVIDER:-Local}
