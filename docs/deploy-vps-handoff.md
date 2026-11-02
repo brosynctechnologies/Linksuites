@@ -17,6 +17,8 @@ This document is for any Cursor session that continues the LinkSuite deploy. Rea
 | Compose | `docker compose -f docker-compose.vps.yml` (project name `linksuite`), run from `/opt/linksuite` |
 | Secrets | `/opt/linksuite/.env` (root, mode 600). Template: `deploy/.env.vps.example`. Postgres password + JWT key were generated on the server; never copy them into git or chat |
 | Platform admin email | `brosynctechnologies@gmail.com` (`PLATFORM_ADMIN_EMAIL` in `.env`; overrides the `guysky19@gmail.com` default in `appsettings.json`) |
+| Platform admins granted | `guysky19@gmail.com` (Ayinde Micheal, owner) = **SuperAdmin**, granted 2 Nov 2026 via `docker compose -f docker-compose.vps.yml exec -T api dotnet Saas.Api.dll admin grant <email> <role>` (audited) |
+| Reading emails before Brevo | `docker compose -f docker-compose.vps.yml logs api --since 1h \| grep -A10 'EMAIL to <address>'` (codes and reset links are logged; reset links expire in 10 min) |
 | nginx | `/etc/nginx/sites-available/linksuite` (certbot-edited copy of `deploy/nginx/linksuite.conf`) + `/etc/nginx/sites-available/00-catch-all` (unknown hosts → 444; self-signed cert in `/etc/nginx/ssl/`) |
 | Certificate | Let's Encrypt cert name `linksuite`, all 10 hosts, auto-renew via `certbot.timer` (expires 2027-01-31 before renewal) |
 | Health Tutor nginx backup | `/root/smartplay.nginx.bak-<timestamp>` taken before LinkSuite sites were added |
