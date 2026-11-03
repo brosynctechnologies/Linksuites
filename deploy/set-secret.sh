@@ -7,7 +7,10 @@ key="$1"
 [[ "$key" =~ ^[A-Z0-9_]+$ ]] || { echo "Usage: set-secret.sh NAME   (e.g. SMTP_PASSWORD)"; exit 2; }
 env=/opt/linksuite/.env
 read -rsp "Value for $key: " value; echo
-value="${value// /}"
+# Some terminals wrap pasted text in bracketed-paste markers (ESC[200~ ... ESC[201~); drop them and any control characters.
+value="${value//$'\e'[200~/}"
+value="${value//$'\e'[201~/}"
+value=$(printf '%s' "$value" | tr -d '[:cntrl:] ')
 [ -n "$value" ] || { echo "Empty value, nothing changed."; exit 1; }
 tmp=$(mktemp)
 grep -v "^$key=" "$env" > "$tmp" || true
@@ -16,4 +19,4 @@ cat "$tmp" > "$env" && rm -f "$tmp"
 chmod 600 "$env"
 cd /opt/linksuite
 docker compose -f docker-compose.vps.yml up -d api
-echo "$key saved and API restarted."
+echo "$key saved (${#value} characters) and API restarted."
