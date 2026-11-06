@@ -101,6 +101,11 @@ public class Patient : TenantEntity
     public List<string> Allergies { get; set; } = [];
     /// <summary>Key conditions; each entry stored protected with <c>ISecretProtector</c>.</summary>
     public List<string> Conditions { get; set; } = [];
+    /// <summary>
+    /// Final review I1: bumped by every clinical-facts save. A save names the version it loaded and is refused (409) when it is stale, so
+    /// two clinicians editing the allergy list at once never silently drop an entry. 0 until the first save.
+    /// </summary>
+    public int FactsVersion { get; set; }
     public PatientStatus Status { get; set; } = PatientStatus.Active;
 }
 
@@ -218,9 +223,15 @@ public class CareAssignment : TenantEntity
 /// </summary>
 public class RecordAccess : TenantEntity
 {
+    /// <summary>Who read: the staff member, or (when <see cref="Portal"/>) the portal account.</summary>
     public Guid StaffUserId { get; set; }
-    /// <summary>The clinic role label at the time: "Medical director", "Doctor" or "Nurse".</summary>
+    /// <summary>
+    /// The clinic role label at the time: "Medical director", "Doctor" or "Nurse"; for a portal read, the account's relationship to the
+    /// patient ("self", "parent" or "guardian").
+    /// </summary>
     public required string Role { get; set; }
+    /// <summary>Final review C1: a read through the patient portal by a linked account, not a staff open.</summary>
+    public bool Portal { get; set; }
     public Guid PatientId { get; set; }
     /// <summary>What was opened: record, consultation, admission, prescription, result, discharge, pdf or file.</summary>
     public required string Area { get; set; }
@@ -476,6 +487,12 @@ public class TestRequest : TenantEntity
     public string? ResultFileType { get; set; }
     public Guid? ResultedBy { get; set; }
     public DateTimeOffset? ResultedAt { get; set; }
+    /// <summary>
+    /// Post-build (user decision): a result shows in the patient's portal, and the patient is told, only once a doctor or the medical director
+    /// has reviewed it. Results recorded before this change were marked reviewed at their recorded time (no reviewer).
+    /// </summary>
+    public Guid? ReviewedBy { get; set; }
+    public DateTimeOffset? ReviewedAt { get; set; }
 }
 
 /// <summary>What kind of ward it is (for the bed board and reports).</summary>

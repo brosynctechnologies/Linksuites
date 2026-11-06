@@ -19,7 +19,7 @@ namespace Saas.IntegrationTests;
 /// portal route reaches a patient only through <c>PatientPortalAccess.RequirePatientAsync</c>: 404 for a patient the account isn't linked
 /// to (another family's child, another clinic's patient), then 403 "This clinic's portal is unavailable." for a suspended clinic, then the
 /// request acts as that patient's clinic. The record shows signed notes and addenda only, never drafts or staff-only fields, and reading
-/// it is not staff access (no RecordAccess row). Bills are paid through the clinic's own Paystack key; patient notices name the patient's
+/// it writes a RecordAccess row marked as a portal read (final review C1). Bills are paid through the clinic's own Paystack key; patient notices name the patient's
 /// first name so a guardian with several linked patients can tell them apart.
 /// </summary>
 [Collection(nameof(ApiCollection))]
@@ -64,7 +64,7 @@ public sealed class CarePortalTests(ApiFixture api)
     {
         var email = $"portal-{Guid.NewGuid():N}@example.com";
         var client = api.CreateClient();
-        var auth = await Json(await client.PostAsJsonAsync("/api/auth/parent/signup", new { fullName = name, email, password = "password123" }, Ct));
+        var auth = await Json(await api.SignUpAsync(client, "/api/auth/parent/signup", new { fullName = name, email, password = "password123" }, Ct));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", auth.GetProperty("accessToken").GetString());
         return (client, auth.GetProperty("user").GetProperty("id").GetGuid(), email);
     }
@@ -357,21 +357,115 @@ public sealed class CarePortalTests(ApiFixture api)
         Assert.Empty((await Json(await portal.GetAsync("/api/care-portal/patients", Ct))).EnumerateArray());
     }
 
-    /// <summary>The patient reading their own record is not staff access: no portal read writes a RecordAccess row.</summary>
+    /// <summary>
+    /// Final review C1 (ruling): every portal read of clinical data (the record, the bills with their item names) writes a RecordAccess row
+    /// marked as a portal read, carrying the portal account and its relationship. The director's access log and the patient's "who opened"
+    /// page both show it as "Nkem W. (parent), patient portal". Reads with nothing clinical (appointments, notices, the log itself) write none.
+    /// </summary>
     [Fact]
-    public async Task Portal_reads_write_no_record_access()
+    public async Task Portal_read_writes_a_portal_access_row_shown_in_both_logs()
     {
         var clinic = await kit.ClinicAsync("Portal Access Clinic");
         var patientId = Id(await kit.PatientAsync(clinic, "Reader", "Patient"));
         await ConsultationAsync(clinic, patientId, "Readercomplaint", sign: true);
-        await Json(await clinic.Owner.GetAsync($"/api/care/patients/{patientId}/record", Ct));
-        var (portal, _) = await LinkedAsync(clinic, patientId);
+        var drug = await kit.PriceItemAsync(clinic, "Portaldrugname tablets", "Drug", 2_500);
+        await BillAsync(clinic, patientId, drug);
+        var (portal, portalUserId, _) = await AccountAsync("Nkem Williams");
+        await LinkAsync(portal, clinic, patientId, "Parent");
         var before = await AccessRowsAsync(patientId);
-        Assert.True(before > 0);
 
-        foreach (var path in new[] { "record", "access-log", "bills", "appointments", "notifications" })
+        foreach (var path in new[] { "access-log", "appointments", "notifications" })
             await Json(await portal.GetAsync($"{P(patientId)}/{path}", Ct));
         Assert.Equal(before, await AccessRowsAsync(patientId));
+
+        await Json(await portal.GetAsync($"{P(patientId)}/record", Ct));
+        var bills = await portal.GetAsync($"{P(patientId)}/bills", Ct);
+        Assert.Contains("Portaldrugname tablets", await bills.Content.ReadAsStringAsync(Ct)); // the patient's own bill keeps the item name
+        var rows = await api.WithDbAsync(db => db.RecordAccesses.IgnoreQueryFilters()
+            .Where(a => a.PatientId == patientId && a.StaffUserId == portalUserId).OrderBy(a => a.At).ToListAsync(Ct));
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r => Assert.True(r.Portal));
+        Assert.All(rows, r => Assert.Equal("parent", r.Role));
+        Assert.All(rows, r => Assert.False(r.Emergency));
+        Assert.Equal(new[] { "record", "bills" }, rows.Select(r => r.Area));
+
+        // The director's access log.
+        var staffLog = (await Json(await clinic.Owner.GetAsync($"/api/care/patients/{patientId}/access-log", Ct))).EnumerateArray()
+            .Where(e => e.GetProperty("portal").GetBoolean()).ToList();
+        Assert.Equal(2, staffLog.Count);
+        Assert.All(staffLog, e => Assert.Equal("Nkem W.", e.GetProperty("staffName").GetString()));
+        Assert.All(staffLog, e => Assert.Equal("parent", e.GetProperty("relationship").GetString()));
+        Assert.All(staffLog, e => Assert.Equal("Nkem W. (parent), patient portal", e.GetProperty("who").GetString()));
+        Assert.Contains(staffLog, e => e.GetProperty("areaLabel").GetString() == "Bills");
+
+        // The patient's "who opened" page.
+        var patientLog = (await Json(await portal.GetAsync($"{P(patientId)}/access-log", Ct))).EnumerateArray()
+            .Where(e => e.GetProperty("portal").GetBoolean()).ToList();
+        Assert.Equal(2, patientLog.Count);
+        Assert.All(patientLog, e => Assert.Equal("Nkem W. (parent), patient portal", e.GetProperty("who").GetString()));
+        Assert.DoesNotContain(portalUserId.ToString(), (await (await portal.GetAsync($"{P(patientId)}/access-log", Ct)).Content.ReadAsStringAsync(Ct)));
+    }
+
+    /// <summary>Final review C1 (ruling): front desk sends only emailed invites to the email on file; link-only invites are leadership's.</summary>
+    [Fact]
+    public async Task Front_desk_cannot_create_a_link_only_invite()
+    {
+        var clinic = await kit.ClinicAsync("Portal Link Only Clinic");
+        var (desk, _) = await kit.StaffAsync(clinic, "FrontDesk");
+        var (admin, _) = await kit.StaffAsync(clinic, "Admin");
+        var patientId = Id(await kit.PatientAsync(clinic, "Noemail", "Patient", phone: "08031234567"));
+
+        await ProblemAsync(await desk.PostAsJsonAsync($"/api/care/patients/{patientId}/invites", new { }, Ct), HttpStatusCode.Forbidden, PatientInviteService.LinkOnlyLeadership);
+        await ProblemAsync(await desk.PostAsJsonAsync($"/api/care/patients/{patientId}/invites", new { phone = "08031234567" }, Ct), HttpStatusCode.Forbidden,
+            PatientInviteService.LinkOnlyLeadership);
+        Assert.Equal(0, await PendingInvitesAsync(patientId));
+        // Leadership may.
+        await InviteAsync(admin, patientId);
+        await InviteAsync(clinic.Owner, patientId);
+        Assert.Equal(2, await PendingInvitesAsync(patientId));
+
+        // With an email on file (set by the director), the desk invites that address, and only that address.
+        var onFile = $"onfile-{Guid.NewGuid():N}@example.com";
+        await Json(await clinic.Owner.PutAsJsonAsync($"/api/care/patients/{patientId}",
+            new { firstName = "Noemail", lastName = "Patient", sex = "Female", dateOfBirth = "1990-04-12", phone = "08031234567", email = onFile }, Ct));
+        await ProblemAsync(await desk.PostAsJsonAsync($"/api/care/patients/{patientId}/invites", new { email = "clerk@example.com" }, Ct), HttpStatusCode.Forbidden,
+            PatientInviteService.DeskEmailOnFile);
+        await InviteAsync(desk, patientId);
+        await InviteAsync(desk, patientId, email: onFile.ToUpperInvariant());
+        var sent = await api.WithDbAsync(db => db.PatientInvites.IgnoreQueryFilters().Where(i => i.PatientId == patientId && i.Email != null).Select(i => i.Email).ToListAsync(Ct));
+        Assert.Equal(2, sent.Count);
+        Assert.All(sent, e => Assert.Equal(onFile, e));
+    }
+
+    /// <summary>Final review C1 (ruling): front desk that changed the patient's email in the last 24 hours can't invite (409); others can.</summary>
+    [Fact]
+    public async Task Front_desk_email_change_then_invite_is_refused()
+    {
+        var clinic = await kit.ClinicAsync("Portal Email Change Clinic");
+        var (desk, deskId) = await kit.StaffAsync(clinic, "FrontDesk");
+        var (otherDesk, _) = await kit.StaffAsync(clinic, "FrontDesk");
+        var patientId = Id(await kit.PatientAsync(clinic, "Changed", "Patient"));
+        var clerk = $"clerk-{Guid.NewGuid():N}@example.com";
+
+        await Json(await desk.PutAsJsonAsync($"/api/care/patients/{patientId}",
+            new { firstName = "Changed", lastName = "Patient", sex = "Female", dateOfBirth = "1990-04-12", email = clerk }, Ct));
+        await ProblemAsync(await desk.PostAsJsonAsync($"/api/care/patients/{patientId}/invites", new { }, Ct), HttpStatusCode.Conflict,
+            PatientInviteService.EmailRecentlyChanged);
+        Assert.Equal(0, await PendingInvitesAsync(patientId));
+        // A later edit that leaves the email alone doesn't clear it: the email change is still within 24 hours.
+        await Json(await desk.PutAsJsonAsync($"/api/care/patients/{patientId}",
+            new { firstName = "Changed", lastName = "Patient", sex = "Female", dateOfBirth = "1990-04-12", email = clerk, phone = "08031234567" }, Ct));
+        await ProblemAsync(await desk.PostAsJsonAsync($"/api/care/patients/{patientId}/invites", new { }, Ct), HttpStatusCode.Conflict);
+
+        // Another clerk and the director are not refused.
+        await InviteAsync(otherDesk, patientId);
+        await InviteAsync(clinic.Owner, patientId);
+
+        // After 24 hours the same clerk may invite again.
+        await api.WithDbAsync(db => db.AuditLogs.IgnoreQueryFilters()
+            .Where(a => a.TenantId == clinic.TenantId && a.ActorId == deskId && a.Action == "patient.updated")
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.CreatedAt, DateTimeOffset.UtcNow.AddHours(-25)), Ct));
+        await InviteAsync(desk, patientId);
     }
 
     /// <summary>The access log shows who and in what role (and what was opened), never the reason, the emergency flag or staff ids. Every area has a label.</summary>
@@ -402,8 +496,10 @@ public sealed class CarePortalTests(ApiFixture api)
         Assert.DoesNotContain(nurseId.ToString(), text);
         foreach (var entry in log)
         {
-            Assert.Equal(new[] { "at", "role", "staffName", "what" }, entry.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal));
+            Assert.Equal(new[] { "at", "portal", "role", "staffName", "what", "who" }, entry.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal));
             Assert.Equal("Nurse Staff", entry.GetProperty("staffName").GetString());
+            Assert.Equal("Nurse Staff, Nurse", entry.GetProperty("who").GetString());
+            Assert.False(entry.GetProperty("portal").GetBoolean());
             Assert.Equal("Nurse", entry.GetProperty("role").GetString());
         }
         var labels = log.Select(e => e.GetProperty("what").GetString()!).ToList();
@@ -502,6 +598,9 @@ public sealed class CarePortalTests(ApiFixture api)
         }
         var (desk, _) = await kit.StaffAsync(clinic, "FrontDesk");
         var (admin, _) = await kit.StaffAsync(clinic, "Admin");
+        // Final review C1: front desk invites only the email on file, so the director records it first.
+        await Json(await clinic.Owner.PutAsJsonAsync($"/api/care/patients/{patientId}",
+            new { firstName = "Whats", lastName = "App", sex = "Female", dateOfBirth = "1990-04-12", phone = "08031234567", email = "family@example.com" }, Ct));
         foreach (var client in new[] { desk, admin, clinic.Owner })
         {
             var invite = await InviteAsync(client, patientId, email: "family@example.com");
@@ -678,7 +777,7 @@ public sealed class CarePortalTests(ApiFixture api)
         var patientId = Id(await kit.PatientAsync(clinic, "Auth", "Patient"));
         var email = $"patient-{Guid.NewGuid():N}@example.com";
         var client = api.CreateClient();
-        await Json(await client.PostAsJsonAsync("/api/auth/patient/signup", new { fullName = "Auth Patient", email, password = "password123" }, Ct));
+        await Json(await api.SignUpAsync(client, "/api/auth/patient/signup", new { fullName = "Auth Patient", email, password = "password123" }, Ct));
         var login = await Json(await client.PostAsJsonAsync("/api/auth/patient/login", new { email, password = "password123" }, Ct));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login.GetProperty("accessToken").GetString());
         await LinkAsync(client, clinic, patientId);
@@ -698,6 +797,7 @@ public sealed class CarePortalTests(ApiFixture api)
         Assert.Equal("public-write", Policy("POST", "/api/care-portal/invites/{token}/accept"));
         Assert.Equal("preview", Policy("GET", "/api/care-portal/invites/{token}"));
         Assert.Equal("otp", Policy("POST", "/api/auth/patient/otp/verify"));
+        Assert.Equal("otp", Policy("POST", "/api/auth/patient/signup/confirm")); // final fix pass B: the sign-up's emailed code
         Assert.Equal("auth", Policy("POST", "/api/auth/patient/login"));
         Assert.Equal("otp", Policy("POST", "/api/auth/otp/request")); // the emailed code itself
         Assert.Equal("public-write", Policy("POST", "/api/care-portal/patients/{id:guid}/appointments"));
@@ -734,7 +834,7 @@ public sealed class CarePortalTests(ApiFixture api)
     {
         var anonymous = api.CreateClient();
         if (!await api.WithDbAsync(db => db.Users.AnyAsync(u => u.NormalizedEmail == email.ToUpperInvariant(), Ct)))
-            await Json(await anonymous.PostAsJsonAsync("/api/auth/patient/signup", new { fullName = "Code Family", email, password = "password123" }, Ct));
+            await Json(await api.SignUpAsync(anonymous, "/api/auth/patient/signup", new { fullName = "Code Family", email, password = "password123" }, Ct));
         (await anonymous.PostAsJsonAsync("/api/auth/otp/request", new { email }, Ct)).EnsureSuccessStatusCode();
         var code = (await api.WithDbAsync(db => db.Notifications.Where(n => n.TemplateKey == "otp" && n.Recipient == email)
             .OrderByDescending(n => n.CreatedAt).FirstAsync(Ct))).Payload["code"];
@@ -747,13 +847,14 @@ public sealed class CarePortalTests(ApiFixture api)
     /// <summary>
     /// R2 (fix round 3): a refused business code sign-in doesn't confirm the email, so it can't disarm the customer takeover. The squatter
     /// registers the address; the owner's code on the business sign-in is refused (no business) and the account stays unconfirmed; the owner's
-    /// customer code sign-in then takes the account over and the squatter's password fails.
+    /// customer code sign-in then takes the account over and the squatter's password fails. Final fix pass B: a sign-up made now has no
+    /// password before its code, so the squatter here is an account from before codes at sign-up (password set, never confirmed).
     /// </summary>
     [Fact]
     public async Task Refused_business_code_sign_in_leaves_the_account_unconfirmed()
     {
         var email = $"squatted-{Guid.NewGuid():N}@example.com";
-        await Json(await api.CreateClient().PostAsJsonAsync("/api/auth/patient/signup", new { fullName = "Squatter", email, password = "password123" }, Ct));
+        await api.LegacyUnconfirmedAccountAsync(email, name: "Squatter");
         Task<(bool Confirmed, DateTimeOffset? At)> StateAsync() => api.WithDbAsync(db => db.Users.Where(u => u.NormalizedEmail == email.ToUpperInvariant())
             .Select(u => new ValueTuple<bool, DateTimeOffset?>(u.EmailConfirmed, u.EmailConfirmedAt)).FirstAsync(Ct));
 
@@ -784,13 +885,17 @@ public sealed class CarePortalTests(ApiFixture api)
     /// <summary>
     /// R2/R3: a business owner's code sign-in signs in to the business with a valid session (rotated stamp, working refresh). Because the
     /// owner signed up with a password and had never confirmed the address, this first confirmation is a takeover (R3): the old password
-    /// fails, and a password reset restores one. An already-confirmed owner's later code sign-in keeps the password.
+    /// fails, and a password reset restores one. An already-confirmed owner's later code sign-in keeps the password. Final fix pass B: the
+    /// takeover is left only for accounts from before codes at sign-up, so the owner is made one (confirmed sign-ups never lose a password).
     /// </summary>
     [Fact]
     public async Task Business_code_sign_in_confirms_after_the_session()
     {
         var clinic = await kit.ClinicAsync("Portal Business Code Clinic");
-        var email = await EmailOfAsync(await OwnerIdAsync(clinic));
+        var ownerId = await OwnerIdAsync(clinic);
+        var email = await EmailOfAsync(ownerId);
+        await api.WithDbAsync(db => db.Users.Where(u => u.Id == ownerId).ExecuteUpdateAsync(s => s
+            .SetProperty(u => u.EmailConfirmed, false).SetProperty(u => u.EmailConfirmedAt, (DateTimeOffset?)null), Ct));
         var anonymous = api.CreateClient();
         var session = await Json(await anonymous.PostAsJsonAsync("/api/auth/otp/verify", new { email, code = await RequestCodeAsync(email) }, Ct));
         Assert.Equal(clinic.TenantId, session.GetProperty("tenant").GetProperty("id").GetGuid());
@@ -822,7 +927,8 @@ public sealed class CarePortalTests(ApiFixture api)
     /// <summary>
     /// R3: a squatter signs up a free business on the invitee's address with a password. The owner's business code sign-in succeeds and takes
     /// the account over: the squatter's password and refresh fail. The owner's later customer code sign-in accepts the invite; the squatter's
-    /// old customer token can't.
+    /// old customer token can't. Final fix pass B: a squatter's sign-up made now never gets a session without the code
+    /// (AuthConfirmTests), so the squatter here is an account from before codes at sign-up, which can still sign in with its password.
     /// </summary>
     [Fact]
     public async Task Business_squatter_loses_the_account_to_the_owners_code_sign_in()
@@ -833,10 +939,13 @@ public sealed class CarePortalTests(ApiFixture api)
         var token = TokenOf((await InviteAsync(clinic.Owner, patientId, email: email)).GetProperty("link").GetString()!);
 
         var anonymous = api.CreateClient();
-        var squatterBusiness = await Json(await anonymous.PostAsJsonAsync("/api/auth/signup", new
+        await api.LegacyUnconfirmedAccountAsync(email, name: "Squatter");
+        var pending = await Json(await anonymous.PostAsJsonAsync("/api/auth/signup", new
         {
             fullName = "Squatter", email, password = "password123", country = "NG", product = "care", businessName = $"Squat Clinic {Guid.NewGuid():N}",
         }, Ct));
+        Assert.True(pending.GetProperty("confirmationRequired").GetBoolean()); // still no session from the sign-up itself
+        var squatterBusiness = await Json(await anonymous.PostAsJsonAsync("/api/auth/login", new { email, password = "password123", product = "care" }, Ct));
         var squatterLogin = await Json(await anonymous.PostAsJsonAsync("/api/auth/patient/login", new { email, password = "password123" }, Ct));
         var squatterPortal = api.CreateClient();
         squatterPortal.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", squatterLogin.GetProperty("accessToken").GetString());
@@ -877,7 +986,8 @@ public sealed class CarePortalTests(ApiFixture api)
 
         foreach (var memberId in new[] { deskId, cashierId, await OwnerIdAsync(clinic) })
         {
-            var token = TokenOf((await InviteAsync(desk, patientId)).GetProperty("link").GetString()!);
+            // Link-only invites are leadership's (final review C1); the desk can't make one, so the director does.
+            var token = TokenOf((await InviteAsync(clinic.Owner, patientId)).GetProperty("link").GetString()!);
             var asCustomer = await PortalLoginAsync(await EmailOfAsync(memberId));
             await ProblemAsync(await AcceptAsync(asCustomer, token), HttpStatusCode.Forbidden, StaffRefused);
             Assert.Empty((await Json(await asCustomer.GetAsync("/api/care-portal/patients", Ct))).EnumerateArray());
@@ -888,8 +998,9 @@ public sealed class CarePortalTests(ApiFixture api)
 
         // Another clinic's director is a member there, not here.
         var outsider = await PortalLoginAsync(await EmailOfAsync(await OwnerIdAsync(other)));
-        var spare = TokenOf((await InviteAsync(desk, patientId)).GetProperty("link").GetString()!);
+        var spare = TokenOf((await InviteAsync(clinic.Owner, patientId)).GetProperty("link").GetString()!);
         await Json(await AcceptAsync(outsider, spare, "Parent"));
+        await ProblemAsync(await desk.PostAsJsonAsync($"/api/care/patients/{patientId}/invites", new { }, Ct), HttpStatusCode.Forbidden);
         Assert.Equal(1, await LinksOfAsync(patientId));
     }
 
@@ -905,10 +1016,12 @@ public sealed class CarePortalTests(ApiFixture api)
         var (stranger, _, _) = await AccountAsync();
         await ProblemAsync(await AcceptAsync(stranger, token), HttpStatusCode.Conflict, OtherEmail);
 
-        // The right address, but never confirmed (a password signup doesn't confirm it).
+        // The right address, but never confirmed. Final fix pass B: a sign-up made now gets no session before its code, so this is an account
+        // from before codes at sign-up (a password, never confirmed), signed in with that password.
         var email = $"{local}@example.com";
         var unconfirmed = api.CreateClient();
-        var auth = await Json(await unconfirmed.PostAsJsonAsync("/api/auth/patient/signup", new { fullName = "Bound Family", email, password = "password123" }, Ct));
+        await api.LegacyUnconfirmedAccountAsync(email, name: "Bound Family");
+        var auth = await Json(await unconfirmed.PostAsJsonAsync("/api/auth/patient/login", new { email, password = "password123" }, Ct));
         unconfirmed.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", auth.GetProperty("accessToken").GetString());
         await ProblemAsync(await AcceptAsync(unconfirmed, token), HttpStatusCode.Conflict, OtherEmail);
         Assert.Equal(1, await PendingInvitesAsync(patientId));
@@ -941,6 +1054,36 @@ public sealed class CarePortalTests(ApiFixture api)
         Assert.Equal(2, await LinksOfAsync(patientId));
     }
 
+    /// <summary>
+    /// Final fix pass B (final review I3): a patient who creates an account from an emailed invite (sign-up, then the emailed code) accepts it
+    /// and keeps the password they chose: it signs in a week later, and a later code sign-in doesn't remove it.
+    /// </summary>
+    [Fact]
+    public async Task Patient_signing_up_from_an_emailed_invite_keeps_a_working_password()
+    {
+        var clinic = await kit.ClinicAsync("Portal Signup Invite Clinic");
+        var patientId = Id(await kit.PatientAsync(clinic, "Signup", "Patient"));
+        var email = $"signup-invite-{Guid.NewGuid():N}@example.com";
+        var token = TokenOf((await InviteAsync(clinic.Owner, patientId, email: email)).GetProperty("link").GetString()!);
+
+        var anonymous = api.CreateClient();
+        var pending = await Json(await anonymous.PostAsJsonAsync("/api/auth/patient/signup", new { fullName = "Signup Family", email, password = "family-pass-1" }, Ct));
+        Assert.True(pending.GetProperty("confirmationRequired").GetBoolean());
+        var session = await Json(await anonymous.PostAsJsonAsync("/api/auth/patient/signup/confirm",
+            new { email, code = await api.LatestCodeAsync(email), password = "family-pass-1" }, Ct));
+        var portal = api.CreateClient();
+        portal.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", session.GetProperty("accessToken").GetString());
+        await Json(await AcceptAsync(portal, token, "Self"));
+        await Json(await portal.GetAsync($"{P(patientId)}/record", Ct));
+
+        await ConfirmByCodeAsync(email); // a later code sign-in
+        var again = await Json(await anonymous.PostAsJsonAsync("/api/auth/patient/login", new { email, password = "family-pass-1" }, Ct));
+        var later = api.CreateClient();
+        later.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", again.GetProperty("accessToken").GetString());
+        await Json(await later.GetAsync($"{P(patientId)}/record", Ct));
+        await Json(await portal.GetAsync($"{P(patientId)}/record", Ct)); // the first session wasn't ended either
+    }
+
     /// <summary>I1: the medical director is told in-app whenever a link is created or re-activated: number, relationship and inviter only.</summary>
     [Fact]
     public async Task Director_is_told_when_a_portal_link_is_made()
@@ -951,7 +1094,10 @@ public sealed class CarePortalTests(ApiFixture api)
         var patient = await kit.PatientAsync(clinic, "Noticed", "Patientname");
         var patientId = Id(patient);
         var number = patient.GetProperty("number").GetString()!;
-        var (portal, _, _) = await AccountAsync();
+        // Final review C1: the desk sends emailed invites to the email on file only, so the patient has one and the account confirms it.
+        var guardianEmail = $"guardian-{Guid.NewGuid():N}@example.com";
+        await api.WithDbAsync(db => db.Patients.IgnoreQueryFilters().Where(p => p.Id == patientId).ExecuteUpdateAsync(s => s.SetProperty(p => p.Email, guardianEmail), Ct));
+        var portal = await ConfirmByCodeAsync(guardianEmail);
 
         await Json(await AcceptAsync(portal, TokenOf((await InviteAsync(desk, patientId)).GetProperty("link").GetString()!), "Guardian"));
         var first = Assert.Single(await NoticesForAsync(ownerId), n => n.Kind == "care.portal_linked");
@@ -979,7 +1125,8 @@ public sealed class CarePortalTests(ApiFixture api)
         await Json(await AcceptAsync(onFileClient, TokenOf((await InviteAsync(desk, filed)).GetProperty("link").GetString()!))); // defaults to the file's email
         var offFile = $"offfile-{Guid.NewGuid():N}@example.com";
         var offFileClient = await ConfirmByCodeAsync(offFile);
-        await Json(await AcceptAsync(offFileClient, TokenOf((await InviteAsync(desk, filed, email: offFile)).GetProperty("link").GetString()!), "Parent"));
+        // An address off the file is leadership's to send (final review C1).
+        await Json(await AcceptAsync(offFileClient, TokenOf((await InviteAsync(clinic.Owner, filed, email: offFile)).GetProperty("link").GetString()!), "Parent"));
         var filedNotices = (await NoticesForAsync(ownerId)).Where(n => n.Kind == "care.portal_linked" && n.Link.Contains(filed.ToString())).ToList();
         Assert.Equal(2, filedNotices.Count);
         Assert.Single(filedNotices, n => n.Body.Contains("sent to an address that isn't on the patient's file"));
@@ -998,8 +1145,9 @@ public sealed class CarePortalTests(ApiFixture api)
         var patientId = Id(await kit.PatientAsync(clinic, "Withdrawn", "Patient"));
         var (portal, _, _) = await AccountAsync();
 
-        var used = TokenOf((await InviteAsync(desk, patientId)).GetProperty("link").GetString()!);
-        var leftover = TokenOf((await InviteAsync(desk, patientId, email: "withdrawn-family@example.com")).GetProperty("link").GetString()!);
+        // Link-only and off-file invites are leadership's (final review C1); the desk lists and cancels them.
+        var used = TokenOf((await InviteAsync(clinic.Owner, patientId)).GetProperty("link").GetString()!);
+        var leftover = TokenOf((await InviteAsync(clinic.Owner, patientId, email: "withdrawn-family@example.com")).GetProperty("link").GetString()!);
         await Json(await AcceptAsync(portal, used));
 
         var pending = await desk.GetAsync($"/api/care/patients/{patientId}/invites", Ct);
@@ -1020,7 +1168,7 @@ public sealed class CarePortalTests(ApiFixture api)
         await ProblemAsync(await AcceptAsync(family, leftover), HttpStatusCode.Conflict, InviteExpired);
 
         // A single invite cancelled by the desk: gone from the list, refused on preview and accept.
-        var mistake = await InviteAsync(desk, patientId);
+        var mistake = await InviteAsync(clinic.Owner, patientId);
         var mistakeToken = TokenOf(mistake.GetProperty("link").GetString()!);
         var inviteId = Id(Assert.Single((await Json(await desk.GetAsync($"/api/care/patients/{patientId}/invites", Ct))).EnumerateArray()));
         foreach (var client in new[] { cashier, doctor })
@@ -1095,7 +1243,7 @@ public sealed class CarePortalTests(ApiFixture api)
     private static readonly string[] HiddenMarkers =
     [
         "Draftcomplaint", "Draftdiagnosis", "Draftround", "Draftsummary", "Nursenotemarker", "Emergencymarker", "Manualmarker", "Removedmarker",
-        "Adjustmarker", "Reversalmarker", "Draftdrugmarker", "Pendingtestmarker",
+        "Adjustmarker", "Reversalmarker", "Draftdrugmarker", "Pendingtestmarker", "Unreviewedtestmarker", "Unreviewedresultmarker",
     ];
 
     /// <summary>Fields that are staff-only: who did what by id, review flags, allergy overrides, reasons on bills and discharges, ward-care charts.</summary>
@@ -1206,6 +1354,12 @@ public sealed class CarePortalTests(ApiFixture api)
         var resulted = Id(await Json(await clinic.Owner.PostAsJsonAsync("/api/care/tests",
             new { patientId, consultationId = draft, kind = "Lab", description = "Resultedtest smear" }, Ct)));
         await Json(await clinic.Owner.PostAsJsonAsync($"/api/care/tests/{resulted}/result", new { text = "Resultedmarker negative" }, Ct));
+        // Post-build (user decision): a result shows only once a doctor (here the director) has reviewed it; a recorded, unreviewed result
+        // stays hidden.
+        await Json(await clinic.Owner.PostAsync($"/api/care/tests/{resulted}/review", null, Ct));
+        var unreviewed = Id(await Json(await clinic.Owner.PostAsJsonAsync("/api/care/tests",
+            new { patientId, consultationId = draft, kind = "Lab", description = "Unreviewedtestmarker swab" }, Ct)));
+        await Json(await clinic.Owner.PostAsJsonAsync($"/api/care/tests/{unreviewed}/result", new { text = "Unreviewedresultmarker seen" }, Ct));
 
         var admissionId = await kit.AdmitAsync(clinic.Owner, patientId, "Walk admit reason", "Walk admitting diagnosis", emergencyReason: null);
         var round = Id(await Json(await clinic.Owner.PostAsJsonAsync($"/api/care/admissions/{admissionId}/ward-rounds", new { note = "Signedround" }, Ct)));
@@ -1240,7 +1394,7 @@ public sealed class CarePortalTests(ApiFixture api)
 
         // The seed is there to be leaked: the director's record holds every hidden marker.
         var staffView = await (await clinic.Owner.GetAsync($"/api/care/patients/{patientId}/record", Ct)).Content.ReadAsStringAsync(Ct);
-        foreach (var marker in new[] { "Draftcomplaint", "Draftround", "Draftsummary", "Nursenotemarker", "Draftdrugmarker", "Pendingtestmarker" })
+        foreach (var marker in new[] { "Draftcomplaint", "Draftround", "Draftsummary", "Nursenotemarker", "Draftdrugmarker", "Pendingtestmarker", "Unreviewedresultmarker" })
             Assert.Contains(marker, staffView);
 
         var failures = new List<string>();

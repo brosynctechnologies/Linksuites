@@ -2326,6 +2326,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("email");
 
+                    b.Property<int>("FactsVersion")
+                        .HasColumnType("integer")
+                        .HasColumnName("facts_version");
+
                     b.Property<string>("FirstName")
                         .IsRequired()
                         .HasMaxLength(60)
@@ -2858,6 +2862,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("patient_id");
 
+                    b.Property<bool>("Portal")
+                        .HasColumnType("boolean")
+                        .HasColumnName("portal");
+
                     b.Property<string>("Reason")
                         .HasColumnType("text")
                         .HasColumnName("reason");
@@ -2954,6 +2962,14 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("ResultedBy")
                         .HasColumnType("uuid")
                         .HasColumnName("resulted_by");
+
+                    b.Property<DateTimeOffset?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reviewed_at");
+
+                    b.Property<Guid?>("ReviewedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reviewed_by");
 
                     b.Property<string>("Status")
                         .IsRequired()

@@ -56,7 +56,7 @@ public sealed class PlatformReviewFixTests(ApiFixture api)
     {
         var email = ApiFixture.UnclaimedAdminEmail;
         var squatter = api.CreateClient();
-        var signup = await squatter.PostAsJsonAsync("/api/auth/seeker/signup", new { fullName = "Squatter", email, password = "password123" }, Ct);
+        var signup = await api.SignUpAsync(squatter, "/api/auth/seeker/signup", new { fullName = "Squatter", email, password = "password123" }, Ct);
         signup.EnsureSuccessStatusCode();
         var auth = await signup.Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct);
         Assert.False(auth.GetProperty("user").GetProperty("isPlatformAdmin").GetBoolean());
@@ -75,7 +75,7 @@ public sealed class PlatformReviewFixTests(ApiFixture api)
     public async Task Suspended_course_business_stops_selling()
     {
         var tutor = api.CreateClient();
-        var signup = await (await tutor.PostAsJsonAsync("/api/auth/signup", new
+        var signup = await (await api.SignUpAsync(tutor, "/api/auth/signup", new
         {
             fullName = "Fraud Tutor", email = $"fraud-{Guid.NewGuid():N}@example.com", password = "password123", country = "NG", product = "courses",
             businessName = $"Fraud Academy {Guid.NewGuid().ToString("N")[..6]}",
@@ -154,7 +154,7 @@ public sealed class PlatformReviewFixTests(ApiFixture api)
     {
         var owner = api.CreateClient();
         var email = $"salon-{Guid.NewGuid():N}@example.com";
-        var signup = await (await owner.PostAsJsonAsync("/api/auth/signup", new
+        var signup = await (await api.SignUpAsync(owner, "/api/auth/signup", new
         {
             fullName = "Salon Owner", email, password = "password123", country = "NG", product = "bookings", businessName = $"Salon {Guid.NewGuid().ToString("N")[..6]}",
         }, Ct)).Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct);

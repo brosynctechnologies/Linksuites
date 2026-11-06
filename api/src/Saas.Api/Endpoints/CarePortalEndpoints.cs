@@ -17,7 +17,10 @@ public static class CarePortalEndpoints
         // Portal accounts are the shared customer accounts (the ones parents and learners use): password or emailed code. The code itself is
         // requested with POST /api/auth/otp/request (rate limited as otp).
         var patientAuth = app.MapGroup("/api/auth/patient").WithTags("Auth").RequireRateLimiting(RateLimits.Auth);
-        patientAuth.MapPost("/signup", (LearnerSignupRequest r, AuthService s, CancellationToken ct) => s.LearnerSignupAsync(r, ct)).Validate<LearnerSignupRequest>();
+        patientAuth.MapPost("/signup", (LearnerSignupRequest r, AuthService s, CancellationToken ct) => s.LearnerSignupAsync(r, Saas.Application.Billing.Products.Care, ct)).Validate<LearnerSignupRequest>();
+        // Final fix pass B: the sign-up answers { confirmationRequired } and emails a code; this route (code + password) issues the session.
+        patientAuth.MapPost("/signup/confirm", (ConfirmSignupRequest r, AuthService s, CancellationToken ct) => s.ConfirmSignupAsync(r, customer: true, ct))
+            .Validate<ConfirmSignupRequest>().RequireRateLimiting(RateLimits.Otp);
         patientAuth.MapPost("/login", (LoginRequest r, AuthService s, CancellationToken ct) => s.LearnerLoginAsync(r, ct)).Validate<LoginRequest>();
         patientAuth.MapPost("/otp/verify", (OtpVerifyRequest r, AuthService s, CancellationToken ct) => s.CustomerVerifyOtpAsync(r, ct))
             .Validate<OtpVerifyRequest>().RequireRateLimiting(RateLimits.Otp);
@@ -34,7 +37,7 @@ public static class CarePortalEndpoints
         var me = app.MapGroup("/api/care-portal").RequireAuthorization().WithTags("Care: portal");
         me.MapGet("/patients", (PatientPortalAccess p, CancellationToken ct) => p.PatientsAsync(ct));
 
-        // The record (signed notes and addenda only) and who opened it (name and role only). Neither writes RecordAccess.
+        // The record (signed notes and addenda only) and who opened it (name and role only). The record (and the bills) write a portal-read RecordAccess row; the log does not.
         me.MapGet("/patients/{id:guid}/record", (Guid id, PortalService s, CancellationToken ct) => s.RecordAsync(id, ct));
         me.MapGet("/patients/{id:guid}/access-log", (Guid id, PortalService s, CancellationToken ct) => s.AccessLogAsync(id, ct));
 

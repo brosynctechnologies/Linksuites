@@ -159,7 +159,8 @@ public sealed class CareReportService(IAppDbContext db, CareAccess access, ITena
         await EnsureAccessAsync(ct);
         var rows = await (from b in db.PatientBills.AsNoTracking()
                           join p in db.Patients.AsNoTracking() on b.PatientId equals p.Id
-                          where b.BalanceMinor > 0
+                          // Final review minor 1: a bill flagged for review (an online mismatch, money perhaps sitting in Paystack) is not chased.
+                          where b.BalanceMinor > 0 && !b.NeedsReview
                           select new { p.Id, p.Number, p.FirstName, p.LastName, p.Phone, p.Status, b.BalanceMinor, b.CreatedAt }).ToListAsync(ct);
         var clinic = await db.ClinicProfiles.AsNoTracking().Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
         var currency = await db.Tenants.Where(t => t.Id == TenantId).Select(t => t.Currency).FirstAsync(ct);

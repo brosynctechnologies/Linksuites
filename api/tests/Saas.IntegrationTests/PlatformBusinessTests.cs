@@ -62,7 +62,7 @@ public sealed class PlatformBusinessTests(ApiFixture api)
     {
         var owner = api.CreateClient();
         var slugName = $"Corner Shop {Guid.NewGuid().ToString("N")[..6]}";
-        var signup = await Json(await owner.PostAsJsonAsync("/api/auth/signup", new
+        var signup = await Json(await api.SignUpAsync(owner, "/api/auth/signup", new
         {
             fullName = "Shop Owner", email = $"shop-{Guid.NewGuid():N}@example.com", password = "password123", country = "NG",
             businessName = slugName, storeName = slugName, whatsappNumber = "+2348099999999",
@@ -118,7 +118,7 @@ public sealed class PlatformBusinessTests(ApiFixture api)
     {
         var agency = await kit.AgencyAsync("Busy Owner Realty", verified: true);
         var id = await kit.LiveListingAsync(agency.Client, await kit.ListingBodyAsync());
-        await api.CreateClient().PostAsJsonAsync("/api/auth/signup", new
+        await api.SignUpAsync(api.CreateClient(), "/api/auth/signup", new
         {
             fullName = "Busy Owner", email = agency.Email, password = "password123", country = "NG", product = "courses", businessName = "Busy Owner Academy",
         }, Ct);

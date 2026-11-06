@@ -5,11 +5,11 @@ import type { CareChecklistItemDto } from "@/lib/types";
 import { CheckIcon } from "@/components/icons";
 import { cx } from "@/components/ui";
 
-/** Where each checklist item is done, and a line on what it means. Wards and beds arrive with the inpatient pages (Task 19). */
+/** Where each checklist item is done, and a line on what it means. Wards link to wards and beds setup (Task 19). */
 const WHERE: Record<string, { href?: string; text: string }> = {
   profile: { href: "/app/settings", text: "Address and phone, the patient number prefix, and what registration and consultation cost." },
   "price-list": { href: "/app/price-list", text: "Consultations, tests, drugs, procedures and bed days. Bills are built from it." },
-  wards: { text: "Needed only when you admit patients. Wards and beds are set up with the inpatient pages." },
+  wards: { href: "/app/wards", text: "Needed only when you admit patients: each ward, its daily bed charge, minimum deposit, nurses and beds." },
   staff: { href: "/app/staff", text: "Invite your doctors, nurses, front desk and cashier. Each signs in with their own email." },
 };
 

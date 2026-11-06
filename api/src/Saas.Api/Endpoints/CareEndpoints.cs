@@ -132,6 +132,10 @@ public static class CareEndpoints
         }).DisableAntiforgery();
         care.MapGet("/tests/{id:guid}/file", (Guid id, [FromHeader(Name = RecordGuard.ReasonHeader)] string? reason, TestService s, CancellationToken ct) =>
             s.FileLinkAsync(id, reason, ct));
+        // Post-build: a doctor or the director reviews a result before the portal shows it (and the patient is told); the list of results
+        // waiting for review (no description or result text).
+        care.MapPost("/tests/{id:guid}/review", (Guid id, TestService s, CancellationToken ct) => s.ReviewAsync(id, ct));
+        care.MapGet("/tests/awaiting-review", (TestService s, CancellationToken ct) => s.AwaitingReviewAsync(ct));
         // The signed result-file link carries its own proof (issued after a logged clinical read), so it sits outside the signed-in group.
         app.MapGet("/api/care/result-files/{id:guid}/{expires:long}/{signature}", async (Guid id, long expires, string signature, TestService s,
             HttpContext http, CancellationToken ct) =>
@@ -184,6 +188,8 @@ public static class CareEndpoints
         care.MapPost("/admissions/{id:guid}/transfer", (Guid id, TransferRequest r, AdmissionService s, CancellationToken ct) => s.TransferAsync(id, r, ct));
         // Task 16: the admitting doctor or the director adds a covering doctor to the care team (a live care relationship, ending like the
         // admitting doctor's) or ends one. Audited with ids only.
+        // Task 19: clinical staff read the care team (doctors' names only; not a record open).
+        care.MapGet("/admissions/{id:guid}/care-team", (Guid id, AdmissionService s, CancellationToken ct) => s.CareTeamAsync(id, ct));
         care.MapPost("/admissions/{id:guid}/care-team", (Guid id, CareTeamRequest r, AdmissionService s, CancellationToken ct) =>
             s.AddCoveringDoctorAsync(id, r, ct));
         care.MapDelete("/admissions/{id:guid}/care-team/{userId:guid}", async (Guid id, Guid userId, AdmissionService s, CancellationToken ct) =>
@@ -223,8 +229,8 @@ public static class CareEndpoints
         care.MapGet("/admissions", (AdmissionStatus? status, DischargeService s, CancellationToken ct) => s.ListAsync(status, ct));
         care.MapGet("/admissions/{id:guid}/discharge-summary", (Guid id, [FromHeader(Name = RecordGuard.ReasonHeader)] string? reason, DischargeService s,
             CancellationToken ct) => s.GetSummaryAsync(id, reason, ct));
-        care.MapPut("/admissions/{id:guid}/discharge-summary", (Guid id, SaveDischargeSummaryRequest r, DischargeService s, CancellationToken ct) =>
-            s.SaveSummaryAsync(id, r, ct));
+        care.MapPut("/admissions/{id:guid}/discharge-summary", (Guid id, SaveDischargeSummaryRequest r, Guid? draftId, DischargeService s, CancellationToken ct) =>
+            s.SaveSummaryAsync(id, r, draftId, ct)); // ?draftId= the draft being edited: refused once it was discarded
         care.MapPost("/admissions/{id:guid}/discharge-summary/sign", (Guid id, DischargeService s, CancellationToken ct) => s.SignSummaryAsync(id, ct));
         // The director takes over an unsigned draft; the author or the director discards one.
         care.MapPost("/admissions/{id:guid}/discharge-summary/take-over", (Guid id, DischargeService s, CancellationToken ct) => s.TakeOverSummaryAsync(id, ct));

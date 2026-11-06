@@ -217,6 +217,18 @@ public sealed class OnlinePaymentService(
         }
         db.ChangeTracker.Clear();
         var p = await db.CarePayments.AsNoTracking().FirstAsync(x => x.ProviderRef == reference, ct);
+        if (IsOpen(p.Status) && IsOpen(payment.Status))
+        {
+            // Post-build: still open after asking. Another request (the webhook, or a second return verify) may hold this reference's claim
+            // and be applying it under the bill lock right now, while Paystack had nothing more to hand us. Wait for the lock and read again,
+            // so the answer is the settled state, not a "Pending" the patient has to check again.
+            await using (var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null)
+            {
+                await db.LockAsync(BillingService.LockKey(TenantId), ct);
+                p = await db.CarePayments.AsNoTracking().FirstAsync(x => x.ProviderRef == reference, ct);
+                if (tx is not null) await tx.CommitAsync(ct);
+            }
+        }
         var balance = await db.PatientBills.AsNoTracking().Where(b => b.Id == p.BillId).Select(b => b.BalanceMinor).FirstAsync(ct);
         return new CareOnlineStatusDto(p.Id, reference, p.BillId, p.AmountMinor, p.Status, p.ReceiptNumber, balance);
     }

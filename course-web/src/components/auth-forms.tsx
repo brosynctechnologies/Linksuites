@@ -8,28 +8,41 @@ import { setAuth } from "@/lib/auth";
 import { COUNTRIES, PRODUCT } from "@/lib/config";
 import type { AuthResponse, TutorSignupRequest } from "@/lib/types";
 import { nextPath } from "./auth-shell";
+import { ConfirmEmailStep, isSignupPending, isUnconfirmed, type SignupPending } from "./confirm-email";
 import { Button, ErrorBox, Input, Notice, Select, linkClass } from "./ui";
 
+/**
+ * Runs a sign-in call, stores the session and moves on (`?next=` or `fallback`). Final fix pass B: a sign-up answers "confirm your email"
+ * (`pending`, the address the code went to) and a password login for an unconfirmed sign-up is refused with the API's sentence
+ * (`unconfirmed`); the form then shows {@link ConfirmEmailStep}, which ends in `finish`.
+ */
 function useAuthSubmit(fallback: string) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
-  async function run(fn: () => Promise<AuthResponse | void>) {
+  const [pending, setPending] = useState<string | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState<string | null>(null);
+  function finish(res: AuthResponse) {
+    setAuth(res);
+    router.replace(nextPath(fallback));
+  }
+  async function run(fn: () => Promise<AuthResponse | SignupPending | void>) {
     setBusy(true);
     setError(null);
     try {
       const res = await fn();
-      if (res) {
-        setAuth(res);
-        router.replace(nextPath(fallback));
+      if (isSignupPending(res)) setPending(res.email);
+      else if (res) {
+        finish(res);
         return;
       }
     } catch (err) {
-      setError(toApiError(err));
+      if (isUnconfirmed(err)) setUnconfirmed(err.message);
+      else setError(toApiError(err));
     }
     setBusy(false);
   }
-  return { busy, error, setError, run };
+  return { busy, error, setError, run, finish, pending, setPending, unconfirmed, setUnconfirmed };
 }
 
 // ---------- Learners ----------
@@ -37,11 +50,25 @@ function useAuthSubmit(fallback: string) {
 export function LearnerLoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const { busy, error, run } = useAuthSubmit("/learn");
+  const { busy, error, run, finish, unconfirmed, setUnconfirmed } = useAuthSubmit("/learn");
 
   function submit(e: FormEvent) {
     e.preventDefault();
     run(() => api<AuthResponse>("/api/auth/learner/login", { method: "POST", body: { email: email.trim(), password }, auth: false }));
+  }
+
+  if (unconfirmed) {
+    return (
+      <ConfirmEmailStep
+        email={email.trim()}
+        password={password}
+        confirmPath="/api/auth/learner/signup/confirm"
+        notice={unconfirmed}
+        onConfirmed={finish}
+        onBack={() => setUnconfirmed(null)}
+        backLabel="Back to log in"
+      />
+    );
   }
 
   return (
@@ -63,7 +90,7 @@ export function LearnerLoginForm() {
 
 export function LearnerSignupForm() {
   const [form, setForm] = useState({ fullName: "", email: "", password: "" });
-  const { busy, error, setError, run } = useAuthSubmit("/learn");
+  const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/learn");
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   function submit(e: FormEvent) {
@@ -77,11 +104,24 @@ export function LearnerSignupForm() {
       return;
     }
     run(() =>
-      api<AuthResponse>("/api/auth/learner/signup", {
+      api<AuthResponse | SignupPending>("/api/auth/learner/signup", {
         method: "POST",
         body: { fullName: form.fullName.trim(), email: form.email.trim(), password: form.password },
         auth: false,
       }),
+    );
+  }
+
+  if (pending) {
+    return (
+      <ConfirmEmailStep
+        email={pending}
+        password={form.password}
+        confirmPath="/api/auth/learner/signup/confirm"
+        onConfirmed={finish}
+        onBack={() => setPending(null)}
+        backLabel="Change my details"
+      />
     );
   }
 
@@ -125,12 +165,27 @@ export function TutorLoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const { busy, error, setError, run } = useAuthSubmit("/studio");
+  const { busy, error, setError, run, finish, unconfirmed, setUnconfirmed } = useAuthSubmit("/studio");
 
   const switchMode = (m: TutorMode) => {
     setError(null);
     setMode(m);
   };
+
+  if (unconfirmed) {
+    return (
+      <ConfirmEmailStep
+        email={email.trim()}
+        password={password}
+        confirmPath="/api/auth/signup/confirm"
+        product={PRODUCT}
+        notice={unconfirmed}
+        onConfirmed={finish}
+        onBack={() => setUnconfirmed(null)}
+        backLabel="Back to log in"
+      />
+    );
+  }
 
   if (mode === "password") {
     return (
@@ -241,7 +296,7 @@ export function TutorSignupForm({ defaultName, defaultEmail }: { defaultName?: s
     product: PRODUCT,
     businessName: "",
   });
-  const { busy, error, setError, run } = useAuthSubmit("/studio");
+  const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/studio");
   const set = (k: keyof TutorSignupRequest) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   function submit(e: FormEvent) {
@@ -254,7 +309,28 @@ export function TutorSignupForm({ defaultName, defaultEmail }: { defaultName?: s
       setError(new ApiError(400, { detail: "Password must be at least 8 characters." }));
       return;
     }
-    run(() => api<AuthResponse>("/api/auth/signup", { method: "POST", body: { ...form, fullName: form.fullName.trim(), email: form.email.trim(), businessName: form.businessName.trim() }, auth: false }));
+    run(() =>
+      api<AuthResponse | SignupPending>("/api/auth/signup", {
+        method: "POST",
+        body: { ...form, fullName: form.fullName.trim(), email: form.email.trim(), businessName: form.businessName.trim() },
+        auth: false,
+      }),
+    );
+  }
+
+  // A learner adding a studio with their password is signed in at once; a new address confirms the emailed code first.
+  if (pending) {
+    return (
+      <ConfirmEmailStep
+        email={pending}
+        password={form.password}
+        confirmPath="/api/auth/signup/confirm"
+        product={PRODUCT}
+        onConfirmed={finish}
+        onBack={() => setPending(null)}
+        backLabel="Change my details"
+      />
+    );
   }
 
   return (

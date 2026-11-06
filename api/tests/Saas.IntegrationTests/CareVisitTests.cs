@@ -86,7 +86,7 @@ public sealed class CareVisitTests(ApiFixture api)
         Assert.Equal("Routine", first.GetProperty("urgency").GetString());
         Assert.Equal(patientId, first.GetProperty("patientId").GetGuid());
         var firstBill = first.GetProperty("billId").GetGuid();
-        var lines = await LinesAsync(desk, firstBill);
+        var lines = await LinesAsync(clinic.Owner, firstBill); // final review I2: the desk gets categories and no price-item ids
         Assert.Equal(2, lines.Count);
         Assert.Contains((registration, 200_000L), lines);
         Assert.Contains((consultation, 500_000L), lines);
@@ -104,7 +104,7 @@ public sealed class CareVisitTests(ApiFixture api)
         // The next visit (after the first is done) is charged the consultation only.
         await Json(await StageAsync(desk, Id(first), "Done"));
         var second = await kit.CheckInAsync(desk, patientId);
-        var secondLines = await LinesAsync(desk, second.GetProperty("billId").GetGuid());
+        var secondLines = await LinesAsync(clinic.Owner, second.GetProperty("billId").GetGuid());
         Assert.Equal([(consultation, 500_000L)], secondLines);
         Assert.NotEqual(firstBill, second.GetProperty("billId").GetGuid());
         await Json(await StageAsync(desk, Id(second), "Done"));
@@ -126,7 +126,7 @@ public sealed class CareVisitTests(ApiFixture api)
         Assert.Equal(Id(appointment), third.GetProperty("appointmentId").GetGuid());
         var status = await api.WithDbAsync(db => db.Appointments.IgnoreQueryFilters().Where(a => a.Id == Id(appointment)).Select(a => a.Status).FirstAsync(Ct));
         Assert.Equal(AppointmentStatus.CheckedIn, status);
-        Assert.Equal([(consultation, 500_000L)], await LinesAsync(desk, third.GetProperty("billId").GetGuid()));
+        Assert.Equal([(consultation, 500_000L)], await LinesAsync(clinic.Owner, third.GetProperty("billId").GetGuid()));
 
         // A checked-in appointment can't be checked in again; closing the visit completes the appointment.
         await Json(await StageAsync(desk, Id(third), "Done"));

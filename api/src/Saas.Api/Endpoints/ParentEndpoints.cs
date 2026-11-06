@@ -15,7 +15,10 @@ public static class ParentEndpoints
     {
         // Parent accounts are the shared customer accounts (the same ones learners and home-seekers use): password or emailed code.
         var parentAuth = app.MapGroup("/api/auth/parent").WithTags("Auth").RequireRateLimiting(RateLimits.Auth);
-        parentAuth.MapPost("/signup", (LearnerSignupRequest r, AuthService s, CancellationToken ct) => s.LearnerSignupAsync(r, ct)).Validate<LearnerSignupRequest>();
+        parentAuth.MapPost("/signup", (LearnerSignupRequest r, AuthService s, CancellationToken ct) => s.LearnerSignupAsync(r, Saas.Application.Billing.Products.School, ct)).Validate<LearnerSignupRequest>();
+        // Final fix pass B: the sign-up answers { confirmationRequired } and emails a code; this route (code + password) issues the session.
+        parentAuth.MapPost("/signup/confirm", (ConfirmSignupRequest r, AuthService s, CancellationToken ct) => s.ConfirmSignupAsync(r, customer: true, ct))
+            .Validate<ConfirmSignupRequest>().RequireRateLimiting(RateLimits.Otp);
         parentAuth.MapPost("/login", (LoginRequest r, AuthService s, CancellationToken ct) => s.LearnerLoginAsync(r, ct)).Validate<LoginRequest>();
         // The code itself is requested with POST /api/auth/otp/request.
         parentAuth.MapPost("/otp/verify", (OtpVerifyRequest r, AuthService s, CancellationToken ct) => s.CustomerVerifyOtpAsync(r, ct))

@@ -20,7 +20,7 @@ public sealed record PortalPatientRef(
 /// <item>then <see cref="CarePortalGate.EnsureOpenAsync"/>: 403 "This clinic's portal is unavailable." when the clinic is suspended;</item>
 /// <item>then the request acts as the patient's clinic, so every later query runs under that clinic's tenant filter.</item>
 /// </list>
-/// Portal reads never write <see cref="RecordAccess"/>: a patient reading their own record is not staff access.
+/// Reading the record or the bills writes <see cref="RecordAccess"/> marked as a portal read (final review C1, <see cref="RecordGuard.LogPortalReadAsync"/>).
 /// </summary>
 public sealed class PatientPortalAccess(IAppDbContext db, ITenantContext tenant, ICurrentUser user, CarePortalGate gate)
 {

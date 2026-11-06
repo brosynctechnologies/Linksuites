@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   useEffect,
   useId,
+  useRef,
   type ButtonHTMLAttributes,
   type CSSProperties,
   type InputHTMLAttributes,
@@ -13,6 +14,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { ApiError } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { BackIcon, CloseIcon, SearchIcon, WhatsAppIcon } from "./icons";
 import {
   buttonClass,
@@ -274,14 +276,21 @@ export function Notice({ children, tone = "info", className }: { children: React
 const UPGRADE_COPY =
   "You have reached a limit of your current plan. Clinic takes 15 staff and 20 beds and adds online payments; Hospital takes 60 staff and 150 beds. Existing records are never blocked.";
 
+/** The plan-limit prompt. Leadership gets the plan in settings; everyone else is told who can upgrade (they can't open settings). */
 export function UpgradePrompt({ message, plan }: { message?: string; plan?: string }) {
+  const role = useAuth()?.tenant?.role;
+  const leadership = role === "Owner" || role === "Admin";
   return (
     <div className={cx(panelClass, "border-l-[3px] border-l-iodine p-4 text-sm")} role="alert">
       <p className="font-semibold text-ink">{plan ? `Upgrade to ${plan} to continue` : "Upgrade your plan to continue"}</p>
       <p className="mt-1 max-w-prose text-slate-600">{message || UPGRADE_COPY}</p>
-      <Link href="/app/settings#plan" className={buttonClass("primary", "mt-3")}>
-        See plans
-      </Link>
+      {leadership ? (
+        <Link href="/app/settings#plan" className={buttonClass("primary", "mt-3")}>
+          See plans
+        </Link>
+      ) : (
+        <p className="mt-2 font-semibold text-ink">Ask your medical director to upgrade.</p>
+      )}
     </div>
   );
 }
@@ -466,7 +475,18 @@ export function Segmented<T extends string>({
   );
 }
 
-/** Accessible modal dialog: a bottom sheet on phones, centred panel on larger screens. */
+/** Open dialogs, oldest first: only the last one handles Escape and Tab. */
+const modalStack: object[] = [];
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** The elements inside `root` that Tab can reach, in document order. */
+function focusables(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.getClientRects().length > 0);
+}
+
+/** Accessible modal dialog: a bottom sheet on phones, centred panel on larger screens. Focus moves in, Tab is trapped, Escape closes, focus returns. */
 export function Modal({
   open,
   title,
@@ -486,30 +506,77 @@ export function Modal({
   dark?: boolean;
 }) {
   const titleId = useId();
+  const panel = useRef<HTMLDivElement>(null);
+  // The latest onClose without re-running the focus effect (parents pass a new function on every render).
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  }, [onClose]);
+
+  // Focus management (Task 19): focus moves into the dialog, Tab stays inside it, Escape closes it, and focus goes back to what had it.
+  // Only the topmost open dialog answers keys, so a reason dialog over another dialog closes alone.
   useEffect(() => {
     if (!open) return;
+    const returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const token = {};
+    modalStack.push(token);
+    const frame = requestAnimationFrame(() => {
+      const el = panel.current;
+      if (!el || el.contains(document.activeElement)) return;
+      const first = focusables(el).find((f) => !f.hasAttribute("data-modal-close")) ?? el;
+      first.focus();
+    });
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (modalStack[modalStack.length - 1] !== token) return;
+      const el = panel.current;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close.current();
+        return;
+      }
+      if (e.key !== "Tab" || !el) return;
+      const list = focusables(el);
+      if (list.length === 0) {
+        e.preventDefault();
+        el.focus();
+        return;
+      }
+      const first = list[0];
+      const last = list[list.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !el.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !el.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
+      cancelAnimationFrame(frame);
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      const at = modalStack.indexOf(token);
+      if (at >= 0) modalStack.splice(at, 1);
+      if (modalStack.length === 0) document.body.style.overflow = prev;
+      if (returnTo && returnTo.isConnected) returnTo.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open || typeof document === "undefined") return null;
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
       <div className="absolute inset-0 animate-fade-in bg-ink/55" aria-hidden="true" onClick={onClose} />
       <div
+        ref={panel}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         className={cx(
-          "relative flex max-h-[92dvh] w-full animate-sheet-up flex-col rounded-t-[14px] shadow-float sm:rounded-panel",
+          "relative flex max-h-[92dvh] w-full animate-sheet-up flex-col outline-none rounded-t-[14px] shadow-float sm:rounded-panel",
           dark ? "on-scrub bg-ink text-white" : "bg-surface",
           wide ? "sm:max-w-3xl" : "sm:max-w-md",
         )}
@@ -521,6 +588,7 @@ export function Modal({
           </h2>
           <button
             type="button"
+            data-modal-close=""
             onClick={onClose}
             className={cx(
               "-mr-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-control",

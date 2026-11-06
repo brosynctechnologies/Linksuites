@@ -134,3 +134,62 @@ export const WhatsAppIcon = (p: P) => (
     <path d="M17.5 14.4c-.3-.1-1.8-.9-2-1-.3-.1-.5-.1-.7.1l-.9 1.1c-.2.2-.3.2-.6.1-.3-.1-1.3-.5-2.4-1.5-.9-.8-1.5-1.8-1.7-2.1-.2-.3 0-.5.1-.6l.4-.5c.2-.2.2-.3.3-.5.1-.2 0-.4 0-.5l-.9-2.2c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.2 5.1 4.5.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.8-.7 2-1.4.2-.7.2-1.3.2-1.4-.1-.1-.3-.2-.6-.3zM12 21.8c-1.8 0-3.5-.5-5-1.4l-.4-.2-3.7 1 1-3.6-.2-.4A9.8 9.8 0 0 1 2.2 12 9.8 9.8 0 0 1 12 2.2a9.8 9.8 0 0 1 9.8 9.8A9.8 9.8 0 0 1 12 21.8zM12 0a12 12 0 0 0-10.3 18.1L0 24l6-1.6A12 12 0 1 0 12 0z" />
   </svg>
 );
+/** The queue: people waiting in line. */
+export const QueueIcon = (p: P) => (
+  <Svg {...p}>
+    <circle cx="6" cy="7" r="2.5" />
+    <circle cx="13" cy="7" r="2.5" />
+    <path d="M2.5 19v-2.5A3.5 3.5 0 0 1 6 13h0a3.5 3.5 0 0 1 3.5 3.5V19M9.5 19v-2.5A3.5 3.5 0 0 1 13 13h0a3.5 3.5 0 0 1 3.5 3.5V19" />
+    <path d="M19 9v6M17 12l2 3 2-3" />
+  </Svg>
+);
+export const CalendarIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="3.5" y="5" width="17" height="15.5" rx="1.5" />
+    <path d="M3.5 10h17M8 3v4M16 3v4" />
+  </Svg>
+);
+/** An unsigned note: a sheet with a pen line. */
+export const NoteIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M6 3h9l4 4v14H6z" />
+    <path d="M14 3v5h5M9 13h6M9 17h3" />
+  </Svg>
+);
+export const ChevronLeftIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="m15 5-7 7 7 7" />
+  </Svg>
+);
+export const ChevronRightIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="m9 5 7 7-7 7" />
+  </Svg>
+);
+/** A ward bed: a frame, a pillow and a mattress line. */
+export const BedIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M3 6v13M3 15h18v4M21 15v-3a3 3 0 0 0-3-3h-7v6" />
+    <rect x="5.5" y="10" width="4" height="3" rx="1" />
+  </Svg>
+);
+/** An admitted patient: a person beside a ward bed. */
+export const WardIcon = (p: P) => (
+  <Svg {...p}>
+    <circle cx="7" cy="6" r="2.5" />
+    <path d="M3 21v-6a4 4 0 0 1 8 0v6M13 13h8v8M13 21v-8M15 13v-2h4v2" />
+  </Svg>
+);
+/** A bill: a torn-off sheet with lines and a total. */
+export const BillIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M6 3h12v18l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5L6 21z" />
+    <path d="M9 8h6M9 12h6M9 16h3" />
+  </Svg>
+);
+/** Reports: three bars on a baseline. */
+export const ReportIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 20h16M7 16v-5M12 16V7M17 16v-8" />
+  </Svg>
+);

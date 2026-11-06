@@ -8,6 +8,7 @@ import { COUNTRIES, PRODUCT } from "@/lib/config";
 import type { AuthResponse, SignupRequest } from "@/lib/types";
 import { Button, ErrorBox, Input, Select } from "@/components/ui";
 import { nextPath } from "@/components/auth-shell";
+import { ConfirmEmailStep, isSignupPending, type SignupPending } from "@/components/confirm-email";
 
 export function SignupForm() {
   const router = useRouter();
@@ -21,6 +22,8 @@ export function SignupForm() {
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  // Final fix pass B: the sign-up emails a 6-digit code; the account is usable once it is entered.
+  const [pending, setPending] = useState<string | null>(null);
   const set = (k: keyof SignupRequest) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function submit(e: FormEvent) {
@@ -36,13 +39,35 @@ export function SignupForm() {
     setBusy(true);
     setError(null);
     try {
-      const res = await api<AuthResponse>("/api/auth/signup", { method: "POST", body: form, auth: false });
+      const res = await api<AuthResponse | SignupPending>("/api/auth/signup", { method: "POST", body: form, auth: false });
+      if (isSignupPending(res)) {
+        setPending(res.email);
+        setBusy(false);
+        return;
+      }
       setAuth(res);
       router.replace(nextPath());
     } catch (err) {
       setError(toApiError(err));
       setBusy(false);
     }
+  }
+
+  if (pending) {
+    return (
+      <ConfirmEmailStep
+        email={pending}
+        password={form.password}
+        confirmPath="/api/auth/signup/confirm"
+        product={PRODUCT}
+        onConfirmed={(res) => {
+          setAuth(res);
+          router.replace(nextPath());
+        }}
+        onBack={() => setPending(null)}
+        backLabel="Change my details"
+      />
+    );
   }
 
   return (

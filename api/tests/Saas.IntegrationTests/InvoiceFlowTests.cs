@@ -74,12 +74,12 @@ public sealed class InvoiceFlowTests(ApiFixture api)
     {
         var email = $"multi-{Guid.NewGuid():N}@example.com";
         var orders = api.CreateClient();
-        (await orders.PostAsJsonAsync("/api/auth/signup", new
+        (await api.SignUpAsync(orders, "/api/auth/signup", new
         {
             fullName = "Multi", email, password = "password123", storeName = "Multi Store", whatsappNumber = "08031234567", country = "NG",
         }, Ct)).EnsureSuccessStatusCode();
 
-        var wrongPassword = await api.CreateClient().PostAsJsonAsync("/api/auth/signup",
+        var wrongPassword = await api.SignUpAsync(api.CreateClient(), "/api/auth/signup",
             new { fullName = "Multi", email, password = "not-the-password", country = "NG", product = "invoices", businessName = "Multi Inv" }, Ct);
         Assert.Equal(HttpStatusCode.BadRequest, wrongPassword.StatusCode);
 

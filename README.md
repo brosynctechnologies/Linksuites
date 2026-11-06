@@ -13,6 +13,7 @@ Build plan: *Six SaaS Product Build Plans* (12 Oct 2026). Products share one mul
 | 6 | Property Listing Website (MVP + phase 2) | **Done**: agencies, agents and landlords; listings for rent, sale and short-let with a true move-in cost breakdown; photo resizing, watermarking and duplicate-photo detection across agencies; search with filters, map and area pages; enquiries, WhatsApp/call tracking, viewing bookings; saved searches with instant and daily alerts; agent verification, moderation, reports, reviews; listing expiry with one-click renew; short-let bookings paid to the platform with commission, refunds and host payouts; paid boosts |
 | 7 | Platform admin console | **Done**: admin roles (Super admin, Moderator, Finance, Support) with emailed-code sign-in; businesses and users across every product; suspension; read-only support view-as shown to the customer; plans, comps, payments, payouts; overview, audit log, job health |
 | 8 | School Management System | **Done**: academic setup, students, offline attendance, scores and published results, report cards, fees to the school's own Paystack, announcements and messages, in-app notifications, parent and student portals, Excel and CSV import (templates, preview, all-or-nothing confirm) for students, staff, classes, subjects, scores, ratings, remarks, attendance, timetables, exam sittings, questions, Play lists, fees, payments and expenses |
+| 9 | CareLink (clinics and small hospitals) | **Built, final review pending**: patient registration with duplicate checks and imports, appointments with doctor hours and slots, check-in queue, triage with vital-sign flags, consultations with ICD-10 diagnoses, prescriptions and tests with allergy checks and private result files, a logged record guard with emergency access, wards, beds, admissions with deposits, ward rounds, nursing notes, fluid and medication charts, discharge summaries, bills with bed-day charges, desk and online payments to the clinic's own Paystack, receipts and reports; a patient portal for patients and parents across clinics (signed record, who opened it, bills and Pay now, appointments, contact details, notices) |
 
 ## Layout
 
@@ -29,6 +30,7 @@ booking-web/               BookLink: Next.js app for the Booking System
 course-web/                LearnLink: Next.js app for the Online Course Platform
 property-web/              PropertyLink: Next.js app for the Property Listing Website
 school-web/                SchoolLink: Next.js app for the School Management System
+care-web/                  CareLink: Next.js app for clinics (staff app and patient portal)
 admin-web/                 Admin console for the people who run the platform (all products)
 docs/API.md                API contract: shared core + WhatsApp Order System
 docs/INVOICES_API.md       API contract: Invoice Generator
@@ -38,6 +40,7 @@ docs/COURSES_API.md        API contract: Online Course Platform
 docs/PROPERTY_API.md       API contract: Property Listing Website
 docs/PLATFORM_API.md       API contract: platform admin console
 docs/SCHOOL_API.md         API contract: SchoolLink (staff, parent and student portals, notifications, Excel and CSV imports)
+docs/CARE_API.md           API contract: CareLink (staff roles, clinical record guard, patient portal, notifications)
 docs/superpowers/          design spec and implementation plan for the property product
 docs/design/               design plans for each web app
 docker-compose.yml         local PostgreSQL on port 55432
@@ -74,7 +77,7 @@ OrderLink runs on http://localhost:3700. For InvoiceLink:
 cd invoice-web && npm install && npm run dev
 ```
 
-InvoiceLink runs on http://localhost:3800 and BookLink (`cd booking-web && npm run dev`) on http://localhost:3900, LearnLink (`cd course-web && npm run dev`) on http://localhost:4000, PropertyLink (`cd property-web && npm run dev`) on http://localhost:4100, SchoolLink (`cd school-web && npm run dev`) on http://localhost:4200, the admin console (`cd admin-web && npm run dev`) on http://localhost:4300, and the LinkSuite hub that links to every app (`cd hub-web && npm run dev`) on http://localhost:3600. Copy each app's `.env.example` to `.env.local` if the API is elsewhere.
+InvoiceLink runs on http://localhost:3800 and BookLink (`cd booking-web && npm run dev`) on http://localhost:3900, LearnLink (`cd course-web && npm run dev`) on http://localhost:4000, PropertyLink (`cd property-web && npm run dev`) on http://localhost:4100, SchoolLink (`cd school-web && npm run dev`) on http://localhost:4200, CareLink (`cd care-web && npm run dev`) on http://localhost:4400 (patient portal at `/portal`), the admin console (`cd admin-web && npm run dev`) on http://localhost:4300, and the LinkSuite hub that links to every app (`cd hub-web && npm run dev`) on http://localhost:3600. Copy each app's `.env.example` to `.env.local` if the API is elsewhere.
 
 ## Tests
 

@@ -422,7 +422,7 @@ public sealed partial class SchoolPlatformTests(ApiFixture api)
         Assert.All(pages.Concat(SchoolWebRoutes), word => Assert.False(Slugs.IsValid(word!), $"\"{word}\" must be a reserved school link."));
 
         var client = api.CreateClient();
-        Task<HttpResponseMessage> SignupAsync(string businessName, string? slug) => client.PostAsJsonAsync("/api/auth/signup", new
+        Task<HttpResponseMessage> SignupAsync(string businessName, string? slug) => api.SignUpAsync(client, "/api/auth/signup", new
         {
             fullName = "Reserved Proprietor", email = $"reserved-{Guid.NewGuid():N}@example.com", password = "password123", country = "NG",
             product = "school", businessName, slug,
@@ -460,7 +460,7 @@ public sealed partial class SchoolPlatformTests(ApiFixture api)
     private async Task<(HttpClient Owner, Guid TenantId)> BusinessAsync(string product, string name)
     {
         var client = api.CreateClient();
-        var auth = await Json(await client.PostAsJsonAsync("/api/auth/signup", new
+        var auth = await Json(await api.SignUpAsync(client, "/api/auth/signup", new
         {
             fullName = "Grandfathered Owner", email = $"gf-{Guid.NewGuid():N}@example.com", password = "password123", country = "NG",
             product, businessName = name, storeName = name, whatsappNumber = "+2348099999999",
@@ -515,7 +515,7 @@ public sealed partial class SchoolPlatformTests(ApiFixture api)
     public async Task Signup_slug_is_only_for_schools()
     {
         var wanted = $"my-invoices-{Guid.NewGuid().ToString("N")[..6]}";
-        var refused = await api.CreateClient().PostAsJsonAsync("/api/auth/signup", new
+        var refused = await api.SignUpAsync(api.CreateClient(), "/api/auth/signup", new
         {
             fullName = "Invoice Owner", email = $"inv-{Guid.NewGuid():N}@example.com", password = "password123", country = "NG",
             product = "invoices", businessName = "My Invoices", slug = wanted,
@@ -535,7 +535,7 @@ public sealed partial class SchoolPlatformTests(ApiFixture api)
         await api.WithDbAsync(db => db.SchoolProfiles.IgnoreQueryFilters().Where(p => p.TenantId == other.TenantId).ExecuteUpdateAsync(s => s.SetProperty(p => p.Slug, stale), Ct));
         var email = $"race-{Guid.NewGuid():N}@example.com";
 
-        var response = await api.CreateClient().PostAsJsonAsync("/api/auth/signup", new
+        var response = await api.SignUpAsync(api.CreateClient(), "/api/auth/signup", new
         {
             fullName = "Race Proprietor", email, password = "password123", country = "NG", product = "school", businessName = "Race School", slug = stale,
         }, Ct);
@@ -567,7 +567,7 @@ public sealed partial class SchoolPlatformTests(ApiFixture api)
             }
             Assert.False(await api.WithDbAsync(db => db.Tenants.AnyAsync(t => t.Slug == taken, Ct)), product); // only the product holds it
 
-            var response = await api.CreateClient().PostAsJsonAsync("/api/auth/signup", new
+            var response = await api.SignUpAsync(api.CreateClient(), "/api/auth/signup", new
             {
                 fullName = "Second Owner", email = $"second-{Guid.NewGuid():N}@example.com", password = "password123", country = "NG",
                 product, businessName = $"Moved Link {suffix}",

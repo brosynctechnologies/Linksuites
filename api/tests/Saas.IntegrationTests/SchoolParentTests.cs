@@ -113,11 +113,12 @@ public sealed class SchoolParentTests(ApiFixture api)
         byCode.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", signedIn.GetProperty("accessToken").GetString());
         Assert.Equal(2, (await Json(await byCode.GetAsync("/api/parent/children", Ct))).GetArrayLength());
 
-        // Ruling (CareLink Task 15 fix round 2, R1, platform-wide): the first code sign-in proves the mailbox, so the password set before the
-        // address was proved is removed and the old sessions end. The parent signs in by code (or sets a new password) from now on.
-        var login = await anonymous.PostAsJsonAsync("/api/auth/parent/login", new { email = parentEmail, password = "password123" }, Ct);
-        Assert.Equal(HttpStatusCode.BadRequest, login.StatusCode);
+        // Final fix pass B (user decision I3, superseding the Task 15 R1 scope): the parent confirmed the address with the code at sign-up, so
+        // a later code sign-in is no takeover. The password still signs in and the earlier session still works.
+        var login = await Json(await anonymous.PostAsJsonAsync("/api/auth/parent/login", new { email = parentEmail, password = "password123" }, Ct));
+        Assert.Equal(JsonValueKind.Null, login.GetProperty("tenant").ValueKind);
         Assert.Equal(2, (await Json(await byCode.GetAsync("/api/parent/children", Ct))).GetArrayLength()); // the code session works
+        Assert.Equal(2, (await Json(await parent.GetAsync("/api/parent/children", Ct))).GetArrayLength()); // and so does the sign-up's
     }
 
     [Fact]

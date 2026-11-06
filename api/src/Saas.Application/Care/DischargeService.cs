@@ -78,6 +78,7 @@ public sealed class DischargeService(
     public const string UnsignedRounds = "Sign or discard the unsigned ward-round notes first.";
     public const string EmptySummary = "Write the diagnoses and the condition at discharge before signing.";
     public const string NoSignedSummary = "The discharge summary isn't signed yet.";
+    public const string DraftDiscarded = "This draft was discarded. Start a new discharge summary to write one.";
     public const int MaxDiagnosesLength = 2_000;
     public const int MaxTreatmentLength = 10_000;
     public const int MaxConditionLength = 1_000;
@@ -108,7 +109,17 @@ public sealed class DischargeService(
     /// patient isn't on your ward." without a live care assignment for this admission (the director is exempt); 409 "This note is
     /// signed. Add an addendum instead."; 403 "Only the doctor who wrote this note can change it.". A write: the answer echoes it.
     /// </summary>
-    public async Task<DischargeSummaryDto> SaveSummaryAsync(Guid admissionId, SaveDischargeSummaryRequest r, CancellationToken ct)
+    public Task<DischargeSummaryDto> SaveSummaryAsync(Guid admissionId, SaveDischargeSummaryRequest r, CancellationToken ct) =>
+        SaveSummaryAsync(admissionId, r, null, ct);
+
+    /// <summary>
+    /// As <see cref="SaveSummaryAsync(Guid, SaveDischargeSummaryRequest, CancellationToken)"/>. Final fix pass (Task 19 carry): a save is an
+    /// upsert, so an autosave landing after the director discarded the draft would bring it back. <paramref name="draftId"/> names the draft
+    /// the client is editing; when that draft no longer exists (discarded, or replaced by a new one) the save is refused with 409
+    /// <c>note_discarded</c> "This draft was discarded. Start a new discharge summary to write one." and nothing is written. A save naming no
+    /// draft starts one, as before.
+    /// </summary>
+    public async Task<DischargeSummaryDto> SaveSummaryAsync(Guid admissionId, SaveDischargeSummaryRequest r, Guid? draftId, CancellationToken ct)
     {
         var caller = await access.CallerAsync(ct);
         CareOrders.EnsureDoctor(access, caller, SummaryDoctorsOnly);
@@ -123,6 +134,7 @@ public sealed class DischargeService(
         await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         var patientId = await LockForTeamAsync(caller, admissionId, now, ct);
         var summary = await db.DischargeSummaries.FirstOrDefaultAsync(s => s.AdmissionId == admissionId, ct);
+        if (draftId is { } editing && summary?.Id != editing) throw new ConflictException(DraftDiscarded, "note_discarded");
         if (summary is null)
         {
             summary = new DischargeSummary { TenantId = TenantId, AdmissionId = admissionId, PatientId = patientId, DoctorUserId = caller.UserId };
@@ -257,6 +269,9 @@ public sealed class DischargeService(
         await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         var patientId = await PatientOfAsync(admissionId, ct);
         await db.LockAsync(AdmissionService.PatientLockKey(TenantId, patientId), ct);
+        // Final fix pass B: the discharge time is read only once the lock is held, so an order that won the lock first (a prescription, its
+        // doses) is always stamped before DischargedAt. The earlier read only checked the time of death against the clock.
+        now = Now();
         var admission = await db.Admissions.FirstAsync(a => a.Id == admissionId, ct);
         if (admission.Status != AdmissionStatus.Admitted) throw new ConflictException(AdmissionService.Discharged, "admission_discharged");
         await EnsureTeamAsync(caller, admissionId, now, ct);

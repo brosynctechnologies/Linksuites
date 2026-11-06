@@ -17,7 +17,7 @@ public sealed class SchoolKit(ApiFixture api)
     {
         var client = api.CreateClient();
         var email = $"{name.ToLowerInvariant().Replace(' ', '-')}-{Guid.NewGuid():N}@example.com";
-        var response = await client.PostAsJsonAsync("/api/auth/signup", new
+        var response = await api.SignUpAsync(client, "/api/auth/signup", new
         {
             fullName = $"{name} Proprietor", email, password = "password123", country = "NG", product = "school", businessName = name,
         }, Ct);
@@ -91,7 +91,7 @@ public sealed class SchoolKit(ApiFixture api)
     {
         email ??= $"parent-{Guid.NewGuid():N}@example.com";
         var client = api.CreateClient();
-        var auth = await OkJsonAsync(await client.PostAsJsonAsync("/api/auth/parent/signup", new { fullName = "Parent Account", email, password = "password123" }, Ct));
+        var auth = await OkJsonAsync(await api.SignUpAsync(client, "/api/auth/parent/signup", new { fullName = "Parent Account", email, password = "password123" }, Ct));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", auth.GetProperty("accessToken").GetString());
         return (client, auth.GetProperty("user").GetProperty("id").GetGuid(), email);
     }

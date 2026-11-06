@@ -12,6 +12,8 @@ export class ApiError extends Error {
   code?: string;
   /** Import confirm (409 import_errors): the rows that still have errors. */
   rows?: ImportPreviewRow[];
+  /** The whole problem body, for extension members such as `unsignedWardRounds` on a refused discharge. */
+  problem: ProblemDetails & Record<string, unknown>;
 
   constructor(status: number, problem: ProblemDetails = {}) {
     const firstFieldError = problem.errors ? Object.values(problem.errors).flat()[0] : undefined;
@@ -23,6 +25,7 @@ export class ApiError extends Error {
     this.errors = problem.errors;
     this.code = problem.code;
     this.rows = problem.rows;
+    this.problem = problem as ProblemDetails & Record<string, unknown>;
   }
 
   get isPlanLimit() {
@@ -65,9 +68,16 @@ export interface ApiOptions {
   /** Send the bearer token (default true). */
   auth?: boolean;
   signal?: AbortSignal;
+  /** Let the request outlive the page (a last autosave on leaving). */
+  keepalive?: boolean;
   accept?: string;
   /** Extra request headers, such as `X-Care-Reason` for emergency access (a reason never goes in the address). */
   headers?: Record<string, string>;
+  /**
+   * On a 401 that a refresh can't fix, forget the session but stay on this page and throw the API's own sentence (the portal invite page
+   * shows "Please sign in again." and its sign-in forms) instead of moving to the sign-in page.
+   */
+  stayOnPage?: boolean;
 }
 
 async function rawFetch(path: string, opts: ApiOptions): Promise<Response> {
@@ -89,6 +99,7 @@ async function rawFetch(path: string, opts: ApiOptions): Promise<Response> {
       headers,
       body,
       signal: opts.signal,
+      keepalive: opts.keepalive,
       cache: "no-store",
     });
   } catch (e) {
@@ -126,16 +137,16 @@ function sharedRefresh(): Promise<boolean> {
   return refreshing;
 }
 
-/** Where a signed-out visitor should sign in. Staff use /login; the patient portal (Task 20) adds its own page here. */
+/** Where a signed-out visitor should sign in: the patient portal (`/portal/...`) at its own page, staff at /login. */
 export function loginPathFor(pathname: string): string {
-  void pathname;
+  if (pathname === "/portal" || pathname.startsWith("/portal/")) return "/portal/sign-in";
   return "/login";
 }
 
 function redirectToLogin() {
   if (typeof window === "undefined") return;
   const path = window.location.pathname;
-  if (path.startsWith("/login")) return;
+  if (path.startsWith("/login") || path.startsWith("/portal/sign-in")) return;
   const next = encodeURIComponent(path + window.location.search);
   // Hard navigation on purpose: this runs outside React (any component may trigger it).
   // eslint-disable-next-line @next/next/no-location-assign-relative-destination
@@ -167,12 +178,17 @@ async function request(path: string, opts: ApiOptions): Promise<Response> {
   }
 
   if (res.status === 401 && opts.auth !== false && getAuth()) {
+    const first = opts.stayOnPage ? await parse<ProblemDetails | string | undefined>(res).catch(() => undefined) : undefined;
     const ok = await sharedRefresh();
     if (ok) {
       res = await rawFetch(path, opts);
     }
     if (!ok || res.status === 401) {
       clearAuth();
+      if (opts.stayOnPage) {
+        const again = ok ? await parse<ProblemDetails | string | undefined>(res).catch(() => undefined) : first;
+        throw new ApiError(401, typeof again === "object" && again ? again : {});
+      }
       redirectToLogin();
       throw new ApiError(401);
     }

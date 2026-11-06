@@ -57,7 +57,16 @@ public sealed class AuthService(
     private const string OtpPurpose = "login";
     private readonly JwtOptions _jwt = jwtOptions.Value;
 
-    public async Task<AuthResponse> SignupAsync(SignupRequest r, CancellationToken ct)
+    /// <summary>Password login's answer for an account whose sign-up was never confirmed with the emailed code (403 <c>email_unconfirmed</c>).</summary>
+    public const string ConfirmEmailFirst = "Confirm your email first. Enter the 6-digit code we emailed you, or ask for a new one.";
+
+    /// <summary>
+    /// Final fix pass B (user decision I3): a password sign-up issues no session. It emails a 6-digit code at once and answers
+    /// <see cref="SignupPending"/>; the account is usable only once the code is entered at <see cref="ConfirmSignupAsync"/>, which sets the
+    /// password typed at sign-up. Until then the account has no password at all, so password login answers <see cref="ConfirmEmailFirst"/>.
+    /// A confirmed account adding a product with its password is signed in at once, as before.
+    /// </summary>
+    public async Task<SignupOutcome> SignupAsync(SignupRequest r, CancellationToken ct)
     {
         var product = r.ProductKey;
         var provisioner = provisioners.FirstOrDefault(p => p.Product == product)
@@ -71,42 +80,54 @@ public sealed class AuthService(
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        // One login across products: an existing user adds this product by proving their password.
         var user = await users.FindByEmailAsync(email);
-        if (user is not null)
+        var addBusiness = true;
+        if (user is { EmailConfirmed: true })
         {
+            // One login across products: a confirmed account adds this product by proving its password.
             if (await users.IsLockedOutAsync(user) || !await users.CheckPasswordAsync(user, r.Password))
                 throw BadRequestException.Field("email",
                     "An account with this email already exists. Log in, or enter your existing password to add this product.");
             if (await db.Memberships.IgnoreQueryFilters().AnyAsync(m => m.UserId == user.Id && m.Tenant!.Product == product, ct))
                 throw BadRequestException.Field("email", "You already have an account for this product. Log in instead.");
         }
+        else if (user is not null)
+        {
+            // Ruling (final fix pass B, I3 point 5): the address has an account that was never confirmed. Nothing here proves who is asking,
+            // so the answer is the same as for a new sign-up and a new code goes to the mailbox; whoever enters it sets the password
+            // (ConfirmSignupAsync), so neither the earlier sign-up nor this one gets the account without the mailbox. The business is added,
+            // unless the account already has one for this product, or it is an account from before codes at sign-up (it has a password and
+            // can still sign in with it) and this is not its password.
+            var otherThanLegacyOwner = await users.HasPasswordAsync(user)
+                && (await users.IsLockedOutAsync(user) || !await users.CheckPasswordAsync(user, r.Password));
+            addBusiness = !otherThanLegacyOwner
+                && !await db.Memberships.IgnoreQueryFilters().AnyAsync(m => m.UserId == user.Id && m.Tenant!.Product == product, ct);
+        }
         else
         {
-            user = new AppUser { FullName = r.FullName.Trim(), Email = email, UserName = email };
-            var created = await users.CreateAsync(user, r.Password);
-            if (!created.Succeeded)
-            {
-                var errors = created.Errors.Select(e => e.Description).ToArray();
-                throw new BadRequestException(errors.FirstOrDefault() ?? "Could not create the account.",
-                    new Dictionary<string, string[]> { ["password"] = errors });
-            }
+            user = await CreateUnconfirmedAsync(r.FullName, email, r.Password);
         }
 
-        var t = new Tenant
+        Tenant? t = null;
+        if (addBusiness)
         {
-            Name = r.Name,
-            Slug = r.SlugKey ?? await AvailableSlugAsync(r.Name, ct),
-            Country = country,
-            Currency = Countries.Currency(country),
-            Timezone = Countries.Timezone(country),
-            Product = product,
-        };
-        db.Tenants.Add(t);
-        tenant.SetTenant(t.Id);
-        db.Memberships.Add(new Membership { UserId = user.Id, Role = MemberRole.Owner });
-        await provisioner.ProvisionAsync(t, r, user.Id, ct);
-        notifications.Email(email, "welcome", new() { ["name"] = user.FullName, ["storeName"] = t.Name, ["slug"] = t.Slug }, t.Id, user.Id);
+            t = new Tenant
+            {
+                Name = r.Name,
+                Slug = r.SlugKey ?? await AvailableSlugAsync(r.Name, ct),
+                Country = country,
+                Currency = Countries.Currency(country),
+                Timezone = Countries.Timezone(country),
+                Product = product,
+            };
+            db.Tenants.Add(t);
+            tenant.SetTenant(t.Id);
+            db.Memberships.Add(new Membership { UserId = user.Id, Role = MemberRole.Owner });
+            await provisioner.ProvisionAsync(t, r, user.Id, ct);
+            // An unconfirmed sign-up is welcomed once its code is entered (ConfirmSignupAsync), not before.
+            if (user.EmailConfirmed) Welcome(user, t);
+        }
+        if (!user.EmailConfirmed) await AddCodeAsync(user, email, product, ct);
         try
         {
             await db.SaveChangesAsync(ct);
@@ -118,15 +139,127 @@ public sealed class AuthService(
             throw SlugTaken(r);
         }
 
-        var response = await IssueAsync(user, t, MemberRole.Owner, ct);
+        if (!user.EmailConfirmed)
+        {
+            await tx.CommitAsync(ct);
+            return new SignupOutcome(null, new SignupPending(email));
+        }
+        var response = await IssueAsync(user, t!, MemberRole.Owner, ct);
         await tx.CommitAsync(ct);
-        return response;
+        return new SignupOutcome(response, null);
+    }
+
+    private void Welcome(AppUser user, Tenant t) =>
+        notifications.Email(user.Email!, "welcome", new() { ["name"] = user.FullName, ["storeName"] = t.Name, ["slug"] = t.Slug }, t.Id, user.Id);
+
+    /// <summary>The welcome held back at an unconfirmed sign-up: one per business the new owner signed up, sent once the code proves the mailbox.</summary>
+    private async Task WelcomeOwnedBusinessesAsync(AppUser user, CancellationToken ct)
+    {
+        var owned = await db.Memberships.IgnoreQueryFilters().Where(m => m.UserId == user.Id && m.Role == MemberRole.Owner)
+            .Select(m => m.Tenant!).ToListAsync(ct);
+        foreach (var t in owned) Welcome(user, t);
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// A new account for a password sign-up: checked against the password rules (so the sign-up form shows them), but created with no
+    /// password and an unconfirmed email. <see cref="ConfirmSignupAsync"/> sets the password once the emailed code is entered.
+    /// </summary>
+    private async Task<AppUser> CreateUnconfirmedAsync(string fullName, string email, string password)
+    {
+        var user = new AppUser { FullName = fullName.Trim(), Email = email, UserName = email };
+        await ValidateNewPasswordAsync(user, password);
+        var created = await users.CreateAsync(user);
+        if (!created.Succeeded)
+        {
+            var errors = created.Errors.Select(e => e.Description).ToArray();
+            throw new BadRequestException(errors.FirstOrDefault() ?? "Could not create the account.",
+                new Dictionary<string, string[]> { ["email"] = errors });
+        }
+        return user;
+    }
+
+    /// <summary>400 on <c>password</c> with the password rules' sentences, without setting anything.</summary>
+    private async Task ValidateNewPasswordAsync(AppUser user, string password)
+    {
+        var errors = new List<string>();
+        foreach (var validator in users.PasswordValidators)
+        {
+            var result = await validator.ValidateAsync(users, user, password);
+            if (!result.Succeeded) errors.AddRange(result.Errors.Select(e => e.Description));
+        }
+        if (errors.Count > 0)
+            throw new BadRequestException(errors[0], new Dictionary<string, string[]> { ["password"] = [.. errors] });
+    }
+
+    /// <summary>True when the account has a password and it is this one.</summary>
+    private async Task<bool> PasswordIsAsync(AppUser user, string password) =>
+        await users.HasPasswordAsync(user) && await users.CheckPasswordAsync(user, password);
+
+    /// <summary>Whoever proved the mailbox sets the password: the account's password becomes <paramref name="password"/> (kept when it already is).</summary>
+    private async Task SetProvenPasswordAsync(AppUser user, string password)
+    {
+        if (await PasswordIsAsync(user, password)) return;
+        await ValidateNewPasswordAsync(user, password);
+        if (await users.HasPasswordAsync(user)) await users.RemovePasswordAsync(user);
+        var added = await users.AddPasswordAsync(user, password);
+        if (!added.Succeeded)
+        {
+            var errors = added.Errors.Select(e => e.Description).ToArray();
+            throw new BadRequestException(errors.FirstOrDefault() ?? "Choose a different password.", new Dictionary<string, string[]> { ["password"] = errors });
+        }
+        await users.SetLockoutEndDateAsync(user, null);
+        await users.ResetAccessFailedCountAsync(user);
+    }
+
+    /// <summary>Ends everything issued before the mailbox was proved: rotates the security stamp and revokes every refresh token.</summary>
+    private async Task EndEarlierSessionsAsync(AppUser user, CancellationToken ct)
+    {
+        await users.UpdateSecurityStampAsync(user);
+        var now = clock.GetUtcNow();
+        await db.RefreshTokens.Where(t => t.UserId == user.Id && t.RevokedAt == null).ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), ct);
+    }
+
+    /// <summary>
+    /// Finishes a password sign-up (<c>POST /api/auth/signup/confirm</c>, and each customer route's <c>/signup/confirm</c>). The password is
+    /// checked against the rules before the code is used, so a refused password leaves the code to try again. The code proves the mailbox:
+    /// a never-confirmed account takes this password (whoever proves the mailbox sets it), is confirmed, and anything issued before it ends.
+    /// An account that is already confirmed keeps its password; the code only signs it in. Then a session: the business of <c>Product</c>, or
+    /// a customer session (<paramref name="customer"/>).
+    /// </summary>
+    public async Task<AuthResponse> ConfirmSignupAsync(ConfirmSignupRequest r, bool customer, CancellationToken ct)
+    {
+        var email = r.Email.Trim().ToLowerInvariant();
+        if (await users.FindByEmailAsync(email) is { EmailConfirmed: false } pending && !await PasswordIsAsync(pending, r.Password))
+            await ValidateNewPasswordAsync(pending, r.Password);
+        var user = await ConsumeCodeAsync(new OtpVerifyRequest(email, r.Code), ct);
+        if (!user.EmailConfirmed)
+        {
+            await SetProvenPasswordAsync(user, r.Password);
+            await ConfirmEmailAsync(user);
+            await EndEarlierSessionsAsync(user, ct);
+            if (!customer) await WelcomeOwnedBusinessesAsync(user, ct);
+        }
+        if (!customer) return await LoginUserAsync(user, r.Product, ct);
+        user.LastLoginAt = clock.GetUtcNow();
+        await users.UpdateAsync(user);
+        return await IssueAsync(user, null, null, ct);
+    }
+
+    /// <summary>
+    /// 403 <see cref="ConfirmEmailFirst"/> for a sign-up that was never confirmed (it has no password yet). Accounts from before codes at
+    /// sign-up (a password, never confirmed) keep password login (ruling, final fix pass B).
+    /// </summary>
+    private async Task EnsureSignupConfirmedAsync(AppUser user)
+    {
+        if (!user.EmailConfirmed && !await users.HasPasswordAsync(user)) throw new EmailUnconfirmedException();
     }
 
     public async Task<AuthResponse> LoginAsync(LoginRequest r, CancellationToken ct)
     {
         var user = await users.FindByEmailAsync(r.Email.Trim().ToLowerInvariant());
         if (user is null || StudentLogins.IsStudentEmail(user.Email)) throw InvalidLogin(); // students sign in on their school's page
+        await EnsureSignupConfirmedAsync(user);
         if (await users.IsLockedOutAsync(user))
             throw new BadRequestException("Too many failed attempts. Try again in a few minutes or log in with an email code.");
         if (!await users.CheckPasswordAsync(user, r.Password))
@@ -182,25 +315,54 @@ public sealed class AuthService(
         var user = await users.FindByEmailAsync(email);
         if (user is null || StudentLogins.IsStudentEmail(user.Email)) return; // a student's address is never emailed
 
+        if (!await AddCodeAsync(user, email, r.Product, ct)) return;
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Adds a 6-digit code for <paramref name="email"/> and queues the "otp" email (saved with the caller's next save). The code serves both
+    /// a code sign-in and a sign-up's confirmation. False, and nothing added, when 3 codes went out in the last 10 minutes.
+    /// </summary>
+    private async Task<bool> AddCodeAsync(AppUser user, string email, string? product, CancellationToken ct)
+    {
         var now = clock.GetUtcNow();
         var recent = await db.OtpCodes.CountAsync(o => o.Target == email && o.Purpose == OtpPurpose && o.CreatedAt > now.AddMinutes(-10), ct);
-        if (recent >= 3) return;
+        if (recent >= 3) return false;
 
         var code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
         db.OtpCodes.Add(new OtpCode { Target = email, Purpose = OtpPurpose, CodeHash = HashOtp(email, code), ExpiresAt = now.AddMinutes(10) });
-        notifications.Email(email, "otp", new() { ["name"] = user.FullName, ["code"] = code }, userId: user.Id);
-        await db.SaveChangesAsync(ct);
+        var payload = new Dictionary<string, string> { ["name"] = user.FullName, ["code"] = code };
+        if ((Known(product) ?? await AccountProductAsync(db, user.Id, ct)) is { } p) payload["product"] = p;
+        notifications.Email(email, "otp", payload, userId: user.Id);
+        return true;
+    }
+
+    private static string? Known(string? product) =>
+        product?.Trim().ToLowerInvariant() is { } p && Products.All.Contains(p) ? p : null;
+
+    /// <summary>
+    /// The product an account's emails speak for when the page that asked didn't say: its only business product, else the customer portal it
+    /// is linked to (CareLink patient, SchoolLink parent). Null for an account on several products or none (the email says LinkSuite).
+    /// </summary>
+    internal static async Task<string?> AccountProductAsync(AppDbContext db, Guid userId, CancellationToken ct)
+    {
+        var products = await db.Memberships.IgnoreQueryFilters().Where(m => m.UserId == userId).Select(m => m.Tenant!.Product).Distinct().Take(2).ToListAsync(ct);
+        if (products.Count > 0) return products.Count == 1 ? products[0] : null;
+        if (await db.PatientLinks.IgnoreQueryFilters().AnyAsync(l => l.UserId == userId, ct)) return Products.Care;
+        if (await db.Guardians.IgnoreQueryFilters().AnyAsync(g => g.UserId == userId, ct)) return Products.School;
+        return null;
     }
 
     public async Task<AuthResponse> VerifyOtpAsync(OtpVerifyRequest r, CancellationToken ct)
     {
         var user = await ConsumeCodeAsync(r, ct);
         // Rulings (Task 15 fix rounds 3 and 4, R2 and R3): the email is confirmed only once a membership is found (a refused business sign-in
-        // leaves the account unconfirmed), and a first confirmation takes the account over here too (password removed, stamp rotated,
-        // refresh tokens revoked) before the session is issued, so a squatter who registered a business on the address loses it.
+        // leaves the account unconfirmed), and a first confirmation of an account from before codes at sign-up takes it over here too
+        // (password removed, stamp rotated, refresh tokens revoked) before the session is issued (final fix pass B: legacy accounts only).
         return await LoginUserAsync(user, r.Product, ct, beforeIssue: async () =>
         {
-            if (await ConfirmEmailAsync(user)) await TakeOverForMailboxOwnerAsync(user, ct);
+            var legacy = await IsLegacyUnconfirmedAsync(user);
+            if (await ConfirmEmailAsync(user) && legacy) await TakeOverForMailboxOwnerAsync(user, ct);
         });
     }
 
@@ -208,26 +370,30 @@ public sealed class AuthService(
     public async Task<AuthResponse> CustomerVerifyOtpAsync(OtpVerifyRequest r, CancellationToken ct)
     {
         var user = await ConsumeCodeAsync(r, ct);
-        var firstConfirmed = await ConfirmEmailAsync(user);
-        if (firstConfirmed) await TakeOverForMailboxOwnerAsync(user, ct);
+        var legacy = await IsLegacyUnconfirmedAsync(user);
+        if (await ConfirmEmailAsync(user) && legacy) await TakeOverForMailboxOwnerAsync(user, ct);
         user.LastLoginAt = clock.GetUtcNow();
         await users.UpdateAsync(user);
         return await IssueAsync(user, null, null, ct);
     }
 
+    /// <summary>
+    /// An account from before codes at sign-up (final fix pass B): never confirmed, yet it has a password. Since then a sign-up has no
+    /// password until its code is entered, and every route that sets one (sign-up confirm, reset, team invite) confirms the email too.
+    /// </summary>
+    private async Task<bool> IsLegacyUnconfirmedAsync(AppUser user) => !user.EmailConfirmed && await users.HasPasswordAsync(user);
 
     /// <summary>
-    /// Ruling (Task 15 fix round 2, R1, platform-wide for customer sign-in): the first code sign-in proves the mailbox, so whoever set up the
-    /// account before (perhaps someone who only knew the address) loses it. The password is removed, the security stamp rotated and every
-    /// refresh token revoked. The mailbox's owner can set a password again later. Access tokens issued before
-    /// <see cref="AppUser.EmailConfirmedAt"/> are refused by the patient portal.
+    /// Ruling (Task 15 fix round 2, R1; scoped by final fix pass B to accounts that existed unconfirmed before codes at sign-up): the first
+    /// code sign-in proves the mailbox, so whoever set up the account before (perhaps someone who only knew the address) loses it. The
+    /// password is removed, the security stamp rotated and every refresh token revoked. The mailbox's owner can set a password again (a reset).
+    /// Access tokens issued before <see cref="AppUser.EmailConfirmedAt"/> are refused by the patient portal. A sign-up made since then has no
+    /// password before its code, so this never fires on it, and a confirmed account's password is never removed.
     /// </summary>
     private async Task TakeOverForMailboxOwnerAsync(AppUser user, CancellationToken ct)
     {
         if (await users.HasPasswordAsync(user)) await users.RemovePasswordAsync(user);
-        await users.UpdateSecurityStampAsync(user);
-        var now = clock.GetUtcNow();
-        await db.RefreshTokens.Where(t => t.UserId == user.Id && t.RevokedAt == null).ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), ct);
+        await EndEarlierSessionsAsync(user, ct);
     }
 
     /// <summary>Checks and uses the emailed code; the account it was sent to. Confirms nothing (see <see cref="ConfirmEmailAsync"/>).</summary>
@@ -286,14 +452,22 @@ public sealed class AuthService(
     public async Task<InvitePreview> GetInviteAsync(string token, CancellationToken ct)
     {
         var invite = await FindInviteAsync(token, ct);
-        var name = await db.Tenants.Where(t => t.Id == invite.TenantId).Select(t => t.Name).FirstAsync(ct);
+        var business = await db.Tenants.Where(t => t.Id == invite.TenantId).Select(t => new { t.Name, t.Product }).FirstAsync(ct);
+        var name = business.Name;
+        var roleLabel = business.Product == Products.Care ? Saas.Application.Care.CareStaff.RoleLabel(invite.Role, invite.ClinicalRole) : null;
         var expired = invite.AcceptedAt is not null || invite.ExpiresAt <= clock.GetUtcNow();
-        return new InvitePreview(name, invite.Email, invite.Role, await users.FindByEmailAsync(invite.Email) is not null, expired);
+        // An unfinished sign-up (never confirmed, no password yet) is not an account to prove with a password: the page asks for a name and
+        // a new password, as for someone new.
+        var account = await users.FindByEmailAsync(invite.Email);
+        var hasAccount = account is not null && (account.EmailConfirmed || await users.HasPasswordAsync(account));
+        return new InvitePreview(name, invite.Email, invite.Role, hasAccount, expired, roleLabel);
     }
 
     /// <summary>
-    /// Joins the business the invite is for. Someone with an account proves it with their password; anyone else
-    /// creates an account, and clicking the emailed link confirms their email.
+    /// Joins the business the invite is for. Someone with a confirmed account proves it with their password; anyone else creates an
+    /// account, and clicking the emailed link confirms their email. Final fix pass B: the emailed link proves the mailbox, so an address with
+    /// an unconfirmed account (an unfinished sign-up, or one from before codes at sign-up) is confirmed here and takes the invitee's password;
+    /// anything issued to it before ends.
     /// </summary>
     public async Task<AuthResponse> AcceptInviteAsync(string token, AcceptInviteRequest r, CancellationToken ct)
     {
@@ -304,13 +478,20 @@ public sealed class AuthService(
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var user = await users.FindByEmailAsync(invite.Email);
-        if (user is not null)
+        if (user is { EmailConfirmed: true })
         {
             if (await users.IsLockedOutAsync(user) || !await users.CheckPasswordAsync(user, r.Password))
             {
                 if (!await users.IsLockedOutAsync(user)) await users.AccessFailedAsync(user);
                 throw BadRequestException.Field("password", "That password is not right for this email.");
             }
+        }
+        else if (user is not null)
+        {
+            await SetProvenPasswordAsync(user, r.Password);
+            if (!string.IsNullOrWhiteSpace(r.FullName)) user.FullName = r.FullName.Trim();
+            await ConfirmEmailAsync(user);
+            await EndEarlierSessionsAsync(user, ct);
         }
         else
         {
@@ -413,27 +594,28 @@ public sealed class AuthService(
 
     // Learners (courses): accounts with no business attached
 
-    public async Task<AuthResponse> LearnerSignupAsync(LearnerSignupRequest r, CancellationToken ct)
+    /// <summary>
+    /// A customer sign-up (learners, parents, patients, home-seekers). Final fix pass B: no session; a 6-digit code is emailed at once and the
+    /// account is usable once it is entered at the route's <c>/signup/confirm</c> (<see cref="ConfirmSignupAsync"/>). An address whose account
+    /// was never confirmed gets the same answer and a new code (whoever enters it sets the password); a confirmed one is told to log in.
+    /// </summary>
+    public async Task<SignupPending> LearnerSignupAsync(LearnerSignupRequest r, string product, CancellationToken ct)
     {
         var email = r.Email.Trim().ToLowerInvariant();
         if (StudentLogins.IsStudentEmail(email)) throw BadRequestException.Field("email", "Enter a valid email address.");
-        if (await users.FindByEmailAsync(email) is not null)
+        var user = await users.FindByEmailAsync(email);
+        if (user is { EmailConfirmed: true })
             throw BadRequestException.Field("email", "You already have an account with this email. Log in instead.");
-        var user = new AppUser { FullName = r.FullName.Trim(), Email = email, UserName = email };
-        var created = await users.CreateAsync(user, r.Password);
-        if (!created.Succeeded)
-        {
-            var errors = created.Errors.Select(e => e.Description).ToArray();
-            throw new BadRequestException(errors.FirstOrDefault() ?? "Could not create the account.",
-                new Dictionary<string, string[]> { ["password"] = errors });
-        }
-        return await IssueAsync(user, null, null, ct);
+        user ??= await CreateUnconfirmedAsync(r.FullName, email, r.Password);
+        if (await AddCodeAsync(user, email, product, ct)) await db.SaveChangesAsync(ct);
+        return new SignupPending(email);
     }
 
     public async Task<AuthResponse> LearnerLoginAsync(LoginRequest r, CancellationToken ct)
     {
         var user = await users.FindByEmailAsync(r.Email.Trim().ToLowerInvariant());
         if (user is null || StudentLogins.IsStudentEmail(user.Email)) throw InvalidLogin(); // students sign in on their school's page
+        await EnsureSignupConfirmedAsync(user);
         if (await users.IsLockedOutAsync(user))
             throw new BadRequestException("Too many failed attempts. Try again in a few minutes.");
         if (!await users.CheckPasswordAsync(user, r.Password))
@@ -544,3 +726,6 @@ public sealed class AuthService(
 }
 
 public sealed class UnauthorizedException() : AppException("Your session has expired. Please log in again.", 401, "unauthorized");
+
+/// <summary>Final fix pass B: password login for a sign-up whose emailed code was never entered (403 <c>email_unconfirmed</c>).</summary>
+public sealed class EmailUnconfirmedException() : AppException(AuthService.ConfirmEmailFirst, 403, "email_unconfirmed");

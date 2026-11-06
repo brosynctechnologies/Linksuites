@@ -17,7 +17,7 @@ public sealed class CareKit(ApiFixture api)
     {
         var client = api.CreateClient();
         var email = $"{name.ToLowerInvariant().Replace(' ', '-')}-{Guid.NewGuid():N}@example.com";
-        var response = await client.PostAsJsonAsync("/api/auth/signup", new
+        var response = await api.SignUpAsync(client, "/api/auth/signup", new
         {
             fullName = $"{name} Director", email, password = "password123", country = "NG", product = "care", businessName = name,
         }, Ct);

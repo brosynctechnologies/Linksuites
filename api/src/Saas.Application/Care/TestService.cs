@@ -11,9 +11,20 @@ public sealed record RecordResultRequest(string? Text);
 public sealed record TestRequestDto(
     Guid Id, Guid PatientId, Guid? ConsultationId, Guid? AdmissionId, Guid RequestedBy, string RequestedByName, TestKind Kind, string Description,
     Guid? PriceItemId, TestStatus Status, string? ResultText, bool HasFile, Guid? ResultedBy, string? ResultedByName, DateTimeOffset? ResultedAt,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt, Guid? ReviewedBy = null, string? ReviewedByName = null, DateTimeOffset? ReviewedAt = null);
 
 public sealed record TestResultDto(Guid Id, TestStatus Status, string? ResultText, bool HasFile, Guid? ResultedBy, DateTimeOffset? ResultedAt);
+
+/// <summary>A doctor's review of a result (post-build): who and when. <c>ReviewedBy</c> is null for a result reviewed before reviews existed.</summary>
+public sealed record TestReviewDto(Guid Id, Guid? ReviewedBy, string? ReviewedByName, DateTimeOffset ReviewedAt);
+
+/// <summary>
+/// A result waiting for a doctor's review: the test's id, kind and dates, the patient's number and name, and where it was ordered. Never the
+/// test's description or its result (the doctor opens the record, a logged read, to review it).
+/// </summary>
+public sealed record AwaitingReviewDto(
+    Guid Id, Guid PatientId, string PatientNumber, string PatientName, TestKind Kind, Guid? ConsultationId, Guid? AdmissionId, string? RecordedByName,
+    DateTimeOffset RecordedAt);
 
 public sealed record TestFileLinkDto(string Url, DateTimeOffset ExpiresAt, string ContentType);
 
@@ -66,7 +77,8 @@ public sealed class CareFileSigner(Saas.Application.Courses.MediaOptions options
 /// Tests: the visit's doctor requests one from the consultation (or, from Task 8, an admission); a test with a price item goes on the
 /// visit's bill. Doctors and nurses record the result: text and/or a file (a PDF, or an image re-encoded to WebP), once. The description
 /// and result text are stored through <see cref="ClinicalText"/>; the file is private and served by short-lived signed links issued after a
-/// logged clinical read (area file). A result tells the patient's linked portal users with the generic sentence only.
+/// logged clinical read (area file). A result waits for a doctor's (or the director's) review: only then does the portal show it and the
+/// patient's linked portal users hear the generic sentence (post-build user decision).
 /// </summary>
 public sealed class TestService(
     IAppDbContext db, ITenantContext tenant, CareAccess access, RecordGuard guard, ClinicalText text, BillingService billing, IFileStorage storage,
@@ -146,8 +158,7 @@ public sealed class TestService(
         test.ResultedBy = caller.UserId;
         test.ResultedAt = now;
 
-        // The generic notice goes to the portal users linked to the patient (none until Task 15 links portal accounts); staff are never told.
-        await notices.ResultReadyAsync(test.PatientId, ct);
+        // Post-build (user decision): nobody is told yet. The patient hears "a new result is ready" when a doctor reviews it (ReviewAsync).
         try
         {
             await db.SaveChangesAsync(ct);
@@ -159,6 +170,69 @@ public sealed class TestService(
             throw;
         }
         return new TestResultDto(test.Id, test.Status, body, key is not null, caller.UserId, now);
+    }
+
+    public const string DoctorsReview = "Only doctors can review results.";
+    public const string NotResulted = "This test has no result to review yet.";
+
+    /// <summary>
+    /// Post-build (user decision): a doctor or the medical director reviews a recorded result, which releases it to the patient's portal and
+    /// sends the patient's generic "result ready" notice. 403 "Only doctors and nurses can see clinical notes." without clinical access, 403
+    /// "Only doctors can review results." for a nurse; 404 for an unknown or another clinic's test; 409 when there is no result yet.
+    /// Idempotent: a reviewed result answers with its first review and nothing is written or sent again. Audited with ids only. A write,
+    /// not a record open (the answer carries no description or result).
+    /// </summary>
+    public async Task<TestReviewDto> ReviewAsync(Guid id, CancellationToken ct)
+    {
+        var caller = await access.CallerAsync(ct);
+        CareOrders.EnsureDoctor(access, caller, DoctorsReview);
+
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        await db.LockAsync(LockKey(TenantId, id), ct); // the result lock: a review and a second review (or a result) never interleave
+        var test = await db.TestRequests.FirstOrDefaultAsync(t => t.Id == id, ct) ?? throw new NotFoundException("Test");
+        if (test.Status != TestStatus.Resulted) throw new ConflictException(NotResulted, "test_not_resulted");
+        if (test.ReviewedAt is { } already)
+            return new TestReviewDto(test.Id, test.ReviewedBy, await ReviewerNameAsync(test.ReviewedBy, ct), already);
+
+        var now = clock.GetUtcNow();
+        now = now.AddTicks(-(now.Ticks % 10)); // Postgres keeps microseconds
+        test.ReviewedBy = caller.UserId;
+        test.ReviewedAt = now;
+        db.AuditLogs.Add(new Saas.Domain.Core.AuditLog
+        {
+            TenantId = TenantId, ActorId = caller.UserId, Action = "care.result_reviewed", EntityType = nameof(TestRequest), EntityId = test.Id.ToString(),
+            AfterJson = System.Text.Json.JsonSerializer.Serialize(new { testId = test.Id, patientId = test.PatientId, reviewedBy = caller.UserId }),
+            CreatedAt = now,
+        });
+        // The generic notice goes to the portal users linked to the patient, committed with the review; staff are never told.
+        await notices.ResultReadyAsync(test.PatientId, ct);
+        await db.SaveChangesAsync(ct);
+        if (tx is not null) await tx.CommitAsync(ct);
+        return new TestReviewDto(test.Id, caller.UserId, await ReviewerNameAsync(caller.UserId, ct), now);
+    }
+
+    private async Task<string?> ReviewerNameAsync(Guid? userId, CancellationToken ct) =>
+        userId is { } u ? (await ConsultationService.NamesAsync(db, [u], ct)).GetValueOrDefault(u) : null;
+
+    /// <summary>
+    /// Results waiting for a doctor's review, oldest first (at most 200): doctors and the medical director only (403 as for
+    /// <see cref="ReviewAsync"/>). Carries no description or result, so it opens no record and writes no access-log row.
+    /// </summary>
+    public async Task<IReadOnlyList<AwaitingReviewDto>> AwaitingReviewAsync(CancellationToken ct)
+    {
+        var caller = await access.CallerAsync(ct);
+        CareOrders.EnsureDoctor(access, caller, DoctorsReview);
+        var rows = await db.TestRequests.AsNoTracking()
+            .Where(t => t.Status == TestStatus.Resulted && t.ReviewedAt == null)
+            .OrderBy(t => t.ResultedAt).ThenBy(t => t.Id).Take(200)
+            .Join(db.Patients, t => t.PatientId, p => p.Id, (t, p) => new
+            {
+                t.Id, t.PatientId, p.Number, p.FirstName, p.LastName, t.Kind, t.ConsultationId, t.AdmissionId, t.ResultedBy, t.ResultedAt,
+            })
+            .ToListAsync(ct);
+        var names = await ConsultationService.NamesAsync(db, rows.Select(r => r.ResultedBy).OfType<Guid>(), ct);
+        return rows.Select(r => new AwaitingReviewDto(r.Id, r.PatientId, r.Number, $"{r.FirstName} {r.LastName}", r.Kind, r.ConsultationId, r.AdmissionId,
+            r.ResultedBy is { } by ? names.GetValueOrDefault(by) : null, r.ResultedAt!.Value)).ToList();
     }
 
     /// <summary>
@@ -199,14 +273,16 @@ public sealed class TestService(
     {
         var rows = await query.OrderByDescending(t => t.CreatedAt).ThenByDescending(t => t.Id).ToListAsync(ct);
         if (rows.Count == 0) return [];
-        var names = await ConsultationService.NamesAsync(db, rows.Select(t => t.RequestedBy).Concat(rows.Select(t => t.ResultedBy).OfType<Guid>()), ct);
+        var names = await ConsultationService.NamesAsync(db,
+            rows.Select(t => t.RequestedBy).Concat(rows.Select(t => t.ResultedBy).OfType<Guid>()).Concat(rows.Select(t => t.ReviewedBy).OfType<Guid>()), ct);
         return rows.Select(t => ToDto(t, text.Read(t.Description) ?? "", text.Read(t.ResultText), names)).ToList();
     }
 
     private static TestRequestDto ToDto(TestRequest t, string description, string? result, IReadOnlyDictionary<Guid, string> names) =>
         new(t.Id, t.PatientId, t.ConsultationId, t.AdmissionId, t.RequestedBy, names.GetValueOrDefault(t.RequestedBy, ""), t.Kind, description,
             t.PriceItemId, t.Status, result, t.ResultFileKey is not null, t.ResultedBy,
-            t.ResultedBy is { } by ? names.GetValueOrDefault(by) : null, t.ResultedAt, t.CreatedAt);
+            t.ResultedBy is { } by ? names.GetValueOrDefault(by) : null, t.ResultedAt, t.CreatedAt,
+            t.ReviewedBy, t.ReviewedBy is { } rb ? names.GetValueOrDefault(rb) : null, t.ReviewedAt);
 
     /// <summary>Serialises recording one test's result, so two results can't both land.</summary>
     public static long LockKey(Guid tenantId, Guid testId) =>

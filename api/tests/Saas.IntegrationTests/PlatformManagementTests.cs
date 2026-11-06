@@ -158,7 +158,7 @@ public sealed class PlatformManagementTests(ApiFixture api)
     {
         var (super, _, _) = await PlatformAuthTests.PanelAdminAsync(api, PlatformRole.SuperAdmin);
         var email = $"new-mod-{Guid.NewGuid():N}@example.com";
-        await api.CreateClient().PostAsJsonAsync("/api/auth/seeker/signup", new { fullName = "New Moderator", email, password = "password123" }, Ct);
+        await api.SignUpAsync(api.CreateClient(), "/api/auth/seeker/signup", new { fullName = "New Moderator", email, password = "password123" }, Ct);
 
         var added = await Json(await super.PostAsJsonAsync("/api/platform/admins", new { email, role = "Moderator" }, Ct));
         Assert.True(await api.WithDbAsync(db => db.Notifications.AnyAsync(n => n.TemplateKey == "admin.added" && n.Recipient == email, Ct)));

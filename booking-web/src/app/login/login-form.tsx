@@ -8,9 +8,10 @@ import { setAuth } from "@/lib/auth";
 import type { AuthResponse } from "@/lib/types";
 import { Button, ErrorBox, Input, Notice, linkClass } from "@/components/ui";
 import { nextPath } from "@/components/auth-shell";
+import { ConfirmEmailStep, isUnconfirmed } from "@/components/confirm-email";
 import { PRODUCT } from "@/lib/config";
 
-type Mode = "password" | "otp-email" | "otp-code";
+type Mode = "password" | "otp-email" | "otp-code" | "confirm";
 
 export function LoginForm() {
   const router = useRouter();
@@ -20,6 +21,8 @@ export function LoginForm() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  // Final fix pass B: a sign-up whose emailed code was never entered is told to confirm first (403 email_unconfirmed).
+  const [notice, setNotice] = useState("");
 
   function done(res: AuthResponse) {
     setAuth(res);
@@ -32,7 +35,10 @@ export function LoginForm() {
     try {
       await fn();
     } catch (err) {
-      setError(toApiError(err));
+      if (isUnconfirmed(err)) {
+        setNotice(err.message);
+        setMode("confirm");
+      } else setError(toApiError(err));
     } finally {
       setBusy(false);
     }
@@ -62,6 +68,21 @@ export function LoginForm() {
     setError(null);
     setMode(m);
   };
+
+  if (mode === "confirm") {
+    return (
+      <ConfirmEmailStep
+        email={email.trim()}
+        password={password}
+        confirmPath="/api/auth/signup/confirm"
+        product={PRODUCT}
+        notice={notice}
+        onConfirmed={done}
+        onBack={() => switchMode("password")}
+        backLabel="Back to log in"
+      />
+    );
+  }
 
   if (mode === "password") {
     return (

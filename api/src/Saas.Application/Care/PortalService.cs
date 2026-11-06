@@ -60,8 +60,12 @@ public sealed record PortalRecordDto(
     IReadOnlyList<PortalWardRoundDto> WardRounds,
     IReadOnlyList<PortalDischargeSummaryDto> DischargeSummaries);
 
-/// <summary>One entry of "who viewed my record": the staff member's name and clinic role, what they opened, and when.</summary>
-public sealed record PortalAccessDto(string StaffName, string Role, string What, DateTimeOffset At);
+/// <summary>
+/// One entry of "who viewed my record": the staff member's name and clinic role, what they opened, and when. A portal read (final review
+/// C1) has <see cref="Portal"/> set, the account's short name and its relationship as the role; <see cref="Who"/> reads
+/// "Nkem W. (parent), patient portal" (staff: "{name}, {role}").
+/// </summary>
+public sealed record PortalAccessDto(string StaffName, string Role, string What, DateTimeOffset At, bool Portal, string Who);
 
 // ---------- Bills, payments and appointments ----------
 
@@ -98,8 +102,9 @@ public sealed record PortalNoticeDto(Guid Id, string Kind, string Title, string 
 /// The patient portal's routes (Task 15). Every method asks <see cref="PatientPortalAccess.RequirePatientAsync"/> first (404 unlinked, then
 /// 403 for a suspended clinic, then the patient's clinic as the tenant), and only then calls the shared services, which trust the tenant:
 /// <see cref="AppointmentService"/> for slots, bookings (source Portal) and cancels, <see cref="OnlinePaymentService"/> for checkout and
-/// verify, <see cref="PaymentService"/> for receipts. Nothing here writes <see cref="RecordAccess"/>: the patient reading their own record is
-/// not staff access.
+/// verify, <see cref="PaymentService"/> for receipts. Final review C1 (ruling): reading the record or the bills (whose lines name drugs and
+/// tests) writes a <see cref="RecordAccess"/> row marked as a portal read, so a staff member who linked a personal account shows up on both
+/// access logs.
 /// </summary>
 public sealed class PortalService(
     IAppDbContext db, ITenantContext tenant, ICurrentUser user, PatientPortalAccess portal, ClinicalText text, AppointmentService appointments,
@@ -121,6 +126,7 @@ public sealed class PortalService(
         [RecordGuard.Areas.Fluids] = "The fluid chart",
         [RecordGuard.Areas.WardRounds] = "Ward rounds",
         [RecordGuard.Areas.MedicationChart] = "The medication chart",
+        [RecordGuard.Areas.Bills] = "Your bills",
     };
 
     /// <summary>The patient-facing label of an access-log area; an area added later without a label reads as the record.</summary>
@@ -130,7 +136,8 @@ public sealed class PortalService(
 
     public async Task<PortalRecordDto> RecordAsync(Guid patientId, CancellationToken ct)
     {
-        await portal.RequirePatientAsync(patientId, ct);
+        var who = await portal.RequirePatientAsync(patientId, ct);
+        await RecordGuard.LogPortalReadAsync(db, who, portal.CustomerUserId(), RecordGuard.Areas.Record, clock.GetUtcNow(), ct);
         var patient = await db.Patients.AsNoTracking().FirstAsync(p => p.Id == patientId, ct);
 
         // Signed notes only; a draft (and its diagnoses) never leaves the clinic.
@@ -139,9 +146,9 @@ public sealed class PortalService(
         // Prescriptions from an admission, or from a signed consultation.
         var prescriptions = await PrescriptionService.ReadManyAsync(db, text, db.Prescriptions.AsNoTracking().Where(p => p.PatientId == patientId
             && (p.ConsultationId == null || db.Consultations.Any(c => c.Id == p.ConsultationId && c.Status == NoteStatus.Signed))), ct);
-        // Results once recorded (the patient was told "a new result is ready").
+        // Results once a doctor has reviewed them (post-build user decision; the patient was told "a new result is ready" at the review).
         var tests = await TestService.ReadManyAsync(db, text,
-            db.TestRequests.AsNoTracking().Where(t => t.PatientId == patientId && t.Status == TestStatus.Resulted), ct);
+            db.TestRequests.AsNoTracking().Where(t => t.PatientId == patientId && t.Status == TestStatus.Resulted && t.ReviewedAt != null), ct);
         var vitals = await db.VitalSigns.AsNoTracking().Where(v => v.PatientId == patientId).OrderBy(v => v.TakenAt).ThenBy(v => v.Id).ToListAsync(ct);
         var admissions = await AdmissionService.ReadManyAsync(db, text, db.Admissions.AsNoTracking().Where(a => a.PatientId == patientId), clock, ct);
         var rounds = await WardCareService.ReadRoundsAsync(db, text,
@@ -174,22 +181,32 @@ public sealed class PortalService(
     private static List<PortalAddendumDto> Addenda(IEnumerable<AddendumDto> addenda) =>
         addenda.Select(a => new PortalAddendumDto(a.AuthorName, a.Text, a.At)).ToList();
 
-    /// <summary>Who opened the patient's record: the staff member's name and clinic role, what they opened and when. Never the reason.</summary>
+    /// <summary>
+    /// Who opened the patient's record: the staff member's name and clinic role (or a portal account's short name and relationship), what
+    /// they opened and when. Never the reason or an id.
+    /// </summary>
     public async Task<IReadOnlyList<PortalAccessDto>> AccessLogAsync(Guid patientId, CancellationToken ct)
     {
         await portal.RequirePatientAsync(patientId, ct);
         var rows = await db.RecordAccesses.AsNoTracking().Where(a => a.PatientId == patientId)
             .OrderByDescending(a => a.At).ThenByDescending(a => a.Id).Take(500)
-            .Select(a => new { StaffName = db.Users.Where(u => u.Id == a.StaffUserId).Select(u => u.FullName).FirstOrDefault(), a.Role, a.Area, a.At })
+            .Select(a => new { StaffName = db.Users.Where(u => u.Id == a.StaffUserId).Select(u => u.FullName).FirstOrDefault(), a.Role, a.Area, a.At, a.Portal })
             .ToListAsync(ct);
-        return rows.Select(a => new PortalAccessDto(a.StaffName ?? "", a.Role, AreaLabel(a.Area), a.At)).ToList();
+        return rows.Select(a =>
+            {
+                var name = a.Portal ? RecordGuard.PortalName(a.StaffName) : a.StaffName ?? "";
+                return new PortalAccessDto(name, a.Role, AreaLabel(a.Area), a.At, a.Portal, RecordGuard.Who(name, a.Role, a.Portal));
+            })
+            .ToList();
     }
 
     // ---------- Bills and payments ----------
 
+    /// <summary>The patient's bills with their item names (the patient's own); logged as a portal read (final review C1).</summary>
     public async Task<IReadOnlyList<PortalBillDto>> BillsAsync(Guid patientId, CancellationToken ct)
     {
-        await portal.RequirePatientAsync(patientId, ct);
+        var who = await portal.RequirePatientAsync(patientId, ct);
+        await RecordGuard.LogPortalReadAsync(db, who, portal.CustomerUserId(), RecordGuard.Areas.Bills, clock.GetUtcNow(), ct);
         var bills = await db.PatientBills.AsNoTracking().Where(b => b.PatientId == patientId).OrderByDescending(b => b.CreatedAt).Take(200).ToListAsync(ct);
         var ids = bills.Select(b => b.Id).ToList();
         var lines = (await db.BillLines.AsNoTracking().Where(l => ids.Contains(l.BillId) && l.RemovedAt == null).OrderBy(l => l.CreatedAt).ToListAsync(ct))

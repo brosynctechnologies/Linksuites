@@ -15,6 +15,19 @@ public static class Products
     public const string Care = "care";
 
     public static readonly HashSet<string> All = [WhatsAppOrders, Invoices, Bookings, Courses, Property, School, Care];
+
+    /// <summary>The name shown for platform emails that belong to no single product (admin console, an account on several products).</summary>
+    public const string PlatformBrand = "LinkSuite";
+
+    private static readonly Dictionary<string, string> Brands = new()
+    {
+        [WhatsAppOrders] = "OrderLink", [Invoices] = "InvoiceLink", [Bookings] = "BookLink", [Courses] = "LearnLink",
+        [Property] = "PropertyLink", [School] = "SchoolLink", [Care] = "CareLink",
+    };
+
+    /// <summary>The product's own name (CareLink, InvoiceLink, ...), or <see cref="PlatformBrand"/> for none or an unknown code.</summary>
+    public static string Brand(string? product) =>
+        product is not null && Brands.TryGetValue(product.Trim().ToLowerInvariant(), out var name) ? name : PlatformBrand;
 }
 
 public static class LimitKeys

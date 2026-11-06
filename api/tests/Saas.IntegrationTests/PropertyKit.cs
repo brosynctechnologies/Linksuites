@@ -17,7 +17,7 @@ public sealed class PropertyKit(ApiFixture api)
     {
         var client = api.CreateClient();
         var email = $"{name.ToLowerInvariant().Replace(' ', '-')}-{Guid.NewGuid():N}@example.com";
-        var response = await client.PostAsJsonAsync("/api/auth/signup", new
+        var response = await api.SignUpAsync(client, "/api/auth/signup", new
         {
             fullName = $"{name} Owner", email, password = "password123", country = "NG", product = "property", businessName = name,
         }, Ct);
@@ -40,7 +40,7 @@ public sealed class PropertyKit(ApiFixture api)
     {
         var client = api.CreateClient();
         email ??= $"{name.ToLowerInvariant().Replace(' ', '-')}-{Guid.NewGuid():N}@example.com";
-        var response = await client.PostAsJsonAsync("/api/auth/seeker/signup", new { fullName = $"{name} Seeker", email, password = "password123" }, Ct);
+        var response = await api.SignUpAsync(client, "/api/auth/seeker/signup", new { fullName = $"{name} Seeker", email, password = "password123" }, Ct);
         if (!response.IsSuccessStatusCode)
             response = await client.PostAsJsonAsync("/api/auth/seeker/login", new { email, password = "password123" }, Ct);
         response.EnsureSuccessStatusCode();

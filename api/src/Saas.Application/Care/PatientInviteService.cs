@@ -42,6 +42,11 @@ public sealed class PatientInviteService(
     public const string ChooseRelationship = "Choose self, parent or guardian.";
     public const string StaffRefused = "Staff accounts can't be linked to patients. Use a personal account.";
     public const string OtherEmail = "This invitation was sent to another email address.";
+    public const string LinkOnlyLeadership =
+        "Only the medical director or an admin can create an invitation without an email. Add the patient's email to send one.";
+    public const string DeskEmailOnFile = "Front desk can send the invitation only to the email on the patient's file.";
+    public const string EmailRecentlyChanged =
+        "You changed this patient's email in the last 24 hours, so you can't invite them. Ask the medical director or an admin to send the invitation.";
 
     private Guid TenantId => tenant.TenantId ?? throw new ForbiddenException();
 
@@ -75,6 +80,17 @@ public sealed class PatientInviteService(
         phone ??= patient.Phone;
 
         var now = clock.GetUtcNow();
+        if (!caller.IsLeadership)
+        {
+            // Final review C1 (ruling): a link-only invite (no email to match at accept) lets whoever holds the link reach the record, so
+            // only leadership makes one. Front desk sends emailed invites, to the email on the patient's file and no other address.
+            if (email is null) throw new ForbiddenException(LinkOnlyLeadership);
+            if (!string.Equals(email, patient.Email?.Trim(), StringComparison.OrdinalIgnoreCase)) throw new ForbiddenException(DeskEmailOnFile);
+            email = patient.Email!.Trim();
+            // A clerk who put an address on the file (their own, say) and then invites it: refused for 24 hours after their change.
+            if (await ChangedEmailRecentlyAsync(patientId, caller.UserId, now, ct))
+                throw new ConflictException(EmailRecentlyChanged, "invite_email_recently_changed");
+        }
         var token = StudentImport.NewToken(); // 32 random bytes, URL-safe; only its hash is stored
         var invite = new PatientInvite
         {
@@ -159,6 +175,22 @@ public sealed class PatientInviteService(
             await db.SaveChangesAsync(ct);
         }
         await tx.CommitAsync(ct);
+    }
+
+    /// <summary>
+    /// True when <paramref name="userId"/> changed the patient's email in the 24 hours before <paramref name="now"/>, read from the
+    /// explicit <c>patient.updated</c> audit rows (they list the changed field names, never values).
+    /// </summary>
+    private async Task<bool> ChangedEmailRecentlyAsync(Guid patientId, Guid userId, DateTimeOffset now, CancellationToken ct)
+    {
+        var since = now.AddHours(-24);
+        var entity = patientId.ToString();
+        // The column is jsonb: read the few recent rows and look at the changed-field list here.
+        var changes = await db.AuditLogs.AsNoTracking()
+            .Where(a => a.TenantId == TenantId && a.Action == "patient.updated" && a.EntityId == entity && a.ActorId == userId && a.CreatedAt >= since)
+            .Select(a => a.AfterJson).ToListAsync(ct);
+        return changes.Any(json => json is not null && JsonDocument.Parse(json).RootElement.TryGetProperty("changed", out var changed)
+            && changed.ValueKind == JsonValueKind.Array && changed.EnumerateArray().Any(f => f.GetString() == "email"));
     }
 
     private Task<int> ExpirePendingAsync(Guid patientId, DateTimeOffset now, CancellationToken ct) =>

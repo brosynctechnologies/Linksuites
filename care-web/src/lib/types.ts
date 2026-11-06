@@ -52,6 +52,8 @@ export interface PublicInviteDto {
   role: Role;
   hasAccount: boolean;
   expired: boolean;
+  /** The clinic role the invite is for ("Nurse", "Front desk", "Admin (doctor)"); null outside CareLink. */
+  roleLabel?: string | null;
 }
 
 // ---- Team (shared) ----
@@ -244,6 +246,8 @@ export interface PatientClinicalFacts {
   genotype?: string | null;
   allergies?: string[] | null;
   conditions?: string[] | null;
+  /** Bumped by every clinical-facts save; send it back as `version` (final review I1). Clinical callers only. */
+  factsVersion?: number | null;
 }
 export type PatientDto = PatientDemographics & PatientClinicalFacts;
 export interface RegisterPatientResult {
@@ -268,6 +272,8 @@ export interface SaveClinicalFactsRequest {
   conditions: string[];
   bloodGroup: string | null;
   genotype: string | null;
+  /** The `factsVersion` loaded; a stale one gets 409 "These clinical details were changed by someone else. Reload and try again." */
+  version: number;
 }
 /** `GET /api/care/patients/{id}/access-log` (the medical director only). */
 export interface RecordAccessDto {
@@ -280,4 +286,9 @@ export interface RecordAccessDto {
   emergency: boolean;
   at: string;
   areaLabel: string;
+  /** A read through the patient portal (final review C1): `staffName` is the account's short name, `relationship` its relationship. */
+  portal: boolean;
+  relationship: string | null;
+  /** "Nkem W. (parent), patient portal", or "Ada Obi, Doctor" for staff. */
+  who: string;
 }

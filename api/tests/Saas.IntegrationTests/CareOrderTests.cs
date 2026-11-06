@@ -232,10 +232,11 @@ public sealed class CareOrderTests(ApiFixture api)
         Assert.Equal(Id(charged).ToString(), line.GetProperty("clinicalRef").GetString());
         Assert.Equal(105_000, bill.GetProperty("totalMinor").GetInt64());
 
-        // The cashier sees the price item's name and the amount, never the clinical reference.
+        // The cashier sees the line by its category ("Drug") and the amount, never the drug name or the clinical reference (final review I2).
         var cashierBill = await VisitBillAsync(cashier, w);
         var cashierLine = Assert.Single(cashierBill.GetProperty("lines").EnumerateArray());
-        Assert.Equal("Amoxicillin 500mg capsule", cashierLine.GetProperty("description").GetString());
+        Assert.Equal("Drug", cashierLine.GetProperty("description").GetString());
+        Assert.DoesNotContain("Amoxicillin", cashierBill.GetRawText());
         Assert.False(cashierLine.TryGetProperty("clinicalRef", out _));
 
         // No quantity: one is charged.
@@ -330,6 +331,7 @@ public sealed class CareOrderTests(ApiFixture api)
         var onRecord = Assert.Single(record.GetProperty("results").EnumerateArray());
         Assert.Equal("Plasmodium falciparum seen ++", onRecord.GetProperty("resultText").GetString());
         Assert.Equal("Malaria parasite smear", onRecord.GetProperty("description").GetString());
+        Assert.Equal(JsonValueKind.Null, onRecord.GetProperty("reviewedAt").ValueKind); // post-build: awaiting a doctor's review
 
         // No portal account is linked to the patient yet (Task 15), so nobody is told, and staff never are.
         Assert.Equal(0, await api.WithDbAsync(db => db.UserNotifications.IgnoreQueryFilters()
@@ -350,6 +352,20 @@ public sealed class CareOrderTests(ApiFixture api)
             var careNotices = ActivatorUtilities.CreateInstance<CareNotices>(sp, recipients);
             var tests = ActivatorUtilities.CreateInstance<TestService>(sp, access, careNotices);
             await tests.RecordResultAsync(second, "Right lower lobe consolidation", null, Ct);
+        }
+        // Post-build (user decision): recording tells nobody; the doctor's review does.
+        Assert.Equal(0, await api.WithDbAsync(db => db.UserNotifications.IgnoreQueryFilters()
+            .CountAsync(n => n.TenantId == w.Clinic.TenantId && n.Kind == "care.result_ready", Ct)));
+        using (var scope = api.Services.CreateScope())
+        {
+            var sp = scope.ServiceProvider;
+            sp.GetRequiredService<ITenantContext>().SetTenant(w.Clinic.TenantId);
+            ICurrentUser user = new StaffUser(w.DoctorId, MemberRole.Staff);
+            var access = ActivatorUtilities.CreateInstance<CareAccess>(sp, user);
+            ICarePortalRecipients recipients = new FixedRecipients(portalUser, otherPortalUser);
+            var careNotices = ActivatorUtilities.CreateInstance<CareNotices>(sp, recipients);
+            var tests = ActivatorUtilities.CreateInstance<TestService>(sp, access, careNotices);
+            await tests.ReviewAsync(second, Ct);
         }
         var notices = await api.WithDbAsync(db => db.UserNotifications.IgnoreQueryFilters()
             .Where(n => n.TenantId == w.Clinic.TenantId && n.Kind == "care.result_ready").ToListAsync(Ct));

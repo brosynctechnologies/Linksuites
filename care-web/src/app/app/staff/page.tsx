@@ -180,6 +180,7 @@ export default function StaffPage() {
           staff={editing}
           isDirector={access.isDirector}
           onClose={() => setEditing(null)}
+          onChanged={reload}
           onSaved={() => {
             setEditing(null);
             reload();
@@ -262,7 +263,20 @@ function InviteForm({ isDirector, onClose, onSaved }: { isDirector: boolean; onC
   );
 }
 
-function EditStaff({ staff, isDirector, onClose, onSaved }: { staff: CareStaffDto; isDirector: boolean; onClose: () => void; onSaved: () => void }) {
+function EditStaff({
+  staff,
+  isDirector,
+  onClose,
+  onSaved,
+  onChanged,
+}: {
+  staff: CareStaffDto;
+  isDirector: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+  /** Reload the list without closing (a call failed, or only the first of the two calls went through). */
+  onChanged: () => void;
+}) {
   const current = clinicRoleKey(staff.memberRole, staff.clinicalRole);
   const isOwner = staff.memberRole === "Owner";
   const [key, setKey] = useState<ClinicRoleKey | null>(current);
@@ -293,12 +307,17 @@ function EditStaff({ staff, isDirector, onClose, onSaved }: { staff: CareStaffDt
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    // Two calls: the member role (PATCH), then the clinical role, title and licence (PUT). The list is reloaded after each, whether it
+    // worked or not, so a half-applied change (PATCH done, PUT refused) is never hidden behind the old row. The error stays shown here.
     if (canChangeRole && target && target.memberRole !== staff.memberRole) {
       const moved = await run(() => api(`/api/team/members/${staff.membershipId}`, { method: "PATCH", body: { role: target.memberRole } }));
+      onChanged();
       if (!moved.ok) return;
     }
     const body = { clinicalRole: clinicalFor(), title: title.trim() || null, licenceNumber: licence.trim() || null };
-    if ((await run(() => api(`/api/care/staff/${staff.userId}`, { method: "PUT", body }))).ok) onSaved();
+    const saved = await run(() => api(`/api/care/staff/${staff.userId}`, { method: "PUT", body }));
+    if (saved.ok) onSaved();
+    else onChanged();
   }
 
   return (
@@ -346,7 +365,7 @@ function EditStaff({ staff, isDirector, onClose, onSaved }: { staff: CareStaffDt
                 : "As an admin they won't have a clinical role. Only the medical director can give an admin one."}
             </Notice>
           ))}
-        {target?.key === "Cashier" && current !== "Cashier" && <Notice tone="warning">A cashier can't have a clinical role, so they lose access to clinical notes.</Notice>}
+        {target?.key === "Cashier" && current !== "Cashier" && <Notice tone="warning">A cashier can&apos;t have a clinical role, so they lose access to clinical notes.</Notice>}
 
         <Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={error?.field("title")} placeholder="e.g. Consultant physician, Matron" />
         <Input label="Licence number" value={licence} onChange={(e) => setLicence(e.target.value)} error={error?.field("licenceNumber")} hint="Optional. Printed on prescriptions and summaries." />

@@ -20,7 +20,8 @@ public sealed record PatientDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? BloodGroup = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Genotype = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Allergies = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Conditions = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Conditions = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? FactsVersion = null);
 
 public sealed record PatientSummaryDto(
     Guid Id, string Number, string FullName, PatientSex Sex, DateOnly DateOfBirth, string? Phone, PatientStatus Status);
@@ -31,7 +32,11 @@ public sealed record SavePatientRequest(
     string? FirstName, string? MiddleName, string? LastName, PatientSex? Sex, DateOnly? DateOfBirth, string? Phone, string? Email, string? Address,
     string? NextOfKinName, string? NextOfKinPhone, string? NextOfKinRelationship);
 
-public sealed record SaveClinicalFactsRequest(IReadOnlyList<string>? Allergies, IReadOnlyList<string>? Conditions, string? BloodGroup, string? Genotype);
+/// <summary>
+/// A full replace of the clinical facts. <c>Version</c> is the <c>factsVersion</c> the client loaded (final review I1); left out it counts as
+/// 0, a patient whose facts were never saved. A stale version gets 409 and nothing changes.
+/// </summary>
+public sealed record SaveClinicalFactsRequest(IReadOnlyList<string>? Allergies, IReadOnlyList<string>? Conditions, string? BloodGroup, string? Genotype, int? Version = null);
 
 /// <summary>The unprotected clinical facts, for services that already checked clinical access (the allergy check in Task 7).</summary>
 public sealed record PatientClinicalFacts(IReadOnlyList<string> Allergies, IReadOnlyList<string> Conditions, string? BloodGroup, string? Genotype);
@@ -46,6 +51,7 @@ public sealed class PatientService(
     public static readonly string[] BloodGroups = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
     public static readonly string[] Genotypes = ["AA", "AS", "AC", "SS", "SC", "CC"];
     private const int SearchLimit = 50;
+    public const string StaleFacts = "These clinical details were changed by someone else. Reload and try again.";
 
     // ---------- Reads ----------
 
@@ -148,14 +154,23 @@ public sealed class PatientService(
         if (genotype is not null && !Genotypes.Contains(genotype))
             throw BadRequestException.Field("genotype", "Choose a genotype: AA, AS, AC, SS, SC or CC.");
 
+        // Final review I1 (ruling): never a blind replace. Under the patient's lock, the stored version must be the one the client loaded;
+        // otherwise someone saved in between (an allergy the client never saw would be dropped, and the allergy check would then miss it).
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        await db.LockAsync(AdmissionService.PatientLockKey(tenant.TenantId ?? throw new ForbiddenException(), id), ct);
+        await db.Entry(patient).ReloadAsync(ct);
+        if (patient.FactsVersion != (r.Version ?? 0)) throw new ConflictException(StaleFacts, "clinical_facts_stale");
+
         // Clinical free text is stored protected through ClinicalText; each entry on its own so the list reads back.
         // A full replace: the response echoes only what this caller just wrote, so the write isn't a record open (no RecordGuard).
         patient.Allergies = text.ProtectAll(allergies);
         patient.Conditions = text.ProtectAll(conditions);
         patient.BloodGroup = bloodGroup;
         patient.Genotype = genotype;
+        patient.FactsVersion++;
         db.AuditLogs.Add(Audit("patient.clinical_facts", patient.Id, new { change = "clinical facts updated" }));
         await db.SaveChangesAsync(ct);
+        if (tx is not null) await tx.CommitAsync(ct);
         return ToDto(patient, true);
     }
 
@@ -283,5 +298,5 @@ public sealed class PatientService(
         p.Id, p.Number, p.FirstName, p.MiddleName, p.LastName, $"{p.FirstName} {p.LastName}", p.Sex, p.DateOfBirth, p.Phone, p.Email, p.Address,
         p.NextOfKinName, p.NextOfKinPhone, p.NextOfKinRelationship, p.Status, p.CreatedAt,
         clinical ? p.BloodGroup : null, clinical ? p.Genotype : null,
-        clinical ? Read(p.Allergies) : null, clinical ? Read(p.Conditions) : null);
+        clinical ? Read(p.Allergies) : null, clinical ? Read(p.Conditions) : null, clinical ? p.FactsVersion : null);
 }

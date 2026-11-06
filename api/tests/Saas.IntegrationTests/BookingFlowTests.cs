@@ -212,7 +212,7 @@ public sealed class BookingFlowTests(ApiFixture api)
     private async Task<(HttpClient Owner, string Slug, Guid TenantId)> SignupAsync(string name)
     {
         var client = api.CreateClient();
-        var response = await client.PostAsJsonAsync("/api/auth/signup", new
+        var response = await api.SignUpAsync(client, "/api/auth/signup", new
         {
             fullName = $"{name} Owner", email = $"{name.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com", password = "password123",
             country = "NG", product = "bookings", businessName = $"{name} Salon",

@@ -82,7 +82,7 @@ public sealed class BlockerReviewFixTests(ApiFixture api)
     {
         var owner = api.CreateClient();
         var email = $"school-{Guid.NewGuid():N}@example.com";
-        var signup = await Json(await owner.PostAsJsonAsync("/api/auth/signup", new
+        var signup = await Json(await api.SignUpAsync(owner, "/api/auth/signup", new
         {
             fullName = "School Owner", email, password = "password123", country = "NG", product = "courses", businessName = "Private School Academy",
         }, Ct));

@@ -75,7 +75,7 @@ public sealed partial class CarePlatformTests(ApiFixture api)
         var invite = await Json(await clinic.Owner.PostAsJsonAsync($"/api/care/patients/{patientId}/invites", new { phone = "08031234567" }, Ct));
         var link = invite.GetProperty("link").GetString()!;
         var client = api.CreateClient();
-        var auth = await Json(await client.PostAsJsonAsync("/api/auth/parent/signup",
+        var auth = await Json(await api.SignUpAsync(client, "/api/auth/parent/signup",
             new { fullName = "Portal Family", email = $"portal-{Guid.NewGuid():N}@example.com", password = "password123" }, Ct));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", auth.GetProperty("accessToken").GetString());
         await Json(await client.PostAsJsonAsync($"/api/care-portal/invites/{link[(link.LastIndexOf('/') + 1)..]}/accept", new { relationship = "Self" }, Ct));
@@ -269,6 +269,9 @@ public sealed partial class CarePlatformTests(ApiFixture api)
         ["POST /api/care/tests"] = Doctors,
         ["POST /api/care/tests/{id:guid}/result"] = Clinical,
         ["GET /api/care/tests/{id:guid}/file"] = Clinical,
+        // Post-build (user decision): doctors and the director review a result before the portal shows it, and list those waiting.
+        ["POST /api/care/tests/{id:guid}/review"] = Doctors,
+        ["GET /api/care/tests/awaiting-review"] = Doctors,
         // Bills (Tasks 2 and 11): everyone reads (no clinical references for non-clinical callers); the cashier or leadership changes lines.
         ["GET /api/care/bills"] = Everyone,
         ["GET /api/care/bills/{id:guid}"] = Everyone,
@@ -292,6 +295,7 @@ public sealed partial class CarePlatformTests(ApiFixture api)
         ["GET /api/care/admissions/{id:guid}"] = Clinical,
         ["POST /api/care/admissions/{id:guid}/bed"] = EveryoneWrites,
         ["POST /api/care/admissions/{id:guid}/transfer"] = DeskWrites,
+        ["GET /api/care/admissions/{id:guid}/care-team"] = Clinical, // Task 19: names only, for the admission screen
         ["POST /api/care/admissions/{id:guid}/care-team"] = DoctorsS,
         ["DELETE /api/care/admissions/{id:guid}/care-team/{userId:guid}"] = DoctorsS,
         // Ward care (Task 9): clinical staff on the care team write nursing notes, fluids and doses; doctors write ward rounds.
@@ -349,6 +353,8 @@ public sealed partial class CarePlatformTests(ApiFixture api)
     private static readonly Dictionary<string, string> ClinicalReadExemptions = new()
     {
         ["GET /api/care/diagnosis-codes"] = "the built-in list of condition names and codes: a clinical tool with no patient data",
+        ["GET /api/care/admissions/{id:guid}/care-team"] =
+            "the doctors on an admission's care team (names, kind, dates): who is caring, which the bed board already shows for the admitting doctor; no record content",
     };
 
     /// <summary>Routes under /api/care outside the signed-in group: the signed result-file link carries its own proof.</summary>
@@ -647,7 +653,42 @@ public sealed partial class CarePlatformTests(ApiFixture api)
         await AssertProblemAsync(await clinic.Owner.DeleteAsync($"{Team(otherAdmissionId)}/{otherDoctorId}", Ct), HttpStatusCode.NotFound);
         Assert.Empty(await CoveringRowsAsync(admissionId, otherDoctorId));
         Assert.Empty(await CoveringRowsAsync(otherAdmissionId, homeDoctorId));
+        // Task 19: reading another clinic's care team is a 404 too.
+        await AssertProblemAsync(await clinic.Owner.GetAsync(Team(otherAdmissionId), Ct), HttpStatusCode.NotFound);
         _ = otherAdmitting;
+    }
+
+    /// <summary>
+    /// Task 19: the admission screen reads the care team. Clinical staff see the admitting and covering doctors (names and kinds, nothing
+    /// clinical) and writes no access-log row; a removed doctor drops off; non-clinical staff get 403; an unknown admission is a 404.
+    /// </summary>
+    [Fact]
+    public async Task Clinical_staff_read_the_care_team()
+    {
+        var (clinic, admitting, admittingId, patientId, admissionId) = await AdmittedAsync("Team Read Clinic");
+        var (_, coveringId) = await kit.StaffAsync(clinic, "Doctor");
+        var (nurse, _) = await kit.StaffAsync(clinic, "Nurse");
+        await Json(await admitting.PostAsJsonAsync(Team(admissionId), new { userId = coveringId }, Ct));
+        var logBefore = await api.WithDbAsync(db => db.RecordAccesses.IgnoreQueryFilters().CountAsync(a => a.PatientId == patientId, Ct));
+
+        foreach (var reader in new[] { admitting, nurse, clinic.Owner })
+        {
+            var team = (await Json(await reader.GetAsync(Team(admissionId), Ct))).EnumerateArray().ToList();
+            Assert.Equal(2, team.Count);
+            Assert.Equal((admittingId, "AdmittingDoctor"), (team[0].GetProperty("userId").GetGuid(), team[0].GetProperty("kind").GetString()));
+            Assert.Equal((coveringId, "CoveringDoctor"), (team[1].GetProperty("userId").GetGuid(), team[1].GetProperty("kind").GetString()));
+            Assert.Equal(["endsAt", "kind", "name", "since", "userId"], team[0].EnumerateObject().Select(p => p.Name).Order().ToArray());
+        }
+        Assert.Equal(logBefore, await api.WithDbAsync(db => db.RecordAccesses.IgnoreQueryFilters().CountAsync(a => a.PatientId == patientId, Ct)));
+
+        // A removed covering doctor drops off the team.
+        Assert.Equal(HttpStatusCode.NoContent, (await admitting.DeleteAsync($"{Team(admissionId)}/{coveringId}", Ct)).StatusCode);
+        var after = (await Json(await nurse.GetAsync(Team(admissionId), Ct))).EnumerateArray().ToList();
+        Assert.Equal(admittingId, Assert.Single(after).GetProperty("userId").GetGuid());
+
+        foreach (var role in new[] { "FrontDesk", "Cashier", "Admin" })
+            await AssertProblemAsync(await (await kit.StaffAsync(clinic, role)).Client.GetAsync(Team(admissionId), Ct), HttpStatusCode.Forbidden, CareAccess.ClinicalRefused);
+        await AssertProblemAsync(await admitting.GetAsync(Team(Guid.NewGuid()), Ct), HttpStatusCode.NotFound);
     }
 
     // ---------- Inactive vs death (fix round 1, M8) ----------

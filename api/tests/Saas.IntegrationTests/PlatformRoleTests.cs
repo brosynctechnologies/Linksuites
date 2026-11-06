@@ -17,7 +17,7 @@ public sealed class PlatformRoleTests(ApiFixture api)
     {
         var client = api.CreateClient();
         var email = $"{role.ToString().ToLowerInvariant()}-{Guid.NewGuid():N}@example.com";
-        var signup = await client.PostAsJsonAsync("/api/auth/seeker/signup", new { fullName = $"{role} Admin", email, password = "password123" }, Ct);
+        var signup = await api.SignUpAsync(client, "/api/auth/seeker/signup", new { fullName = $"{role} Admin", email, password = "password123" }, Ct);
         signup.EnsureSuccessStatusCode();
         var userId = (await signup.Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct)).GetProperty("user").GetProperty("id").GetGuid();
         await api.WithDbAsync(async db =>
@@ -34,7 +34,7 @@ public sealed class PlatformRoleTests(ApiFixture api)
     [Fact]
     public async Task Config_admin_is_bootstrapped_as_super_admin()
     {
-        await api.CreateClient().PostAsJsonAsync("/api/auth/seeker/signup", new { fullName = "Admin", email = ApiFixture.AdminEmail, password = "password123" }, Ct);
+        await api.SignUpAsync(api.CreateClient(), "/api/auth/seeker/signup", new { fullName = "Admin", email = ApiFixture.AdminEmail, password = "password123" }, Ct);
         var (panel, _) = await PlatformAuthTests.PanelLoginAsync(api, ApiFixture.AdminEmail, "password123");
         var user = (await (await panel.GetAsync("/api/me", Ct)).Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct)).GetProperty("user");
 
@@ -78,7 +78,7 @@ public sealed class PlatformRoleTests(ApiFixture api)
     public async Task Customers_are_not_admins()
     {
         var client = api.CreateClient();
-        var signup = await client.PostAsJsonAsync("/api/auth/seeker/signup",
+        var signup = await api.SignUpAsync(client, "/api/auth/seeker/signup",
             new { fullName = "Plain User", email = $"plain-{Guid.NewGuid():N}@example.com", password = "password123" }, Ct);
         var body = await signup.Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct);
         Assert.False(body.GetProperty("user").GetProperty("isPlatformAdmin").GetBoolean());

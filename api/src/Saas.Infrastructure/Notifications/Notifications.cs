@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Saas.Application.Billing;
 using Saas.Domain.Core;
 using Saas.Infrastructure.Persistence;
 
@@ -308,7 +309,7 @@ public static class EmailTemplates
 /// Sends pending outbox notifications. Rows are claimed with FOR UPDATE SKIP LOCKED so several API
 /// instances can run this safely. Failed sends are retried up to 5 times.
 /// </summary>
-public sealed class NotificationDispatcher(IServiceScopeFactory scopes, IOptions<EmailOptions> email, ILogger<NotificationDispatcher> logger)
+public sealed class NotificationDispatcher(IServiceScopeFactory scopes, ILogger<NotificationDispatcher> logger)
     : BackgroundService
 {
     private const int MaxAttempts = 5;
@@ -335,6 +336,7 @@ public sealed class NotificationDispatcher(IServiceScopeFactory scopes, IOptions
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var sender = scope.ServiceProvider.GetRequiredService<IEmailSender>();
         var replyTo = new Dictionary<Guid, string?>();
+        var tenantProducts = new Dictionary<Guid, string?>();
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var batch = await db.Notifications
@@ -345,13 +347,16 @@ public sealed class NotificationDispatcher(IServiceScopeFactory scopes, IOptions
             try
             {
                 if (n.Channel != NotificationChannel.Email) throw new NotSupportedException($"{n.Channel} is not set up yet.");
-                var message = EmailTemplates.Render(n, email.Value.FromName);
+                var brand = await BrandAsync(db, n, tenantProducts, ct);
+                var message = EmailTemplates.Render(n, brand);
                 if (message.FromName is not null && n.TenantId is { } tenantId)
                 {
                     if (!replyTo.TryGetValue(tenantId, out var address))
                         replyTo[tenantId] = address = await BusinessReplyToAsync(db, tenantId, ct);
                     message = message with { ReplyTo = address };
                 }
+                // Platform emails (sign-in, account, alerts to the business) go out under the product's own name, not one fixed name.
+                message = message with { FromName = message.FromName ?? brand };
                 await sender.SendAsync(message, ct);
                 n.Status = NotificationStatus.Sent;
                 n.SentAt = DateTimeOffset.UtcNow;
@@ -369,6 +374,20 @@ public sealed class NotificationDispatcher(IServiceScopeFactory scopes, IOptions
         await tx.CommitAsync(ct);
         // Only report work done when something was sent, so a run of failures does not spin.
         return batch.Count(n => n.Status == NotificationStatus.Sent);
+    }
+
+    /// <summary>
+    /// The product name an email speaks in: the product it was queued for (the <c>product</c> payload key, set by sign-in, sign-up and
+    /// password emails), else its business's product, else <see cref="Products.PlatformBrand"/> (admin console, several products).
+    /// </summary>
+    internal static async Task<string> BrandAsync(AppDbContext db, Notification n, Dictionary<Guid, string?> tenantProducts, CancellationToken ct)
+    {
+        if (n.Payload.GetValueOrDefault("product") is { Length: > 0 } product) return Products.Brand(product);
+        if (n.TenantId is not { } tenantId) return Products.PlatformBrand;
+        if (!tenantProducts.TryGetValue(tenantId, out var tenantProduct))
+            tenantProducts[tenantId] = tenantProduct = await db.Tenants.IgnoreQueryFilters().AsNoTracking()
+                .Where(t => t.Id == tenantId).Select(t => t.Product).FirstOrDefaultAsync(ct);
+        return Products.Brand(tenantProduct);
     }
 
     /// <summary>

@@ -22,7 +22,7 @@ public sealed class BlockerAuthTests(ApiFixture api)
     private async Task<(string Email, JsonElement Auth)> SeekerAsync()
     {
         var email = $"reset-{Guid.NewGuid():N}@example.com";
-        var auth = await Json(await api.CreateClient().PostAsJsonAsync("/api/auth/seeker/signup", new { fullName = "Forgetful Person", email, password = "password123" }, Ct));
+        var auth = await Json(await api.SignUpAsync(api.CreateClient(), "/api/auth/seeker/signup", new { fullName = "Forgetful Person", email, password = "password123" }, Ct));
         return (email, auth);
     }
 

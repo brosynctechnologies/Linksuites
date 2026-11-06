@@ -304,6 +304,19 @@ public sealed class AdmissionService(
         if (tx is not null) await tx.CommitAsync(ct);
     }
 
+    /// <summary>
+    /// Task 19: the admission's care team (admitting and covering doctors with live rows, names and ids only), for the admission screen.
+    /// Clinical staff only (403 "Only doctors and nurses can see clinical notes." before any lookup, so never the support view); 404 for
+    /// an unknown or another clinic's admission. Not a record open: it holds no patient data beyond who is caring for them, which the
+    /// bed board already shows for the admitting doctor.
+    /// </summary>
+    public async Task<IReadOnlyList<CareTeamMemberDto>> CareTeamAsync(Guid admissionId, CancellationToken ct)
+    {
+        access.EnsureClinical(await access.CallerAsync(ct));
+        if (!await db.Admissions.AsNoTracking().AnyAsync(a => a.Id == admissionId, ct)) throw new NotFoundException("Admission");
+        return await TeamAsync(admissionId, clock.GetUtcNow(), ct);
+    }
+
     /// <summary>403 unless a doctor (or the director) with clinical access; 404 for an unknown admission; 403 unless the admitting doctor or the director. Returns the patient.</summary>
     private async Task<Guid> EnsureTeamManagerAsync(CareCaller caller, Guid admissionId, CancellationToken ct)
     {

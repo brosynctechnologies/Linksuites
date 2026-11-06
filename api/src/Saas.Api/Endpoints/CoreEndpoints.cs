@@ -15,7 +15,15 @@ public static class CoreEndpoints
     public static void MapCoreEndpoints(this IEndpointRouteBuilder app)
     {
         var auth = app.MapGroup("/api/auth").WithTags("Auth").RequireRateLimiting(RateLimits.Auth);
-        auth.MapPost("/signup", (SignupRequest r, AuthService s, CancellationToken ct) => s.SignupAsync(r, ct)).Validate<SignupRequest>();
+        // Final fix pass B: a sign-up answers { confirmationRequired, email } and emails a code; /signup/confirm (code + the same password)
+        // issues the session. A confirmed account adding a product with its password gets a session straight away.
+        auth.MapPost("/signup", async (SignupRequest r, AuthService s, CancellationToken ct) =>
+        {
+            var outcome = await s.SignupAsync(r, ct);
+            return outcome.Session is { } session ? Results.Ok(session) : Results.Ok(outcome.Pending);
+        }).Validate<SignupRequest>();
+        auth.MapPost("/signup/confirm", (ConfirmSignupRequest r, AuthService s, CancellationToken ct) => s.ConfirmSignupAsync(r, customer: false, ct))
+            .Validate<ConfirmSignupRequest>().RequireRateLimiting(RateLimits.Otp);
         auth.MapPost("/login", (LoginRequest r, AuthService s, CancellationToken ct) => s.LoginAsync(r, ct)).Validate<LoginRequest>();
         auth.MapPost("/refresh", (RefreshRequest r, AuthService s, CancellationToken ct) => s.RefreshAsync(r, ct));
         auth.MapPost("/logout", async (RefreshRequest r, AuthService s, CancellationToken ct) =>

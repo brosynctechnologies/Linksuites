@@ -128,7 +128,7 @@ public sealed class PropertyAdminRecheckFixTests(ApiFixture api)
         Assert.Matches(@"/studio/billing\?ref=sub_", await CallbackAsync(agency.Client));
 
         var academy = api.CreateClient();
-        var signup = await Ok(await academy.PostAsJsonAsync("/api/auth/signup", new
+        var signup = await Ok(await api.SignUpAsync(academy, "/api/auth/signup", new
         {
             fullName = "Billing Tutor", email = $"billing-tutor-{Guid.NewGuid():N}@example.com", password = "password123", country = "NG",
             product = "courses", businessName = "Billing Academy",

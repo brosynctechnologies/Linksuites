@@ -221,7 +221,7 @@ public sealed class CourseFlowTests(ApiFixture api)
     private async Task<(HttpClient Client, Guid TenantId)> TutorAsync(string name)
     {
         var client = api.CreateClient();
-        var response = await client.PostAsJsonAsync("/api/auth/signup", new
+        var response = await api.SignUpAsync(client, "/api/auth/signup", new
         {
             fullName = $"{name} Tutor", email = $"{name.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com", password = "password123",
             country = "NG", product = "courses", businessName = $"{name} Academy",
@@ -236,7 +236,7 @@ public sealed class CourseFlowTests(ApiFixture api)
     {
         var client = api.CreateClient();
         email ??= $"{name.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com";
-        var response = await client.PostAsJsonAsync("/api/auth/learner/signup", new { fullName = $"{name} Learner", email, password = "password123" }, Ct);
+        var response = await api.SignUpAsync(client, "/api/auth/learner/signup", new { fullName = $"{name} Learner", email, password = "password123" }, Ct);
         if (response.StatusCode == HttpStatusCode.BadRequest) // the admin account already exists from another test
             response = await client.PostAsJsonAsync("/api/auth/learner/login", new { email, password = "password123" }, Ct);
         response.EnsureSuccessStatusCode();

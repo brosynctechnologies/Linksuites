@@ -79,7 +79,7 @@ public sealed class PlatformAuthTests(ApiFixture api)
         var (_, userId) = await PlatformRoleTests.AdminWithRoleAsync(api, PlatformRole.Finance);
         var email = await api.WithDbAsync(db => db.Users.Where(u => u.Id == userId).Select(u => u.Email!).SingleAsync(Ct));
         var customer = $"customer-{Guid.NewGuid():N}@example.com";
-        await api.CreateClient().PostAsJsonAsync("/api/auth/seeker/signup", new { fullName = "Customer", email = customer, password = "password123" }, Ct);
+        await api.SignUpAsync(api.CreateClient(), "/api/auth/seeker/signup", new { fullName = "Customer", email = customer, password = "password123" }, Ct);
 
         var wrongPassword = await api.CreateClient().PostAsJsonAsync("/api/platform/auth/login", new { email, password = "not-the-password" }, Ct);
         var notAdmin = await api.CreateClient().PostAsJsonAsync("/api/platform/auth/login", new { email = customer, password = "password123" }, Ct);

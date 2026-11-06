@@ -110,8 +110,29 @@ export function careAccess(me: CareMeDto, support: boolean): CareAccess {
   };
 }
 
-/** Navigation needs: an item is shown only when the member's access has this flag. */
-export type NavNeed = "leadership" | "clinical" | "money" | "desk";
+/**
+ * Navigation needs: an item is shown only when the member's access has this flag. "director" is the medical director (Owner), a support
+ * view of the director included where the API allows it (the unsigned-notes list is readable in support view, Task 16 ruling).
+ */
+export type NavNeed = "leadership" | "clinical" | "money" | "desk" | "director" | "cashier" | "doctor";
+
+/** Bills, payments and reports (Task 19): the cashier and leadership only. Front desk and clinical-only staff never get these screens. */
+export function canTakeMoney(a: CareAccess): boolean {
+  return a.isCashier || a.isLeadership;
+}
+
+/**
+ * Post-build (user decision): doctors and the medical director review a test result before the patient's portal shows it. Never a nurse,
+ * the front desk, the cashier, an admin without the doctor role, or the support view.
+ */
+export function canReviewResults(a: CareAccess): boolean {
+  return !a.readOnly && a.isClinical && (a.isDirector || a.clinicalRole === "Doctor");
+}
+
+/** Front desk and leadership manage the patient's portal invites and links (Task 15 ruling); never the support view. */
+export function canInvitePortal(a: CareAccess): boolean {
+  return !a.readOnly && (a.isLeadership || (a.memberRole === "Staff" && a.clinicalRole === "FrontDesk"));
+}
 
 export function meets(a: CareAccess, need: NavNeed | undefined): boolean {
   switch (need) {
@@ -125,5 +146,11 @@ export function meets(a: CareAccess, need: NavNeed | undefined): boolean {
       return a.canSeeMoney;
     case "desk":
       return !a.isCashier;
+    case "director":
+      return a.isDirector;
+    case "cashier":
+      return canTakeMoney(a);
+    case "doctor":
+      return a.isClinical && (a.isDirector || a.clinicalRole === "Doctor");
   }
 }

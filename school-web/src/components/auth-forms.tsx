@@ -8,31 +8,43 @@ import { rememberSchool, setAuth } from "@/lib/auth";
 import { PRODUCT } from "@/lib/config";
 import type { AuthResponse } from "@/lib/types";
 import { nextPath } from "./auth-shell";
+import { ConfirmEmailStep, isSignupPending, isUnconfirmed, type SignupPending } from "./confirm-email";
 import { Button, ErrorBox, Input, Notice } from "./ui";
 import { cx, linkClass } from "./styles";
 
-/** Runs a sign-in call, stores the session and moves on: to the path `then` returns, else `?next=` or `fallback`. */
+/**
+ * Runs a sign-in call, stores the session and moves on: to the path `then` returns, else `?next=` or `fallback`. Final fix pass B: a
+ * sign-up answers "confirm your email" (`pending`, the address the code went to) and a password login for an unconfirmed sign-up is
+ * refused with the API's sentence (`unconfirmed`); the form then shows {@link ConfirmEmailStep}, which ends in `finish`.
+ */
 export function useAuthSubmit(fallback: string, then?: (res: AuthResponse) => Promise<string | void> | string | void) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
-  async function run(fn: () => Promise<AuthResponse | void>) {
+  const [pending, setPending] = useState<string | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState<string | null>(null);
+  async function finish(res: AuthResponse) {
+    setAuth(res);
+    const to = then ? await then(res) : undefined;
+    router.replace(to ?? nextPath(fallback));
+  }
+  async function run(fn: () => Promise<AuthResponse | SignupPending | void>) {
     setBusy(true);
     setError(null);
     try {
       const res = await fn();
-      if (res) {
-        setAuth(res);
-        const to = then ? await then(res) : undefined;
-        router.replace(to ?? nextPath(fallback));
+      if (isSignupPending(res)) setPending(res.email);
+      else if (res) {
+        await finish(res);
         return;
       }
     } catch (err) {
-      setError(toApiError(err));
+      if (isUnconfirmed(err)) setUnconfirmed(err.message);
+      else setError(toApiError(err));
     }
     setBusy(false);
   }
-  return { busy, error, setError, run };
+  return { busy, error, setError, run, finish, pending, setPending, unconfirmed, setUnconfirmed };
 }
 
 const noop = () => () => {};
@@ -175,6 +187,21 @@ export function StaffLoginForm({ schoolSlug }: { schoolSlug?: string }) {
   const submit = useAuthSubmit("/app");
   const { busy, error, setError, run } = submit;
 
+  if (submit.unconfirmed) {
+    return (
+      <ConfirmEmailStep
+        email={email.trim()}
+        password={password}
+        confirmPath="/api/auth/signup/confirm"
+        product={PRODUCT}
+        notice={submit.unconfirmed}
+        onConfirmed={submit.finish}
+        onBack={() => submit.setUnconfirmed(null)}
+        backLabel="Back to sign in"
+      />
+    );
+  }
+
   if (mode === "code") {
     return (
       <EmailCode
@@ -228,7 +255,7 @@ export function StaffLoginForm({ schoolSlug }: { schoolSlug?: string }) {
 /** Proprietor signup: creates the school (product `school`) with its current session and three terms. */
 export function SchoolSignupForm() {
   const [form, setForm] = useState({ businessName: "", fullName: "", email: "", password: "" });
-  const { busy, error, setError, run } = useAuthSubmit("/app");
+  const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/app");
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   function submit(e: FormEvent) {
@@ -242,7 +269,7 @@ export function SchoolSignupForm() {
       return;
     }
     run(() =>
-      api<AuthResponse>("/api/auth/signup", {
+      api<AuthResponse | SignupPending>("/api/auth/signup", {
         method: "POST",
         body: {
           fullName: form.fullName.trim(),
@@ -254,6 +281,20 @@ export function SchoolSignupForm() {
         },
         auth: false,
       }),
+    );
+  }
+
+  if (pending) {
+    return (
+      <ConfirmEmailStep
+        email={pending}
+        password={form.password}
+        confirmPath="/api/auth/signup/confirm"
+        product={PRODUCT}
+        onConfirmed={finish}
+        onBack={() => setPending(null)}
+        backLabel="Change my details"
+      />
     );
   }
 
@@ -310,6 +351,20 @@ export function ParentSignInForm({ schoolSlug, onSignedIn }: { schoolSlug?: stri
   );
   const { busy, error, setError, run } = submit;
 
+  if (submit.unconfirmed) {
+    return (
+      <ConfirmEmailStep
+        email={email.trim()}
+        password={password}
+        confirmPath="/api/auth/parent/signup/confirm"
+        notice={submit.unconfirmed}
+        onConfirmed={submit.finish}
+        onBack={() => submit.setUnconfirmed(null)}
+        backLabel="Back to sign in"
+      />
+    );
+  }
+
   if (mode === "code") {
     return (
       <div className="space-y-4">
@@ -358,10 +413,13 @@ export function ParentSignInForm({ schoolSlug, onSignedIn }: { schoolSlug?: stri
   );
 }
 
-/** A new parent account (used on the invite page when the parent has none yet). */
+/**
+ * A new parent account (used on the invite page when the parent has none yet). Final fix pass B: the emailed code comes next
+ * (`/api/auth/parent/signup/confirm`); the account is usable once it is entered.
+ */
 export function ParentSignupForm({ onSignedIn }: { onSignedIn: (res: AuthResponse) => Promise<string | void> | string | void }) {
   const [form, setForm] = useState({ fullName: "", email: "", password: "" });
-  const { busy, error, setError, run } = useAuthSubmit("/parent", onSignedIn);
+  const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/parent", onSignedIn);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   function submit(e: FormEvent) {
@@ -375,11 +433,24 @@ export function ParentSignupForm({ onSignedIn }: { onSignedIn: (res: AuthRespons
       return;
     }
     run(() =>
-      api<AuthResponse>("/api/auth/parent/signup", {
+      api<AuthResponse | SignupPending>("/api/auth/parent/signup", {
         method: "POST",
         body: { fullName: form.fullName.trim(), email: form.email.trim(), password: form.password },
         auth: false,
       }),
+    );
+  }
+
+  if (pending) {
+    return (
+      <ConfirmEmailStep
+        email={pending}
+        password={form.password}
+        confirmPath="/api/auth/parent/signup/confirm"
+        onConfirmed={finish}
+        onBack={() => setPending(null)}
+        backLabel="Change my details"
+      />
     );
   }
 

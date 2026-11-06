@@ -218,6 +218,31 @@ public sealed class CareReportTests(ApiFixture api)
         Assert.Equal(100_000, debtor.GetProperty("balanceMinor").GetInt64());
     }
 
+    /// <summary>Final review minor 1: a bill flagged for review (an online mismatch being sorted out) is left out of the debtors report and its CSV.</summary>
+    [Fact]
+    public async Task Debtors_leave_out_bills_flagged_for_review()
+    {
+        var clinic = await kit.ClinicAsync("Review Debt Clinic");
+        var (cashier, _) = await kit.StaffAsync(clinic, "Cashier");
+        var item = await kit.PriceItemAsync(clinic, "Review debt item", "Procedure", 100_000);
+        var flaggedId = (await kit.PatientAsync(clinic, "Flagged", "Payer", phone: "08031113333")).GetProperty("id").GetGuid();
+        var owingId = (await kit.PatientAsync(clinic, "Plain", "Owing", "1980-01-01", phone: "08031114444")).GetProperty("id").GetGuid();
+        var flagged = await OpenBillAsync(clinic, flaggedId);
+        await AddLineAsync(clinic, flagged, item);
+        var owing = await OpenBillAsync(clinic, owingId);
+        await AddLineAsync(clinic, owing, item);
+        await api.WithDbAsync(db => db.PatientBills.IgnoreQueryFilters().Where(b => b.Id == flagged)
+            .ExecuteUpdateAsync(s => s.SetProperty(b => b.NeedsReview, true), Ct));
+
+        var report = await Json(await cashier.GetAsync("/api/care/reports/debtors", Ct));
+        var debtor = Assert.Single(report.GetProperty("debtors").EnumerateArray());
+        Assert.Equal(owingId, debtor.GetProperty("patientId").GetGuid());
+        Assert.Equal(100_000, report.GetProperty("totalMinor").GetInt64());
+        var csv = await CsvAsync(await cashier.GetAsync("/api/care/reports/debtors.csv", Ct));
+        Assert.DoesNotContain("Flagged", csv);
+        Assert.Contains("Plain Owing", csv);
+    }
+
     [Fact]
     public async Task Revenue_report_totals_by_price_category()
     {

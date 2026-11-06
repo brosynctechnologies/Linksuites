@@ -6,10 +6,10 @@ import { useState } from "react";
 import { firstName } from "@/lib/auth";
 import { useCare } from "@/lib/care-me";
 import { plural } from "@/lib/format";
-import { careRoleLabel } from "@/lib/roles";
+import { canTakeMoney, careRoleLabel } from "@/lib/roles";
 import { useApi } from "@/lib/use-api";
 import type { CareSetupDto } from "@/lib/types";
-import { PatientsIcon, PlusIcon, PriceIcon, StaffIcon } from "@/components/icons";
+import { BedIcon, BillIcon, CalendarIcon, NoteIcon, PatientsIcon, PlusIcon, PriceIcon, QueueIcon, ReportIcon, StaffIcon, WardIcon } from "@/components/icons";
 import { ApiErrorView, SearchField, SectionTitle, buttonClass, cx } from "@/components/ui";
 import { SetupChecklist } from "./setup/checklist";
 
@@ -22,7 +22,14 @@ export default function HomePage() {
   const left = setup.data?.checklist.filter((i) => !i.done) ?? [];
 
   const shortcuts = [
+    { href: "/app/queue", label: "Queue", text: "Today's patients by stage, with check-in.", icon: QueueIcon, show: !access.isCashier },
     { href: "/app/patients", label: "Patients", text: "Search by name, number or phone.", icon: PatientsIcon, show: true },
+    { href: "/app/appointments", label: "Appointments", text: "Each doctor's day, booking and weekly hours.", icon: CalendarIcon, show: !access.isCashier },
+    { href: "/app/beds", label: "Beds", text: "Every ward's beds, patients waiting for a bed, deposits and transfers.", icon: BedIcon, show: true },
+    { href: "/app/admissions", label: "Inpatients", text: "Patients on the wards now and those discharged recently.", icon: WardIcon, show: !access.isCashier },
+    { href: "/app/bills", label: "Bills", text: "Take payments, print receipts and close paid visits.", icon: BillIcon, show: canTakeMoney(access) },
+    { href: "/app/reports", label: "Reports", text: "Takings, revenue, deposits held and debtors, with CSV.", icon: ReportIcon, show: canTakeMoney(access) },
+    { href: "/app/unsigned-notes", label: "Unsigned notes", text: "Drafts waiting for a doctor's signature.", icon: NoteIcon, show: access.isDirector },
     { href: "/app/patients/new", label: "Register a patient", text: "With a check for anyone already registered.", icon: PlusIcon, show: access.canRegister },
     { href: "/app/price-list", label: "Price list", text: "What the clinic charges for.", icon: PriceIcon, show: access.canSeeMoney },
     { href: "/app/staff", label: "Staff", text: "Invite staff and set their clinic roles.", icon: StaffIcon, show: access.isLeadership },

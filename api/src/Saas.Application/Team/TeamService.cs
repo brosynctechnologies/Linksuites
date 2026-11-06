@@ -144,7 +144,8 @@ public sealed class TeamService(
         {
             ["business"] = t.Name,
             ["inviter"] = inviter,
-            ["role"] = invitation.Role.ToString(),
+            // A clinic names the clinic role ("as Nurse"); other products keep the platform role ("as Staff").
+            ["role"] = t.Product == Products.Care ? Care.CareStaff.RoleLabel(invitation.Role, invitation.ClinicalRole) : invitation.Role.ToString(),
             ["link"] = $"{urls.Web(t.Product)}/invite/{token}",
         }, tenantId, user.UserId);
     }

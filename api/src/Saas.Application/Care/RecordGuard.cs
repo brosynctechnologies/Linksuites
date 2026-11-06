@@ -7,9 +7,14 @@ using Saas.Domain.Core;
 
 namespace Saas.Application.Care;
 
-/// <summary>One entry of a patient's access log, for leadership.</summary>
+/// <summary>
+/// One entry of a patient's access log, for leadership. A portal read (final review C1) has <see cref="Portal"/> set, the account's short
+/// name ("Nkem W.") as <see cref="StaffName"/>, its relationship ("parent") as <see cref="Relationship"/> and <see cref="Role"/>, and
+/// <see cref="Who"/> "Nkem W. (parent), patient portal". A staff entry's <see cref="Who"/> is "{name}, {role}".
+/// </summary>
 public sealed record RecordAccessDto(
-    Guid Id, Guid StaffUserId, string StaffName, string Role, string Area, string? Reason, bool Emergency, DateTimeOffset At, string AreaLabel);
+    Guid Id, Guid StaffUserId, string StaffName, string Role, string Area, string? Reason, bool Emergency, DateTimeOffset At, string AreaLabel,
+    bool Portal, string? Relationship, string Who);
 
 /// <summary>
 /// The clinical record guard. Every staff route that opens clinical data calls <see cref="OpenAsync"/> first: it requires clinical access,
@@ -50,9 +55,11 @@ public sealed class RecordGuard(
         public const string WardRounds = "ward-round";
         /// <summary>Task 9: an admission's medication chart.</summary>
         public const string MedicationChart = "medication";
+        /// <summary>Final review C1: a portal account read the patient's bills (their lines name drugs and tests). Written only by the portal.</summary>
+        public const string Bills = "bills";
 
         public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
-            { Record, Consultation, Admission, Prescription, Result, Discharge, Pdf, File, Triage, NursingNotes, Fluids, WardRounds, MedicationChart };
+            { Record, Consultation, Admission, Prescription, Result, Discharge, Pdf, File, Triage, NursingNotes, Fluids, WardRounds, MedicationChart, Bills };
 
         /// <summary>
         /// What each area reads as on the director's access log (Task 16). Every area has one; the portal has its own patient-facing
@@ -73,6 +80,7 @@ public sealed class RecordGuard(
             [Fluids] = "Fluid chart",
             [WardRounds] = "Ward rounds",
             [MedicationChart] = "Medication chart",
+            [Bills] = "Bills",
         };
 
         /// <summary>The access-log label for <paramref name="area"/>; an unknown area (none is written) shows as the patient record.</summary>
@@ -179,13 +187,48 @@ public sealed class RecordGuard(
             .Select(a => new
             {
                 a.Id, a.StaffUserId, StaffName = db.Users.Where(u => u.Id == a.StaffUserId).Select(u => u.FullName).FirstOrDefault(),
-                a.Role, a.Area, a.Reason, a.Emergency, a.At,
+                a.Role, a.Area, a.Reason, a.Emergency, a.At, a.Portal,
             })
             .ToListAsync(ct);
-        return rows.Select(a => new RecordAccessDto(a.Id, a.StaffUserId, a.StaffName ?? "", a.Role, a.Area, text.Read(a.Reason), a.Emergency, a.At,
-                Areas.Label(a.Area)))
+        return rows.Select(a =>
+            {
+                var name = a.Portal ? PortalName(a.StaffName) : a.StaffName ?? "";
+                return new RecordAccessDto(a.Id, a.StaffUserId, name, a.Role, a.Area, text.Read(a.Reason), a.Emergency, a.At, Areas.Label(a.Area),
+                    a.Portal, a.Portal ? a.Role : null, Who(name, a.Role, a.Portal));
+            })
             .ToList();
     }
+
+    /// <summary>
+    /// Final review C1: logs a portal account's read of the patient's clinical data (the record, or the bills with their item names): the
+    /// account as the reader, its relationship to the patient as the role, marked as a portal read. Never emergency, never a reason. The
+    /// caller has passed <see cref="PatientPortalAccess.RequirePatientAsync"/>, so the tenant is the patient's clinic. Saves.
+    /// </summary>
+    public static async Task LogPortalReadAsync(IAppDbContext db, PortalPatientRef patient, Guid accountId, string area, DateTimeOffset at, CancellationToken ct)
+    {
+        if (!Areas.All.Contains(area)) throw new ArgumentOutOfRangeException(nameof(area), area, "Unknown record area.");
+        db.RecordAccesses.Add(new RecordAccess
+        {
+            TenantId = patient.ClinicId, StaffUserId = accountId, Role = patient.Relationship.ToString().ToLowerInvariant(), PatientId = patient.Id,
+            Area = area, Emergency = false, Portal = true, At = at,
+        });
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>A portal account's name as both logs show it: the first name and the last name's initial ("Nkem Williams" → "Nkem W.").</summary>
+    public static string PortalName(string? fullName)
+    {
+        var parts = (fullName ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length switch
+        {
+            0 => "A portal account",
+            1 => parts[0],
+            _ => $"{parts[0]} {char.ToUpperInvariant(parts[^1][0])}.",
+        };
+    }
+
+    /// <summary>"Nkem W. (parent), patient portal" for a portal read; "Ada Obi, Doctor" for staff.</summary>
+    public static string Who(string name, string role, bool portal) => portal ? $"{name} ({role}), patient portal" : $"{name}, {role}";
 
     /// <summary>The clinic role label stored on the log: "Medical director", "Doctor" or "Nurse".</summary>
     public static string RoleLabel(CareCaller c) =>

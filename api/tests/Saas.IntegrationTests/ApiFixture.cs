@@ -82,7 +82,7 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
     public async Task<(HttpClient Client, JsonElement Auth)> SignupInvoicesAsync(string name, string? email = null, string password = "password123")
     {
         var client = CreateClient();
-        var response = await client.PostAsJsonAsync("/api/auth/signup", new
+        var response = await SignUpAsync(client, "/api/auth/signup", new
         {
             fullName = name,
             email = email ?? $"{name.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com",
@@ -123,11 +123,55 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         return await action(scope.ServiceProvider.GetRequiredService<AppDbContext>());
     }
 
+    /// <summary>The 6-digit code most recently emailed to <paramref name="email"/> (sign-up confirmation or code sign-in).</summary>
+    public async Task<string> LatestCodeAsync(string email) =>
+        (await WithDbAsync(db => db.Notifications.Where(n => n.TemplateKey == "otp" && n.Recipient == email.Trim().ToLowerInvariant())
+            .OrderByDescending(n => n.CreatedAt).FirstAsync())).Payload["code"];
+
+    /// <summary>
+    /// Final fix pass B: a password sign-up answers <c>{ confirmationRequired: true }</c> and emails a code; the session comes from
+    /// <c>{path}/confirm</c> with that code and the same password. Posts the sign-up to <paramref name="path"/> and, when the API asks for the
+    /// code, confirms it as the mailbox's owner would: the answer is the confirm response (a session). A refused sign-up, or one that
+    /// already answers with a session (a confirmed account adding a product), is returned as it is.
+    /// </summary>
+    public async Task<HttpResponseMessage> SignUpAsync(HttpClient client, string path, object body, CancellationToken ct = default)
+    {
+        var response = await client.PostAsJsonAsync(path, body, ct);
+        if (!response.IsSuccessStatusCode) return response;
+        // The caller may read the answer again, so it gets a copy whose content hasn't been read (a TestServer stream reads once).
+        var text = await response.Content.ReadAsStringAsync(ct);
+        var answer = JsonSerializer.Deserialize<JsonElement>(text, Json);
+        if (!answer.TryGetProperty("confirmationRequired", out var required) || required.ValueKind != JsonValueKind.True)
+            return new HttpResponseMessage(response.StatusCode)
+            {
+                Content = new StringContent(text, System.Text.Encoding.UTF8, "application/json"), RequestMessage = response.RequestMessage,
+            };
+        var sent = JsonSerializer.SerializeToElement(body, Json);
+        string? Field(string name) => sent.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        var email = Field("email")!;
+        return await client.PostAsJsonAsync($"{path}/confirm",
+            new { email, code = await LatestCodeAsync(email), password = Field("password"), product = Field("product") }, ct);
+    }
+
+    /// <summary>
+    /// An account as sign-up made them before final fix pass B: a password and an email that was never confirmed (it can still sign in with
+    /// the password, and its first code confirmation takes it over).
+    /// </summary>
+    public async Task<Guid> LegacyUnconfirmedAccountAsync(string email, string password = "password123", string name = "Legacy Account")
+    {
+        using var scope = Services.CreateScope();
+        var users = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.UserManager<AppUser>>();
+        var user = new AppUser { FullName = name, Email = email, UserName = email };
+        var created = await users.CreateAsync(user, password);
+        if (!created.Succeeded) throw new InvalidOperationException(string.Join(" ", created.Errors.Select(e => e.Description)));
+        return user.Id;
+    }
+
     public async Task<(HttpClient Client, JsonElement Auth)> SignupAsync(string name)
     {
         var client = CreateClient();
         var id = Guid.NewGuid().ToString("N")[..8];
-        var response = await client.PostAsJsonAsync("/api/auth/signup", new
+        var response = await SignUpAsync(client, "/api/auth/signup", new
         {
             fullName = name,
             email = $"{name.ToLowerInvariant()}-{id}@example.com",

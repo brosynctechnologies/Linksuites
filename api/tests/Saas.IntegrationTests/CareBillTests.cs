@@ -61,6 +61,45 @@ public sealed class CareBillTests(ApiFixture api)
         Assert.Empty((await Json(await doctor.GetAsync("/api/care/price-list?active=true", Ct))).EnumerateArray());
     }
 
+    /// <summary>
+    /// Final review I2 (user decision): the cashier and front desk see bill lines by category and amount only ("Drug", "Test"), never the
+    /// item name, and get no price-item id to look it up by; doctors, the director and an admin see the names.
+    /// </summary>
+    [Fact]
+    public async Task Cashier_sees_bill_lines_by_category_only()
+    {
+        var clinic = await kit.ClinicAsync("Bill Category Clinic");
+        var (cashier, _) = await kit.StaffAsync(clinic, "Cashier");
+        var (frontDesk, _) = await kit.StaffAsync(clinic, "FrontDesk");
+        var (doctor, _) = await kit.StaffAsync(clinic, "Doctor");
+        var (admin, _) = await kit.StaffAsync(clinic, "Admin");
+        var patientId = (await kit.PatientAsync(clinic)).GetProperty("id").GetGuid();
+        var drug = await kit.PriceItemAsync(clinic, "Tenofovirmarker tablets", "Drug", 250_000);
+        var test = await kit.PriceItemAsync(clinic, "Hepatitismarker viral load", "Test", 900_000);
+        var billId = await OpenVisitBillAsync(clinic, patientId, Guid.NewGuid());
+        await AddLineAsync(clinic, billId, drug, 1);
+        await AddLineAsync(clinic, billId, test, 1);
+
+        foreach (var client in new[] { cashier, frontDesk })
+        {
+            var response = await client.GetAsync($"/api/care/bills/{billId}", Ct);
+            var text = await response.Content.ReadAsStringAsync(Ct);
+            var bill = await Json(response);
+            Assert.DoesNotContain("Tenofovirmarker", text);
+            Assert.DoesNotContain("Hepatitismarker", text);
+            Assert.DoesNotContain(drug.ToString(), text);
+            Assert.DoesNotContain(test.ToString(), text);
+            var lines = bill.GetProperty("lines").EnumerateArray().ToList();
+            Assert.Equal(["Drug", "Test"], lines.Select(l => l.GetProperty("description").GetString()));
+            Assert.Equal([250_000L, 900_000L], lines.Select(l => l.GetProperty("amountMinor").GetInt64()));
+        }
+        foreach (var client in new[] { doctor, clinic.Owner, admin })
+        {
+            var lines = (await Json(await client.GetAsync($"/api/care/bills/{billId}", Ct))).GetProperty("lines").EnumerateArray().ToList();
+            Assert.Equal(["Tenofovirmarker tablets", "Hepatitismarker viral load"], lines.Select(l => l.GetProperty("description").GetString()));
+        }
+    }
+
     [Fact]
     public async Task Bill_keeps_the_price_charged()
     {
@@ -162,7 +201,7 @@ public sealed class CareBillTests(ApiFixture api)
             new { priceItemId = dressing, quantity = 2, reason = "Dressing changed twice on the ward" }, Ct));
         Assert.Equal(150_000 + 400_000 + 500_000, manual.GetProperty("totalMinor").GetInt64());
         var manualLine = manual.GetProperty("lines").EnumerateArray().Single(l => l.GetProperty("source").GetString() == "Manual");
-        Assert.Equal("Wound dressing", manualLine.GetProperty("description").GetString());
+        Assert.Equal("Procedure", manualLine.GetProperty("description").GetString()); // final review I2: the cashier reads the category
         Assert.Equal(500_000, manualLine.GetProperty("amountMinor").GetInt64());
 
         // Front desk reads bills but can't change them.

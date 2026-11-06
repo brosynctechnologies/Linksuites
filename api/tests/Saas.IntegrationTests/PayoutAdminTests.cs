@@ -16,7 +16,7 @@ public sealed class PayoutAdminTests(ApiFixture api)
     public async Task Admin_queue_shows_the_product_of_each_payout()
     {
         var tutor = api.CreateClient();
-        var signup = await tutor.PostAsJsonAsync("/api/auth/signup", new
+        var signup = await api.SignUpAsync(tutor, "/api/auth/signup", new
         {
             fullName = "Payout Owner", email = $"payout-{Guid.NewGuid():N}@example.com", password = "password123",
             country = "NG", product = "courses", businessName = "Payout Academy",
@@ -41,7 +41,7 @@ public sealed class PayoutAdminTests(ApiFixture api)
             .Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct);
 
         var admin = api.CreateClient();
-        var login = await admin.PostAsJsonAsync("/api/auth/learner/signup", new { fullName = "Admin", email = ApiFixture.AdminEmail, password = "password123" }, Ct);
+        var login = await api.SignUpAsync(admin, "/api/auth/learner/signup", new { fullName = "Admin", email = ApiFixture.AdminEmail, password = "password123" }, Ct);
         if (!login.IsSuccessStatusCode)
             login = await admin.PostAsJsonAsync("/api/auth/learner/login", new { email = ApiFixture.AdminEmail, password = "password123" }, Ct);
         login.EnsureSuccessStatusCode();

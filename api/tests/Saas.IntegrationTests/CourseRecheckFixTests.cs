@@ -157,7 +157,7 @@ public sealed class CourseRecheckFixTests(ApiFixture api)
     private async Task<(HttpClient Client, Guid TenantId)> TutorAsync(string name)
     {
         var client = api.CreateClient();
-        var response = await client.PostAsJsonAsync("/api/auth/signup", new
+        var response = await api.SignUpAsync(client, "/api/auth/signup", new
         {
             fullName = $"{name} Tutor", email = $"crs-{name.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com", password = "password123",
             country = "NG", product = "courses", businessName = $"{name} Academy",
@@ -171,7 +171,7 @@ public sealed class CourseRecheckFixTests(ApiFixture api)
     private async Task<HttpClient> LearnerAsync(string name)
     {
         var client = api.CreateClient();
-        var response = await client.PostAsJsonAsync("/api/auth/learner/signup", new
+        var response = await api.SignUpAsync(client, "/api/auth/learner/signup", new
         {
             fullName = $"{name} Learner", email = $"crs-{name.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com", password = "password123",
         }, Ct);

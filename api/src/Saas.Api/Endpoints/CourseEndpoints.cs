@@ -20,8 +20,11 @@ public static partial class CourseEndpoints
     {
         // Learner accounts (no business attached).
         var learnerAuth = app.MapGroup("/api/auth/learner").WithTags("Auth").RequireRateLimiting(RateLimits.Auth);
-        learnerAuth.MapPost("/signup", (LearnerSignupRequest r, AuthService s, CancellationToken ct) => s.LearnerSignupAsync(r, ct))
+        learnerAuth.MapPost("/signup", (LearnerSignupRequest r, AuthService s, CancellationToken ct) => s.LearnerSignupAsync(r, Saas.Application.Billing.Products.Courses, ct))
             .Validate<LearnerSignupRequest>();
+        // Final fix pass B: the sign-up answers { confirmationRequired } and emails a code; this route (code + password) issues the session.
+        learnerAuth.MapPost("/signup/confirm", (ConfirmSignupRequest r, AuthService s, CancellationToken ct) => s.ConfirmSignupAsync(r, customer: true, ct))
+            .Validate<ConfirmSignupRequest>().RequireRateLimiting(RateLimits.Otp);
         learnerAuth.MapPost("/login", (LoginRequest r, AuthService s, CancellationToken ct) => s.LearnerLoginAsync(r, ct)).Validate<LoginRequest>();
 
         // Studio (tutor business).

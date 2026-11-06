@@ -9,7 +9,25 @@ import { CareMeProvider, useCare } from "@/lib/care-me";
 import { careRoleLabel, meets, type CareAccess, type NavNeed } from "@/lib/roles";
 import { useApi } from "@/lib/use-api";
 import type { CareMeDto } from "@/lib/types";
-import { AccountIcon, HomeIcon, LogoutIcon, MoreIcon, PatientsIcon, PriceIcon, SettingsIcon, SetupIcon, StaffIcon } from "@/components/icons";
+import {
+  AccountIcon,
+  BedIcon,
+  BillIcon,
+  CalendarIcon,
+  CheckIcon,
+  HomeIcon,
+  LogoutIcon,
+  MoreIcon,
+  NoteIcon,
+  PatientsIcon,
+  PriceIcon,
+  QueueIcon,
+  ReportIcon,
+  SettingsIcon,
+  SetupIcon,
+  StaffIcon,
+  WardIcon,
+} from "@/components/icons";
 import { NotificationBell } from "@/components/notification-bell";
 import { Wordmark } from "@/components/site-chrome";
 import { ApiErrorView, PageLoader, cx } from "@/components/ui";
@@ -26,26 +44,43 @@ interface NavItem {
 /**
  * The staff navigation, filtered by role:
  * - "clinical": clinical access only (doctors, nurses, the medical director, admins with a clinical role). Front desk and the cashier
- *   never see these. Tasks 18-19 add the queue's clinical views, consultations, ward care and the record here.
- * - "money": hidden from clinical-only staff (a doctor or nurse who isn't leadership). Price list now; bills and reports in Task 19.
+ *   never see these. Triage, the consultation and the record are reached from the queue and the patient page, and guard themselves.
+ * - "money": hidden from clinical-only staff (a doctor or nurse who isn't leadership): the price list.
+ * - "cashier": the cashier and leadership (bills, payments and reports, Task 19). Beds (the bed board) is for every member: the desk
+ *   and the cashier assign beds and take deposits; inpatients (the ward list) is the desk rule.
  * - "leadership": the medical director and admins (staff, setup, settings).
- * - "desk": everyone but the cashier.
+ * - "desk": everyone but the cashier (the queue with check-in, and appointments: no clinical fields).
+ * - "director": the medical director (unsigned notes, no note text).
  */
 export const NAV: NavItem[] = [
   { href: "/app", label: "Home", icon: HomeIcon, exact: true },
+  { href: "/app/queue", label: "Queue", icon: QueueIcon, needs: "desk" },
   { href: "/app/patients", label: "Patients", icon: PatientsIcon },
+  { href: "/app/appointments", label: "Appointments", icon: CalendarIcon, needs: "desk" },
+  { href: "/app/beds", label: "Beds", icon: BedIcon },
+  { href: "/app/admissions", label: "Inpatients", icon: WardIcon, needs: "desk" },
+  { href: "/app/bills", label: "Bills", icon: BillIcon, needs: "cashier" },
+  { href: "/app/reports", label: "Reports", icon: ReportIcon, needs: "cashier" },
+  { href: "/app/unsigned-notes", label: "Unsigned notes", icon: NoteIcon, needs: "director" },
+  { href: "/app/results-to-review", label: "Results to review", icon: CheckIcon, needs: "doctor" },
   { href: "/app/price-list", label: "Price list", icon: PriceIcon, needs: "money" },
+  { href: "/app/wards", label: "Wards and beds", icon: SetupIcon, needs: "leadership" },
   { href: "/app/staff", label: "Staff", icon: StaffIcon, needs: "leadership" },
   { href: "/app/setup", label: "Setup", icon: SetupIcon, needs: "leadership" },
   { href: "/app/settings", label: "Settings", icon: SettingsIcon, needs: "leadership" },
   { href: "/app/account", label: "Account", icon: AccountIcon },
 ];
 
-/** On phones the tab bar holds four; the rest live under More. */
-const BOTTOM = ["/app", "/app/patients", "/app/price-list", "/app/staff"];
+/** On phones the tab bar holds the first four of these the member has; the rest live under More. */
+const BOTTOM = ["/app", "/app/queue", "/app/patients", "/app/bills", "/app/beds", "/app/appointments", "/app/price-list", "/app/staff"];
 
 export function navFor(access: CareAccess): NavItem[] {
   return NAV.filter((n) => meets(access, n.needs));
+}
+
+/** The member's phone tab bar: up to four items, in BOTTOM order. */
+function bottomFor(items: NavItem[]): NavItem[] {
+  return BOTTOM.map((href) => items.find((n) => n.href === href)).filter((n): n is NavItem => !!n).slice(0, 4);
 }
 
 function isActive(pathname: string, item: NavItem) {
@@ -77,8 +112,8 @@ function Shell({ clinicName, children }: { clinicName: string; children: ReactNo
   const pathname = usePathname();
   const router = useRouter();
   const items = navFor(access);
-  const bottom = items.filter((n) => BOTTOM.includes(n.href));
-  const overflow = items.filter((n) => !BOTTOM.includes(n.href));
+  const bottom = bottomFor(items);
+  const overflow = items.filter((n) => !bottom.includes(n));
   const moreActive = pathname === "/app/more" || overflow.some((n) => isActive(pathname, n));
   const role = careRoleLabel(me.memberRole, me.clinicalRole);
 
@@ -181,7 +216,9 @@ function Shell({ clinicName, children }: { clinicName: string; children: ReactNo
 export function MoreMenu() {
   const { access } = useCare();
   const router = useRouter();
-  const items = navFor(access).filter((n) => !BOTTOM.includes(n.href));
+  const all = navFor(access);
+  const bottom = bottomFor(all);
+  const items = all.filter((n) => !bottom.includes(n));
   return (
     <div className="case-sheet">
       <ul className="case-rows">

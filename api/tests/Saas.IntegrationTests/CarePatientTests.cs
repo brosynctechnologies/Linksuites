@@ -161,6 +161,42 @@ public sealed class CarePatientTests(ApiFixture api)
             new { allergies = Array.Empty<string>(), conditions = Array.Empty<string>(), bloodGroup = "Z+", genotype = (string?)null }, Ct), HttpStatusCode.BadRequest);
     }
 
+    /// <summary>
+    /// Final review I1 (ruling): the clinical-facts save carries the version it loaded. Two clinicians save from the same version: the first
+    /// wins, the second gets 409 and the first one's allergy survives. A save without a version counts as version 0 (nothing saved yet).
+    /// </summary>
+    [Fact]
+    public async Task Concurrent_allergy_edits_never_drop_an_entry()
+    {
+        const string Stale = "These clinical details were changed by someone else. Reload and try again.";
+        var clinic = await kit.ClinicAsync("Stale Facts Clinic");
+        var (nurse, nurseId) = await kit.StaffAsync(clinic, "Nurse");
+        var id = (await kit.PatientAsync(clinic, "Stale", "Facts")).GetProperty("id").GetGuid();
+        await kit.AssignAsync(clinic, id, nurseId, Saas.Domain.Care.CareAssignmentKind.TriageNurse);
+        var first = await Json(await clinic.Owner.PutAsJsonAsync($"/api/care/patients/{id}/clinical-facts", new { allergies = new[] { "Penicillin" } }, Ct));
+        var version = first.GetProperty("factsVersion").GetInt32();
+
+        // Both read the same version.
+        Assert.Equal(version, (await Json(await clinic.Owner.GetAsync($"/api/care/patients/{id}", Ct))).GetProperty("factsVersion").GetInt32());
+        Assert.Equal(version, (await Json(await nurse.GetAsync($"/api/care/patients/{id}", Ct))).GetProperty("factsVersion").GetInt32());
+
+        var doctorSave = await Json(await clinic.Owner.PutAsJsonAsync($"/api/care/patients/{id}/clinical-facts",
+            new { allergies = new[] { "Penicillin", "Sulfa" }, version }, Ct));
+        Assert.True(doctorSave.GetProperty("factsVersion").GetInt32() > version);
+        await AssertProblemAsync(await nurse.PutAsJsonAsync($"/api/care/patients/{id}/clinical-facts",
+            new { allergies = new[] { "Penicillin", "Latex" }, version }, Ct), HttpStatusCode.Conflict, Stale);
+        // A save that names no version is never a blind replace either.
+        await AssertProblemAsync(await nurse.PutAsJsonAsync($"/api/care/patients/{id}/clinical-facts",
+            new { allergies = new[] { "Penicillin", "Latex" } }, Ct), HttpStatusCode.Conflict, Stale);
+
+        var now = await Json(await clinic.Owner.GetAsync($"/api/care/patients/{id}", Ct));
+        Assert.Equal(["Penicillin", "Sulfa"], now.GetProperty("allergies").EnumerateArray().Select(a => a.GetString()));
+        // Reloaded, the nurse adds hers on top.
+        var merged = await Json(await nurse.PutAsJsonAsync($"/api/care/patients/{id}/clinical-facts",
+            new { allergies = new[] { "Penicillin", "Sulfa", "Latex" }, version = now.GetProperty("factsVersion").GetInt32() }, Ct));
+        Assert.Equal(["Penicillin", "Sulfa", "Latex"], merged.GetProperty("allergies").EnumerateArray().Select(a => a.GetString()));
+    }
+
     [Fact]
     public async Task Audit_log_holds_no_clinical_values()
     {

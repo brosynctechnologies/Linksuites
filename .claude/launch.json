@@ -115,6 +115,17 @@
         "dev"
       ],
       "port": 4300
+    },
+    {
+      "name": "care-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "care-web",
+        "run",
+        "dev"
+      ],
+      "port": 4400
     }
   ]
 }

@@ -476,7 +476,7 @@ public sealed partial class CareAccessTests(ApiFixture api)
         // Task 6: consultation text, a diagnosis and an addendum.
         "Productive cough", "Wheeze walk", "Bronchodilator walk", "Falciparum walk", "Walk addendum",
         // Task 7: a prescription's drug, dose and instructions; a test's description and result.
-        "Walkacillin", "Walk dose", "Walk instructions", "Walk smear", "Walk parasites",
+        "Walkacillin", "Walk dose", "Walk instructions", "Walk smear", "Walk parasites", "Walk pending smear", "Walk unreviewed parasites",
         // Task 8: an admission's reason and admitting diagnosis.
         "Walk admit reason", "Walk admitting diagnosis",
         // Task 9: a nursing note, a ward round, an admission drug and a dose note.
@@ -487,6 +487,15 @@ public sealed partial class CareAccessTests(ApiFixture api)
 
     /// <summary>Coded clinical values seeded into the walk's clinic (blood group, genotype): no JSON string value may equal one.</summary>
     private static readonly string[] ClinicalCodes = ["AB-", "SC", "B50.9"]; // Task 6: the seeded diagnosis code
+
+    /// <summary>
+    /// Final review I2 (user decision): drug and test price-item names charged on the walk's bills. The cashier, front desk and support
+    /// view see bill lines by category only, so no body they get may name one; leadership (an admin without a clinical role included)
+    /// keeps the names. The price list itself is not a patient's bill and is left out of this check.
+    /// </summary>
+    private static readonly string[] BillItemMarkers = ["Walkbilldrug tablets", "Walkbilltest panel", "Walk tablets"];
+
+    private static readonly HashSet<string> PriceListRoutes = new(StringComparer.Ordinal) { "GET /api/care/price-list" };
 
     /// <summary>
     /// Clinical tokens. A JSON property name is split into camelCase, snake_case or kebab-case tokens, each token is folded to its
@@ -561,6 +570,8 @@ public sealed partial class CareAccessTests(ApiFixture api)
         // carries its own proof and no sign-in; called without a valid signature it must refuse (403).
         ["GET /api/care/prescriptions/{id:guid}/pdf"] = w => $"/api/care/prescriptions/{w.Ids["prescription"]}/pdf",
         ["GET /api/care/tests/{id:guid}/file"] = w => $"/api/care/tests/{w.Ids["test"]}/file",
+        // Post-build: the doctors' list of results awaiting review (403 for non-clinical staff; no description or result for anyone).
+        ["GET /api/care/tests/awaiting-review"] = _ => "/api/care/tests/awaiting-review",
         ["GET /api/care/result-files/{id:guid}/{expires:long}/{signature}"] = w =>
             $"/api/care/result-files/{w.Ids["test"]}/{DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds()}/forged-signature-forged-signature",
         // Task 8: wards, beds, the bed board and a ward's patients are demographics and bed status for everyone; one admission (reason,
@@ -570,6 +581,8 @@ public sealed partial class CareAccessTests(ApiFixture api)
         ["GET /api/care/wards/{id:guid}/patients"] = w => $"/api/care/wards/{w.Ids["ward"]}/patients",
         ["GET /api/care/bed-board"] = _ => "/api/care/bed-board",
         ["GET /api/care/admissions/{id:guid}"] = w => $"/api/care/admissions/{w.Ids["admission"]}",
+        // Task 19: the care team (doctors' names) is for clinical staff (403 for non-clinical staff).
+        ["GET /api/care/admissions/{id:guid}/care-team"] = w => $"/api/care/admissions/{w.Ids["admission"]}/care-team",
         // Task 9: ward care reads are clinical (403 for non-clinical staff).
         ["GET /api/care/admissions/{id:guid}/nursing-notes"] = w => $"/api/care/admissions/{w.Ids["admission"]}/nursing-notes",
         ["GET /api/care/admissions/{id:guid}/fluids"] = w => $"/api/care/admissions/{w.Ids["admission"]}/fluids",
@@ -633,10 +646,15 @@ public sealed partial class CareAccessTests(ApiFixture api)
         (await clinic.Owner.PutAsJsonAsync($"/api/care/patients/{patientId}/clinical-facts",
             new { allergies = new[] { "Penicillin" }, conditions = new[] { "Hypertension" }, bloodGroup = "AB-", genotype = "SC" }, Ct)).EnsureSuccessStatusCode();
         var itemId = await kit.PriceItemAsync(clinic, "Walk consultation", "Consultation", 500_000);
+        // Final review I2: a drug and a test on the bill, whose names non-clinical roles must not see.
+        var billDrug = await kit.PriceItemAsync(clinic, "Walkbilldrug tablets", "Drug", 2_500);
+        var billTest = await kit.PriceItemAsync(clinic, "Walkbilltest panel", "Test", 7_500);
         ids["bill"] = await api.AsTenantAsync<BillingService, Guid>(clinic.TenantId, async b =>
         {
             var bill = await b.OpenBillForVisitAsync(patientId, Guid.NewGuid(), Ct);
             await b.AddLineAsync(bill.Id, itemId, 1, "rx-item-walk", Ct);
+            await b.AddLineAsync(bill.Id, billDrug, 1, null, Ct);
+            await b.AddLineAsync(bill.Id, billTest, 1, null, Ct);
             return bill.Id;
         });
 
@@ -693,6 +711,13 @@ public sealed partial class CareAccessTests(ApiFixture api)
             form.Add(file, "file", "walk.pdf");
             (await clinic.Owner.PostAsync($"/api/care/tests/{ids["test"]}/result", form, Ct)).EnsureSuccessStatusCode();
         }
+        // Post-build: the director reviews that result (released to the portal); a second result waits for review, so the doctors'
+        // awaiting-review list has a row for the walk.
+        (await clinic.Owner.PostAsync($"/api/care/tests/{ids["test"]}/review", null, Ct)).EnsureSuccessStatusCode();
+        var pending = await walkDoctor.PostAsJsonAsync("/api/care/tests", new { patientId, consultationId, kind = "Lab", description = "Walk pending smear" }, Ct);
+        pending.EnsureSuccessStatusCode();
+        ids["unreviewedTest"] = (await pending.Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct)).GetProperty("id").GetGuid();
+        (await clinic.Owner.PostAsJsonAsync($"/api/care/tests/{ids["unreviewedTest"]}/result", new { text = "Walk unreviewed parasites" }, Ct)).EnsureSuccessStatusCode();
 
         // Task 8: the visit's doctor admits the patient (clinical reason and diagnosis); the director assigns a bed with a deposit; a
         // second patient waits for a bed (the bed board's waiting list).
@@ -882,6 +907,12 @@ public sealed partial class CareAccessTests(ApiFixture api)
         Assert.Equal(HttpStatusCode.OK, (await world.Clinic.Owner.GetAsync($"/api/care/admissions/{world.Ids["admission"]}/discharge.pdf", Ct)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await world.Clinic.Owner.GetAsync($"/api/care/prescriptions/{world.Ids["prescription"]}/pdf", Ct)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await world.Clinic.Owner.GetAsync($"/api/care/tests/{world.Ids["test"]}/file", Ct)).StatusCode);
+        // Post-build: the unreviewed result is on the staff record; the doctors' awaiting-review list names it by id, with nothing clinical.
+        Assert.Contains("Walk unreviewed parasites", recordView);
+        var awaitingView = await (await world.Clinic.Owner.GetAsync("/api/care/tests/awaiting-review", Ct)).Content.ReadAsStringAsync(Ct);
+        Assert.Contains(world.Ids["unreviewedTest"].ToString(), awaitingView);
+        Assert.DoesNotContain(world.Ids["test"].ToString(), awaitingView);
+        foreach (var marker in ClinicalMarkers) Assert.DoesNotContain(marker, awaitingView, StringComparison.OrdinalIgnoreCase);
 
         var failures = new List<string>();
         foreach (var route in routes)
@@ -889,20 +920,29 @@ public sealed partial class CareAccessTests(ApiFixture api)
             var path = Routes[route](world);
             Assert.DoesNotMatch(Parameter(), path);
             foreach (var (role, client) in new[] { ("FrontDesk", frontDesk), ("Cashier", cashier), ("Admin", admin) })
-                await ScanAsync(role, client, route, path, failures);
+                await ScanAsync(role, client, route, path, failures, billItemNames: role != "Admin");
         }
         Assert.True(failures.Count == 0, string.Join("\n", failures));
+
+        // The scan would notice a bill-line name: leadership sees it on the same bill.
+        var leadershipBill = await (await admin.GetAsync($"/api/care/bills/{world.Ids["bill"]}", Ct)).Content.ReadAsStringAsync(Ct);
+        Assert.Contains("Walkbilldrug tablets", leadershipBill);
+        Assert.Contains("Walkbilltest panel", leadershipBill);
     }
 
     /// <summary>
     /// One non-clinical caller on one GET route: a 403, or a body with no clinical field, value or code (a non-JSON body only on an
     /// allow-listed non-clinical file). Task 16's support-view walk uses it too.
     /// </summary>
-    internal static async Task ScanAsync(string role, HttpClient client, string route, string path, List<string> failures)
+    internal static async Task ScanAsync(string role, HttpClient client, string route, string path, List<string> failures, bool billItemNames = true)
     {
         var response = await client.GetAsync(path, Ct);
         if (response.StatusCode == HttpStatusCode.Forbidden) return;
         var body = await response.Content.ReadAsStringAsync(Ct);
+        // Final review I2: bill lines read by category for the cashier, front desk and support view, in every body and file they get.
+        if (billItemNames && !PriceListRoutes.Contains(route))
+            foreach (var marker in BillItemMarkers.Where(m => body.Contains(m, StringComparison.OrdinalIgnoreCase)))
+                failures.Add($"{role} {route} → bill item name {marker}");
         if (!response.IsSuccessStatusCode)
         {
             failures.Add($"{role} {route} → {(int)response.StatusCode} (expected 403 or a body): {body}");

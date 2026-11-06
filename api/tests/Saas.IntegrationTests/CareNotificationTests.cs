@@ -204,6 +204,8 @@ public sealed class CareNotificationTests(ApiFixture api)
             new { patientId, consultationId, kind = "Lab", description = $"{TestName} panel", priceItemId = testItem }, Ct)));
         await Json(await doctor.PostAsync($"/api/care/consultations/{consultationId}/sign", null, Ct));
         await Json(await nurse.PostAsJsonAsync($"/api/care/tests/{testId}/result", new { text = $"{ResultText} positive" }, Ct));
+        // Post-build (user decision): the patient's "result ready" notice is sent when a doctor reviews the result.
+        await Json(await doctor.PostAsync($"/api/care/tests/{testId}/review", null, Ct));
 
         await Json(await desk.PostAsJsonAsync($"/api/care/visits/{visitId}/stage", new { stage = "WaitingPayment" }, Ct));
         var visitBill = await api.WithDbAsync(db => db.PatientBills.IgnoreQueryFilters().Where(b => b.VisitId == visitId).Select(b => b.Id).FirstAsync(Ct));
@@ -267,7 +269,7 @@ public sealed class CareNotificationTests(ApiFixture api)
         // Fix round 1: a link-only invite accepted by a family account tells the director (care.portal_linked, in-app).
         var linkOnly = (await Json(await owner.PostAsJsonAsync($"/api/care/patients/{patientId}/invites", new { }, Ct))).GetProperty("link").GetString()!;
         var family = host.CreateClient();
-        var familyAuth = await Json(await family.PostAsJsonAsync("/api/auth/patient/signup",
+        var familyAuth = await Json(await api.SignUpAsync(family, "/api/auth/patient/signup",
             new { fullName = "Notice Family", email = $"notice-family-{Guid.NewGuid():N}@example.com", password = "password123" }, Ct));
         family.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", familyAuth.GetProperty("accessToken").GetString());
         await Json(await family.PostAsJsonAsync($"/api/care-portal/invites/{linkOnly[(linkOnly.LastIndexOf('/') + 1)..]}/accept", new { relationship = "Parent" }, Ct));

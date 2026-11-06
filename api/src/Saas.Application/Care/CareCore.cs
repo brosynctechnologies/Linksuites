@@ -45,6 +45,23 @@ public static class CareStaff
     public const string SelfRoleRefused = "Ask the medical director to change your role.";
 
     /// <summary>
+    /// The clinic's word for a role (global constraints' role table), used by the team invite email and the public invite preview:
+    /// Doctor, Nurse, Front desk, Cashier, Admin, Admin (doctor), Admin (nurse); the Owner is the Medical director; Staff with no clinical role
+    /// stays "Staff".
+    /// </summary>
+    public static string RoleLabel(MemberRole role, ClinicalRole? clinicalRole) => role switch
+    {
+        MemberRole.Owner => "Medical director",
+        MemberRole.Admin => clinicalRole switch { ClinicalRole.Doctor => "Admin (doctor)", ClinicalRole.Nurse => "Admin (nurse)", _ => "Admin" },
+        MemberRole.Accountant => "Cashier",
+        MemberRole.Staff => clinicalRole switch
+        {
+            ClinicalRole.Doctor => "Doctor", ClinicalRole.Nurse => "Nurse", ClinicalRole.FrontDesk => "Front desk", _ => "Staff",
+        },
+        _ => role.ToString(),
+    };
+
+    /// <summary>
     /// The care hook at a member-role change, called after <paramref name="membership"/>.Role is set and before the save (CareLink
     /// clinics only; other products return at once):
     /// <list type="bullet">

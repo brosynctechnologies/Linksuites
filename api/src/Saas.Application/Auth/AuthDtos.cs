@@ -22,7 +22,8 @@ public sealed record SignupRequest(
 
 public sealed record LoginRequest(string Email, string Password, string? Product = null);
 public sealed record RefreshRequest(string RefreshToken);
-public sealed record OtpRequest(string Email);
+/// <param name="Product">The product of the page asking (optional): the code email speaks its name. Without it, the account's own product.</param>
+public sealed record OtpRequest(string Email, string? Product = null);
 public sealed record OtpVerifyRequest(string Email, string Code, string? Product = null);
 
 public sealed record UserDto(Guid Id, string FullName, string Email, bool IsPlatformAdmin = false, string? PlatformRole = null);
@@ -31,6 +32,31 @@ public sealed record TenantDto(Guid Id, string Name, string Slug, MemberRole Rol
 public sealed record AuthResponse(string AccessToken, string RefreshToken, DateTimeOffset ExpiresAt, UserDto User, TenantDto? Tenant);
 public sealed record MeResponse(UserDto User, TenantDto? Tenant);
 public sealed record LearnerSignupRequest(string FullName, string Email, string Password);
+
+/// <summary>
+/// Final fix pass B (user decision I3): a password sign-up's answer until the emailed 6-digit code is entered. No session is issued; the
+/// web asks for the code and posts it, with the same password, to the sign-up's <c>/confirm</c> route.
+/// </summary>
+public sealed record SignupPending(string Email, bool ConfirmationRequired = true);
+
+/// <summary>A business sign-up's answer: a session (a confirmed account adding a product with its password) or <see cref="SignupPending"/>.</summary>
+public sealed record SignupOutcome(AuthResponse? Session, SignupPending? Pending);
+
+/// <summary>
+/// Finishes a password sign-up: the emailed code proves the mailbox, and whoever proves it sets the password (the one typed at sign-up, or
+/// at the login page). <c>Product</c> picks the business on the business route.
+/// </summary>
+public sealed record ConfirmSignupRequest(string Email, string Code, string Password, string? Product = null);
+
+public sealed class ConfirmSignupRequestValidator : AbstractValidator<ConfirmSignupRequest>
+{
+    public ConfirmSignupRequestValidator()
+    {
+        RuleFor(x => x.Email).NotEmpty().EmailAddress();
+        RuleFor(x => x.Code).NotEmpty().Matches("^[0-9]{6}$").WithMessage("Enter the 6-digit code.");
+        RuleFor(x => x.Password).NotEmpty().MinimumLength(8).MaximumLength(100);
+    }
+}
 
 /// <summary>Emails of the people who run the platform (course reviews, payouts). From configuration.</summary>
 public sealed class PlatformOptions
@@ -50,7 +76,8 @@ public sealed class LearnerSignupRequestValidator : AbstractValidator<LearnerSig
     }
 }
 
-public sealed record InvitePreview(string BusinessName, string Email, MemberRole Role, bool HasAccount, bool Expired);
+/// <summary>A team invite as the accept page shows it. <c>RoleLabel</c> is the clinic role for a CareLink clinic ("Nurse"), else null.</summary>
+public sealed record InvitePreview(string BusinessName, string Email, MemberRole Role, bool HasAccount, bool Expired, string? RoleLabel = null);
 public sealed record AcceptInviteRequest(string? FullName, string Password);
 public sealed record BusinessChoice(Guid TenantId, string Name, MemberRole Role, bool Current);
 public sealed record SwitchRequest(Guid TenantId);

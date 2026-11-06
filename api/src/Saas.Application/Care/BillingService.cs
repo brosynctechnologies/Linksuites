@@ -23,7 +23,8 @@ public sealed record BillAdjustmentDto(Guid Id, AdjustmentKind Kind, long Amount
 
 /// <summary>
 /// One bill: totals (total, adjusted, paid, balance, credit), the review flag (an online overpayment), its lines, payments (every status) and
-/// adjustments. Nothing clinical: lines show the price-item name, and the clinical reference only to clinical callers.
+/// adjustments. Lines show the price-item name to clinical staff and leadership, the price category to the cashier, front desk and support (I2);
+/// the clinical reference only to clinical callers.
 /// </summary>
 public sealed record BillDto(
     Guid Id, string Number, Guid PatientId, string PatientNumber, string PatientName, Guid? VisitId, Guid? AdmissionId, BillStatus Status,
@@ -175,7 +176,7 @@ public sealed class BillingService(IAppDbContext db, ITenantContext tenant, Care
         await db.SaveChangesAsync(ct);
         await RecalculateAsync(bill.Id, ct);
         if (tx is not null) await tx.CommitAsync(ct);
-        return await ReadAsync(billId, caller.IsClinical, ct);
+        return await ReadAsync(billId, caller, ct);
     }
 
     // ---------- Staff routes ----------
@@ -195,7 +196,7 @@ public sealed class BillingService(IAppDbContext db, ITenantContext tenant, Care
     public async Task<BillDto> GetAsync(Guid id, CancellationToken ct)
     {
         var caller = await access.CallerAsync(ct);
-        return await ReadAsync(id, caller.IsClinical, ct);
+        return await ReadAsync(id, caller, ct);
     }
 
     public async Task<BillDto> AddManualLineAsync(Guid billId, AddBillLineRequest r, CancellationToken ct)
@@ -205,7 +206,7 @@ public sealed class BillingService(IAppDbContext db, ITenantContext tenant, Care
         var reason = Reason(r.Reason, "Give a reason for adding this line.");
         if (r.PriceItemId is not { } itemId) throw BadRequestException.Field("priceItemId", "Choose an item from the price list.");
         await AddAsync(billId, itemId, r.Quantity ?? 1, BillLineSource.Manual, null, reason, ct);
-        return await ReadAsync(billId, caller.IsClinical, ct);
+        return await ReadAsync(billId, caller, ct);
     }
 
     public async Task<BillDto> RemoveLineAsync(Guid billId, Guid lineId, RemoveBillLineRequest r, CancellationToken ct)
@@ -224,7 +225,7 @@ public sealed class BillingService(IAppDbContext db, ITenantContext tenant, Care
         await db.SaveChangesAsync(ct);
         await RecalculateAsync(billId, ct);
         if (tx is not null) await tx.CommitAsync(ct);
-        return await ReadAsync(billId, caller.IsClinical, ct);
+        return await ReadAsync(billId, caller, ct);
     }
 
     /// <summary>The cashier (or leadership) has dealt with an online overpayment: clears the review flag, under the bill lock.</summary>
@@ -239,7 +240,7 @@ public sealed class BillingService(IAppDbContext db, ITenantContext tenant, Care
         bill.NeedsReview = false;
         await db.SaveChangesAsync(ct);
         if (tx is not null) await tx.CommitAsync(ct);
-        return await ReadAsync(billId, caller.IsClinical, ct);
+        return await ReadAsync(billId, caller, ct);
     }
 
     // ---------- Internals ----------
@@ -297,21 +298,37 @@ public sealed class BillingService(IAppDbContext db, ITenantContext tenant, Care
         return line;
     }
 
-    internal async Task<BillDto> ReadAsync(Guid id, bool clinical, CancellationToken ct)
+    /// <summary>
+    /// Final review I2 (user decision): who sees bill-line item names. Clinical staff and leadership (the medical director, an admin) do; the
+    /// cashier, front desk and support's view see each line by its price category ("Drug", "Test") and amount only, with no price-item id
+    /// to look the name up by. The patient's own portal keeps the names (<see cref="PortalService.BillsAsync"/>).
+    /// </summary>
+    public static bool SeesItemNames(CareCaller c) => !c.IsSupportView && (c.IsClinical || c.IsLeadership);
+
+    /// <summary>The category a non-clinical role reads a line as: "Drug", "Test", "Consultation"…; a line with no price item reads "Other".</summary>
+    public static string CategoryLabel(PriceCategory? category) => (category ?? PriceCategory.Other).ToString();
+
+    internal async Task<BillDto> ReadAsync(Guid id, CareCaller caller, CancellationToken ct)
     {
+        var clinical = caller.IsClinical;
+        var names = SeesItemNames(caller);
         var row = await (from b in db.PatientBills.AsNoTracking()
                          join p in db.Patients on b.PatientId equals p.Id
                          where b.Id == id
                          select new { Bill = b, p.Number, Name = p.FirstName + " " + p.LastName }).FirstOrDefaultAsync(ct)
             ?? throw new NotFoundException("Bill");
         var lines = await db.BillLines.AsNoTracking().Where(l => l.BillId == id).OrderBy(l => l.CreatedAt).ThenBy(l => l.Id).ToListAsync(ct);
+        var itemIds = lines.Where(l => l.PriceItemId != null).Select(l => l.PriceItemId!.Value).Distinct().ToList();
+        var categories = names ? new Dictionary<Guid, PriceCategory>() : await db.PriceItems.AsNoTracking().Where(i => itemIds.Contains(i.Id)).ToDictionaryAsync(i => i.Id, i => i.Category, ct);
+        string Describe(BillLine l) => names ? l.Description
+            : CategoryLabel(l.PriceItemId is { } itemId && categories.TryGetValue(itemId, out var c) ? c : null);
         var payments = await db.CarePayments.AsNoTracking().Where(p => p.BillId == id).OrderBy(p => p.CreatedAt).ThenBy(p => p.Id).ToListAsync(ct);
         var adjustments = await db.BillAdjustments.AsNoTracking().Where(a => a.BillId == id).OrderBy(a => a.At).ThenBy(a => a.Id).ToListAsync(ct);
         var bill = row.Bill;
-        // Non-clinical staff get the price-item name only; the clinical reference never leaves for them.
+        // Non-clinical staff never get the clinical reference; the cashier, front desk and support's view get the category, not the name.
         return new BillDto(bill.Id, bill.Number, bill.PatientId, row.Number, row.Name, bill.VisitId, bill.AdmissionId, bill.Status, bill.TotalMinor,
             bill.PaidMinor, bill.BalanceMinor, bill.CreatedAt, bill.FinalisedAt, bill.AdjustedMinor, bill.CreditMinor, bill.NeedsReview,
-            lines.Select(l => new BillLineDto(l.Id, l.PriceItemId, l.Description, l.Quantity, l.UnitPriceMinor, l.AmountMinor, l.Source, l.Reason,
+            lines.Select(l => new BillLineDto(l.Id, names ? l.PriceItemId : null, Describe(l), l.Quantity, l.UnitPriceMinor, l.AmountMinor, l.Source, l.Reason,
                 l.RemovedReason, l.RemovedAt, l.CreatedAt, clinical ? l.ClinicalRef : null)).ToList(),
             payments.Select(PaymentService.ToDto).ToList(),
             adjustments.Select(a => new BillAdjustmentDto(a.Id, a.Kind, a.AmountMinor, a.Reason, a.ByUserId, a.At)).ToList());

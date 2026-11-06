@@ -42,7 +42,9 @@ public sealed class PasswordService(AppDbContext db, UserManager<AppUser> users,
         var token = await users.GeneratePasswordResetTokenAsync(user);
         // The token travels in the URL fragment, which browsers never send to servers or put in logs.
         var link = $"{web}/reset-password#email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(token)}";
-        notifications.Email(email, "password.reset", new() { ["name"] = user.FullName, ["link"] = link }, userId: user.Id);
+        var payload = new Dictionary<string, string> { ["name"] = user.FullName, ["link"] = link };
+        if (product is not null && Products.All.Contains(product)) payload["product"] = product; // the admin console's reset says LinkSuite
+        notifications.Email(email, "password.reset", payload, userId: user.Id);
         await db.SaveChangesAsync(ct);
         return true;
     }
@@ -62,6 +64,15 @@ public sealed class PasswordService(AppDbContext db, UserManager<AppUser> users,
         }
         await users.SetLockoutEndDateAsync(user, null);
         await users.ResetAccessFailedCountAsync(user);
+        if (!user.EmailConfirmed)
+        {
+            // Final fix pass B (user decision I3): the reset link proves the mailbox, so it confirms the account. Dating the confirmation
+            // makes the patient portal refuse access tokens issued before it; the sign-out below ends every refresh token and admin session,
+            // and the reset already rotated the security stamp. So a squatter's earlier session dies, and a later code sign-in is no takeover.
+            user.EmailConfirmed = true;
+            user.EmailConfirmedAt = clock.GetUtcNow();
+            await users.UpdateAsync(user);
+        }
         await SignOutEverywhereAsync(user, keepRefreshTokenHash: null, "user.password_reset", ct);
     }
 
@@ -91,7 +102,11 @@ public sealed class PasswordService(AppDbContext db, UserManager<AppUser> users,
         await sessions.EndAllForUserAsync(user.Id, user.Id, ct);
         db.AuditLogs.Add(new AuditLog { ActorId = current.UserId ?? user.Id, Action = action, EntityType = "User", EntityId = user.Id.ToString(), Ip = current.IpAddress, CreatedAt = now });
         if (!StudentLogins.IsStudentEmail(user.Email))
-            notifications.Email(user.Email!, "password.changed", new() { ["name"] = user.FullName }, userId: user.Id);
+        {
+            var payload = new Dictionary<string, string> { ["name"] = user.FullName };
+            if (await AuthService.AccountProductAsync(db, user.Id, ct) is { } product) payload["product"] = product;
+            notifications.Email(user.Email!, "password.changed", payload, userId: user.Id);
+        }
         await db.SaveChangesAsync(ct);
     }
 

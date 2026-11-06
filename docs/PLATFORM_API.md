@@ -71,13 +71,50 @@ No token needed, except for `change`. Rate limited like sign-in.
   `user.password_reset` and emails "your password was changed" (template "password.changed").
 - **Change.** Same effects (audit `user.password_change`), except that the refresh token sent in the body is kept, so the app that
   made the change stays signed in. Admin-panel sessions all end, including the current one if the change was made from the console.
+- **A reset confirms the email** (final fix pass B). The link proves the mailbox, so a never-confirmed account becomes confirmed
+  (`EmailConfirmedAt` = now). Every earlier refresh token is revoked as above, the security stamp is rotated, and the patient portal
+  refuses access tokens issued before the confirmation. A later code sign-in keeps the reset password.
+
+## Sign-up confirmation (every product; final fix pass B)
+
+Every password sign-up, business or customer, is confirmed with the 6-digit emailed code before the account can be used. The code is the
+same one the code sign-in uses (template "otp", 10 minutes, 5 tries, at most 3 codes per address per 10 minutes).
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/api/auth/signup` | as before | **`{ confirmationRequired: true, email }`** and emails a code; no tokens. The business is created now. A **confirmed** account adding a product with its password still gets `AuthResponse` straight away. |
+| POST | `/api/auth/signup/confirm` | `{ email, code, password, product? }` | `AuthResponse` for the business of `product`. Rate limited as `otp`. |
+| POST | `/api/auth/{learner\|parent\|patient\|seeker}/signup` | `{ fullName, email, password }` | **`{ confirmationRequired: true, email }`** and emails a code; no tokens. |
+| POST | `/api/auth/{learner\|parent\|patient\|seeker}/signup/confirm` | `{ email, code, password }` | `AuthResponse` (tenant null). Rate limited as `otp`. |
+| POST | `/api/auth/otp/request` | `{ email }` | 204. "Send a new code" on the code step uses this. |
+
+- **Before the code.** A new sign-up's account has no password. Password login (`/api/auth/login` and every customer `/login`) answers
+  **403** `code: "email_unconfirmed"`, "Confirm your email first. Enter the 6-digit code we emailed you, or ask for a new one.". The
+  login page then asks for a code (`/otp/request`) and posts it to the matching `/signup/confirm` with the password the user typed.
+- **Confirm.** `password` is checked against the password rules before the code is used (400 on `password`; the code still works). A
+  wrong or expired code is 400 "That code is wrong or has expired. Request a new one.". On a never-confirmed account the code proves the
+  mailbox: the account's password becomes this `password`, the email is confirmed (`EmailConfirmedAt`), the security stamp is rotated and
+  every refresh token is revoked. On a confirmed account the password is never changed; the code just signs in.
+- **A second sign-up on an unconfirmed address** (someone else's, or the same person's retry) gets the same answer and a new code goes to
+  the mailbox. Nobody can use the account without that code, and whoever enters it sets the password. A business sign-up adds its business
+  to the account unless the account already has one for that product. On an account from before codes at sign-up (it has a password) it
+  adds one only when the password matches. Customer sign-up on a **confirmed** address: 400 on `email` "You already have an account with
+  this email. Log in instead.".
+- **Confirmed passwords are kept.** A code sign-in (`/api/auth/otp/verify`, `/api/auth/{parent|patient}/otp/verify`) never removes the
+  password of a confirmed account.
+- **Accounts from before this change** that were never confirmed (they have a password) keep password login. Their first code sign-in
+  still takes the account over (Task 15 R1/R3): the password is removed, the stamp rotated, and every refresh token revoked. A reset, a
+  `/signup/confirm` or a team invite confirms them instead, keeping the password set there.
+- **Team invites.** `POST /api/auth/invites/{token}/accept` confirms the email (the link was emailed). A confirmed account proves its
+  password as before. An address with an unconfirmed account takes the invitee's `password` and `fullName`, and its earlier sessions
+  end. `GET /api/public/invites/{token}` reports `hasAccount: false` for an unfinished sign-up, so the page asks for a name and password.
 
 ## Everything else (`Authorization: Bearer <admin token>`)
 
 ### Overview (any role)
 `GET /api/platform/overview` →
 ```ts
-{ products: [{ product, businesses, newThisMonth, paying, suspended }],   // product keys: whatsapp-orders, invoices, bookings, courses, property, school
+{ products: [{ product, businesses, newThisMonth, paying, suspended }],   // product keys: whatsapp-orders, invoices, bookings, courses, property, school, care
   mrrMinor,                                                                 // NGN monthly recurring revenue (the reporting currency)
   mrrByCurrency: [{ currency, monthlyMinor }],                              // every currency, sorted by code
   fees: { courseFeesMinor, shortLetCommissionMinor, boostsMinor, totalMinor },   // this calendar month
@@ -90,7 +127,7 @@ MRR counts active, paid (not comped) subscriptions at the price frozen on each s
 ### Health (any role)
 `GET /api/platform/health` → `{ jobs: [{ name, lastStartedAt, lastSucceededAt, lastError }], outbox: { pending, sent, failed },
 failures: [{ id, templateKey, recipient, error, attempts, createdAt }] }` (latest 50 failed emails). Job names: email, invoices, bookings,
-property, photos, videos, school. A job is healthy when `lastSucceededAt` is recent (email/photos/videos: minutes; others: within 20 minutes).
+property, photos, videos, school, care (CareLink: reminders, bed-day charges, missed doses, no-shows, payment rechecks, every minute). A job is healthy when `lastSucceededAt` is recent (email/photos/videos: minutes; others: within 20 minutes).
 `recipient` is the full address for Support and SuperAdmin only; other roles get it masked (`ada@example.com` → `a…@example.com`).
 
 ### Businesses (Support, Finance; actions as noted)
@@ -130,6 +167,10 @@ BusinessDetailDto { id, name, slug, product, status, country, currency, createdA
 - **SchoolLink.** Staff are blocked like every other business (403 "This business is suspended. Contact support."). The school's
   public sign-in page is hidden (404). Parent and student portal routes that reach that school return **403** "This school's portal is unavailable."
   Reminders, broadcasts and stranded-payment checks skip suspended schools.
+- **CareLink.** Staff are blocked like every other business. Patient portal routes that reach that clinic return **403** "This clinic's
+  portal is unavailable." (after the link check, so an unlinked patient is still 404); the clinic drops out of the portal's patient
+  list, and a portal invite for it can't be previewed or accepted (403). The care job (reminders, no-shows, missed doses, bed charges,
+  low deposits, stranded payments) skips suspended clinics. A Paystack webhook for a suspended clinic is still applied (the money was taken).
 - The owner is emailed the reason when the business is suspended or reactivated.
 
 ### Users (Support)
@@ -180,6 +221,12 @@ Limit keys per product are listed in `docs/API.md`, `INVOICES_API.md`, `BOOKINGS
 `SCHOOL_API.md`; `-1` = unlimited, 0/1 = feature off/on. School usage on a business is students and staff seats. School fee
 payments go to the school's own Paystack account and are not platform payments; school **subscription** payments appear in
 `GET /api/platform/payments` like the other products.
+
+CareLink limit keys are in `CARE_API.md`: `team_seats`, `beds` (active beds), `online_payments` (0/1, patient bill payments online)
+and `remove_branding`. Plans: Free (₦0: 3 staff, 0 beds, no online payments), Clinic (₦25,000 a month: 15 staff, 20 beds, online
+payments) and Hospital (₦75,000 a month: 60 staff, 150 beds, online payments, no branding). Care usage on a business is staff seats,
+active beds and patients (every registered patient, unlimited). Patient bill payments go to the clinic's own Paystack account and are
+not platform payments. The console's business detail never shows clinical facts.
 
 ### Moderation (Moderator) — existing routes
 - Courses (`docs/COURSES_API.md`, admin section): `GET /api/admin/course-reviews`, `POST /api/admin/course-reviews/{id}` `{ approve, note }`,
@@ -243,9 +290,16 @@ every row for that user. Support view can list them but must not mark them read 
 `link` is an app path (`/app/messages/…`, `/parent/fees`, `/student/results`). Read notifications older than 90 days and unread
 older than 180 days are deleted by the school job. Full SchoolLink routes: `docs/SCHOOL_API.md`.
 
+**CareLink.** Clinic staff use this feed as it is (`care.patient_waiting`, `care.critical_vital`, `care.missed_dose`,
+`care.low_deposit`, `care.emergency_access`, payment alerts, import results, portal links). Patient portal accounts do **not**: a
+customer token here sees every product's and every clinic's rows, so care-web's portal reads the per-patient feed
+`GET /api/care-portal/patients/{id}/notifications` (this account, this clinic, this patient) and marks items read one by one with
+`POST /api/me/notifications/{id}/read` (never `read-all`, which would also mark other clinics' and products' rows). Patient notice links
+are `/portal/...?patient={id}`. No notice carries a diagnosis, a result or a drug name. Full routes: `docs/CARE_API.md`.
+
 ## Support view in the product apps
 
-Every product web app (OrderLink 3700, InvoiceLink 3800, BookLink 3900, LearnLink 4000, PropertyLink 4100, SchoolLink 4200) has a `/support` page:
+Every product web app (OrderLink 3700, InvoiceLink 3800, BookLink 3900, LearnLink 4000, PropertyLink 4100, SchoolLink 4200, CareLink 4400) has a `/support` page:
 1. Read `token` from `location.hash` (`#token=…`), then remove the hash with `history.replaceState`.
 2. Store the session in **sessionStorage** only (this tab), as a session whose `tenant` comes from `GET /api/me` with that token; no
    refresh token. Redirect to the app's dashboard.
@@ -257,6 +311,8 @@ Every product web app (OrderLink 3700, InvoiceLink 3800, BookLink 3900, LearnLin
 5. Any write returns 403 "Support view is read only." — show it as a normal error toast; nothing else to handle.
    `POST /api/support-view/end` is the only write a support-view token may make (403 with any other token).
 6. When the view ends (401: expired, or ended from the banner or the console), show "Support view ended" instead of the login form.
+7. CareLink: a support view never has clinical access. Clinical reads return 403 "Only doctors and nurses can see clinical notes.", the
+   patient access log and patients' portal invites and links return 403, and the patient portal (`/portal`) refuses the support token.
 
 Customers see support views of their business: `GET /api/account/activity` (any member) →
 `[{ sessionId, adminName, reason, startedAt, endsAt, endedAt }]` (last 90 days). `endsAt` is when the view would have expired;

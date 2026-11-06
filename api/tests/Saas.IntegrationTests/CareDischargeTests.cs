@@ -405,6 +405,32 @@ public sealed class CareDischargeTests(ApiFixture api)
     }
 
     /// <summary>
+    /// Final fix pass (Task 19 carry): a save is an upsert, so an autosave landing after the director discarded the draft would bring it
+    /// back. A save naming the draft it edits (<c>?draftId=</c>) is refused once that draft is gone (409 <c>note_discarded</c>), until the
+    /// doctor starts a new draft (a save naming none).
+    /// </summary>
+    [Fact]
+    public async Task Save_after_the_director_discarded_the_draft_is_refused()
+    {
+        var w = await WorldAsync("Summary Discarded Save Clinic");
+        var path = SummaryPath(w.AdmissionId);
+        var draftId = Id(await Json(await w.Doctor.PutAsJsonAsync(path, new { diagnoses = "First draft" }, Ct)));
+        await Json(await w.Doctor.PutAsJsonAsync($"{path}?draftId={draftId}", new { diagnoses = "First draft, edited" }, Ct));
+        Assert.Equal(HttpStatusCode.NoContent, (await w.Clinic.Owner.PostAsync($"{path}/discard", null, Ct)).StatusCode);
+
+        await AssertProblemAsync(await w.Doctor.PutAsJsonAsync($"{path}?draftId={draftId}", new { diagnoses = "Late autosave" }, Ct),
+            HttpStatusCode.Conflict, DischargeService.DraftDiscarded, code: "note_discarded");
+        Assert.Equal(0, await api.WithDbAsync(db => db.DischargeSummaries.IgnoreQueryFilters().CountAsync(s => s.AdmissionId == w.AdmissionId, Ct)));
+
+        // Starting a new draft works, and a stale id is refused against it too.
+        var fresh = Id(await Json(await w.Doctor.PutAsJsonAsync(path, new { diagnoses = "New draft" }, Ct)));
+        Assert.NotEqual(draftId, fresh);
+        await AssertProblemAsync(await w.Doctor.PutAsJsonAsync($"{path}?draftId={draftId}", new { diagnoses = "Late autosave" }, Ct),
+            HttpStatusCode.Conflict, DischargeService.DraftDiscarded, code: "note_discarded");
+        await Json(await w.Doctor.PutAsJsonAsync($"{path}?draftId={fresh}", new { diagnoses = "New draft, edited" }, Ct));
+    }
+
+    /// <summary>
     /// I4: after an against-advice discharge the admitting doctor writes and signs the summary within the 30-day window; after it (fixed
     /// clock) a non-director gets 403 "This patient isn't on your ward."; the director has no window; a nurse never writes it.
     /// </summary>
@@ -633,27 +659,54 @@ public sealed class CareDischargeTests(ApiFixture api)
     }
 
     /// <summary>
-    /// A prescription and a discharge sent together, several times: whichever wins, nothing is left Due after the discharge and no
-    /// prescription is written after it (it either landed first, and its later doses were stopped, or it was refused).
+    /// A prescription and a discharge racing for the same admitted patient, in both orders and made deterministic (final fix pass B): the test
+    /// holds the patient lock itself, queues one request and then the other behind it, waits a moment and lets go, so the first queued wins.
+    /// When the prescription wins, the discharge must be stamped after it (DischargeAsync reads the time after taking the lock); when the
+    /// discharge wins, the prescription is refused. Either way nothing is left Due after the discharge and no prescription is written after it.
     /// </summary>
     [Fact]
     public async Task Prescription_racing_a_discharge_never_outlives_it()
     {
         var w = await WorldAsync("Race Clinic");
-        var admissions = new List<Guid> { w.AdmissionId };
-        for (var i = 0; i < 3; i++) admissions.Add((await AdmitAnotherAsync(w, $"Racer{i}")).AdmissionId);
+        var other = (await AdmitAnotherAsync(w, "Racer")).AdmissionId;
 
-        foreach (var admissionId in admissions)
+        foreach (var (admissionId, prescriptionFirst) in new[] { (w.AdmissionId, true), (other, false) })
         {
             var patientId = (await AdmissionAsync(admissionId)).PatientId;
-            var rx = w.Doctor.PostAsJsonAsync("/api/care/prescriptions", new
+            Task<HttpResponseMessage> Prescribe() => w.Doctor.PostAsJsonAsync("/api/care/prescriptions", new
             {
                 patientId, admissionId, allergyAcknowledged = false, items = new[] { Item("Racemol", "Q4H", 2) },
             }, Ct);
-            var discharge = DischargeAsync(w.Doctor, admissionId, new { type = "AgainstAdvice", amaReason = "Racing home" });
+            Task<HttpResponseMessage> Discharge() => DischargeAsync(w.Doctor, admissionId, new { type = "AgainstAdvice", amaReason = "Racing home" });
+
+            Task<HttpResponseMessage> rx, discharge;
+            using (var scope = api.Services.CreateScope())
+            {
+                var key = AdmissionService.PatientLockKey(w.Clinic.TenantId, patientId);
+                var holder = scope.ServiceProvider.GetRequiredService<Saas.Infrastructure.Persistence.AppDbContext>();
+                await using var held = await holder.Database.BeginTransactionAsync(Ct);
+                await holder.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock({key})", Ct);
+                if (prescriptionFirst)
+                {
+                    rx = Prescribe();
+                    await WaitersAsync(key, 1);
+                    discharge = Discharge();
+                }
+                else
+                {
+                    discharge = Discharge();
+                    await WaitersAsync(key, 1);
+                    rx = Prescribe();
+                }
+                await WaitersAsync(key, 2);
+                // A time read before the lock would now be clearly earlier than anything the winner writes under it.
+                await Task.Delay(TimeSpan.FromMilliseconds(50), Ct);
+                await held.RollbackAsync(Ct); // lets go of the lock: the first request queued takes it
+            }
             await Task.WhenAll(rx, discharge);
             await Json(discharge.Result);
             var rxResponse = rx.Result;
+            Assert.Equal(prescriptionFirst, rxResponse.IsSuccessStatusCode);
             var dischargedAt = (await AdmissionAsync(admissionId)).DischargedAt!.Value;
             var prescriptions = await api.WithDbAsync(db => db.Prescriptions.IgnoreQueryFilters().Where(p => p.AdmissionId == admissionId).ToListAsync(Ct));
             var doses = await api.WithDbAsync(db => db.MedicationDoses.IgnoreQueryFilters().Where(d => d.AdmissionId == admissionId).ToListAsync(Ct));
@@ -670,6 +723,22 @@ public sealed class CareDischargeTests(ApiFixture api)
                 Assert.Empty(doses);
             }
             Assert.DoesNotContain(doses, d => d.Status == DoseStatus.Due && d.DueAt > dischargedAt);
+        }
+    }
+
+    /// <summary>Waits until <paramref name="count"/> sessions are queued for the advisory lock <paramref name="key"/> (pg_locks, not yet granted).</summary>
+    private async Task WaitersAsync(long key, int count)
+    {
+        var high = (long)((ulong)key >> 32);
+        var low = key & 0xFFFFFFFFL;
+        for (var waited = TimeSpan.Zero; ; waited += TimeSpan.FromMilliseconds(20))
+        {
+            var queued = await api.WithDbAsync(db => db.Database.SqlQuery<int>(
+                $"SELECT count(*)::int AS \"Value\" FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objsubid = 1 AND classid::bigint = {high} AND objid::bigint = {low}")
+                .SingleAsync(Ct));
+            if (queued >= count) return;
+            if (waited > TimeSpan.FromSeconds(15)) throw new TimeoutException($"Only {queued} of {count} requests queued for the patient lock.");
+            await Task.Delay(TimeSpan.FromMilliseconds(20), Ct);
         }
     }
 

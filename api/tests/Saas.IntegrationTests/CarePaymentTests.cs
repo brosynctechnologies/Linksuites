@@ -428,6 +428,80 @@ public sealed partial class CarePaymentTests(ApiFixture api)
         Assert.Equal(HttpStatusCode.Unauthorized, (await WebhookAsync(Guid.NewGuid(), secondBody, SchoolKit.Sign(secondBody, CareKey))).StatusCode);
     }
 
+    /// <summary>
+    /// Post-build (pay-return "Still waiting"): two return verifies for one reference at once (the dev double effect, or a webhook beside the
+    /// return). The first is applying the charge under the bill lock; the second asks Paystack, which no longer has it to give (the local
+    /// fixture forgets a verified charge), so it finds the claim in progress. It waits on the bill lock and reads the settled state: both
+    /// answer Succeeded with the one receipt. Deterministic: the test holds the bill lock and queues the requests behind it (pg_locks).
+    /// </summary>
+    [Fact]
+    public async Task Racing_return_verifies_both_answer_succeeded()
+    {
+        var w = await WorldAsync("Return Race Clinic");
+        await Json(await SetKeyAsync(w.Clinic.Owner));
+        var reference = await CheckoutAsync(w, 200_000);
+        Charge(reference, 200_000);
+        var key = BillingService.LockKey(w.Clinic.TenantId);
+
+        Task<HttpResponseMessage> first, second;
+        await using (await HoldBillLockAsync(key))
+        {
+            first = VerifyAsync(w.Cashier, reference);
+            await WaitForBillLockWaitersAsync(key, 1, first);
+            Assert.False(first.IsCompleted, "the first verify should be applying the charge, queued on the bill lock");
+            api.Merchant.Charges.Remove(reference); // Paystack (or the local fixture) has nothing more to hand the second ask
+            second = VerifyAsync(w.Cashier, reference);
+            await WaitForBillLockWaitersAsync(key, 2, second); // returns early when the second answers without waiting
+        }
+
+        var answers = new List<JsonElement>();
+        foreach (var r in await Task.WhenAll(first, second)) answers.Add(await Json(r));
+        var payment = Assert.Single(await PaymentsAsync(w.BillId));
+        Assert.Equal(CarePaymentStatus.Succeeded, payment.Status);
+        Assert.All(answers, a =>
+        {
+            Assert.Equal("Succeeded", a.GetProperty("status").GetString());
+            Assert.Equal(payment.ReceiptNumber, a.GetProperty("receiptNumber").GetString());
+            Assert.Equal(300_000, a.GetProperty("billBalanceMinor").GetInt64());
+        });
+    }
+
+    /// <summary>A transaction on its own connection holding an advisory lock until disposed.</summary>
+    private sealed class HeldBillLock(IServiceScope scope, Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction tx) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            await tx.CommitAsync();
+            await tx.DisposeAsync();
+            scope.Dispose();
+        }
+    }
+
+    private async Task<HeldBillLock> HoldBillLockAsync(long key)
+    {
+        var scope = api.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<Saas.Infrastructure.Persistence.AppDbContext>();
+        var tx = await db.Database.BeginTransactionAsync(Ct);
+        await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock({key})", Ct);
+        return new HeldBillLock(scope, tx);
+    }
+
+    /// <summary>Waits until <paramref name="count"/> sessions are queued on the advisory lock <paramref name="key"/>, or <paramref name="pending"/> finishes; fails after 20 s.</summary>
+    private async Task WaitForBillLockWaitersAsync(long key, int count, Task pending)
+    {
+        var high = (long)((ulong)key >> 32);
+        var low = key & 0xFFFFFFFFL;
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (!pending.IsCompleted)
+        {
+            var waiting = await api.WithDbAsync(db => db.Database.SqlQuery<int>(
+                $"SELECT count(*)::int AS \"Value\" FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND classid::bigint = {high} AND objid::bigint = {low} AND objsubid = 1").FirstAsync(Ct));
+            if (waiting >= count) return;
+            Assert.True(DateTime.UtcNow < deadline, $"Expected {count} request(s) waiting on lock {key}, saw {waiting}.");
+            await Task.Delay(50, Ct);
+        }
+    }
+
     [Fact]
     public async Task Wrong_amount_is_mismatch()
     {
@@ -549,7 +623,8 @@ public sealed partial class CarePaymentTests(ApiFixture api)
         var paid = await Json(await PayAsync(w.Cashier, w.BillId, 100_000, "Pos", "POS-55"));
         await Json(await w.Admin.PostAsJsonAsync($"/api/care/bills/{w.BillId}/adjustments", new { kind = "Discount", amountMinor = 50_000, reason = "Loyalty" }, Ct));
 
-        // Clinical staff see the line's clinical reference; the cashier and front desk see the price-item name only (existing ruling).
+        // Clinical staff see the line's clinical reference; the cashier and front desk see the price category only (final review I2, user
+        // decision; supersedes the Task 2 ruling that showed them the item name).
         Assert.Contains("rx-item-secret-ref", await (await w.Clinic.Owner.GetAsync($"/api/care/bills/{w.BillId}", Ct)).Content.ReadAsStringAsync(Ct));
         foreach (var client in new[] { w.Cashier, w.Desk })
         {
@@ -562,7 +637,8 @@ public sealed partial class CarePaymentTests(ApiFixture api)
                 Assert.All(names, n => Assert.False(CareAccessTests.IsClinicalName(n), $"{path}: {n}"));
             }
             var bill = await BillAsync(client, w.BillId);
-            Assert.Contains(bill.GetProperty("lines").EnumerateArray(), l => l.GetProperty("description").GetString() == "Coartem tablets");
+            Assert.Contains(bill.GetProperty("lines").EnumerateArray(), l => l.GetProperty("description").GetString() == "Drug");
+            Assert.DoesNotContain("Coartem", bill.GetRawText());
         }
         var reversal = await Json(await w.Cashier.PostAsJsonAsync($"/api/care/payments/{paid.GetProperty("id").GetGuid()}/reverse", new { reason = "Card declined later" }, Ct));
         Assert.All(Names(reversal).Distinct(), n => Assert.False(CareAccessTests.IsClinicalName(n), n));

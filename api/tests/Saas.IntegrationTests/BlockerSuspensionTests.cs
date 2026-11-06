@@ -22,7 +22,7 @@ public sealed class BlockerSuspensionTests(ApiFixture api)
     private async Task<(HttpClient Owner, string Slug, Guid TenantId)> SalonAsync(string name)
     {
         var client = api.CreateClient();
-        var auth = await Json(await client.PostAsJsonAsync("/api/auth/signup", new
+        var auth = await Json(await api.SignUpAsync(client, "/api/auth/signup", new
         {
             fullName = $"{name} Owner", email = $"{name.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com", password = "password123",
             country = "NG", product = "bookings", businessName = $"{name} Salon {Guid.NewGuid().ToString("N")[..4]}",

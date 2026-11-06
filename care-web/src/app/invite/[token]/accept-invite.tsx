@@ -45,11 +45,16 @@ export function AcceptInvite() {
   return <StaffInvite token={token} invite={state.invite} />;
 }
 
-/** The invite preview carries the platform role only, so a Staff invite reads "staff member" (the clinical role is set by the clinic). */
-function inviteRoleLabel(role: PublicInviteDto["role"]): string {
-  if (role === "Staff") return "a staff member";
-  const label = careRoleLabel(role);
-  return label === "Admin" ? "an admin" : `the ${label.toLowerCase()}`;
+/**
+ * The clinic role the invite is for, as a phrase: "a nurse", "front desk", "an admin (doctor)". Post-build: the preview carries the clinic
+ * role label ("Nurse", "Front desk", "Admin (doctor)"); an older API without it falls back to the platform role.
+ */
+function inviteRoleLabel(invite: PublicInviteDto): string {
+  const label = invite.roleLabel ?? (invite.role === "Staff" ? "Staff member" : careRoleLabel(invite.role));
+  if (label === "Front desk") return "front desk";
+  if (label === "Medical director") return "the medical director";
+  const lower = label.charAt(0).toLowerCase() + label.slice(1);
+  return /^[aeiou]/i.test(label) ? `an ${lower}` : `a ${lower}`;
 }
 
 function StaffInvite({ token, invite }: { token: string; invite: PublicInviteDto }) {
@@ -93,7 +98,7 @@ function StaffInvite({ token, invite }: { token: string; invite: PublicInviteDto
       title={`Join ${invite.businessName}`}
       subtitle={
         <>
-          You&apos;ve been invited to join the clinic&apos;s team as <strong>{inviteRoleLabel(invite.role)}</strong>.
+          You&apos;ve been invited to join the clinic&apos;s team as <strong>{inviteRoleLabel(invite)}</strong>.
         </>
       }
     >
