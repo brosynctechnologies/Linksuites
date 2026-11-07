@@ -127,7 +127,7 @@ function ResetPassword() {
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
         />
-        <ErrorBox error={error} />
+        <ErrorBox error={error ?? (mismatch ? "The passwords don't match. Type the same new password twice." : null)} />
         {badLink && (
           <p className="text-sm">
             <Link href="/forgot-password" className={linkClass}>

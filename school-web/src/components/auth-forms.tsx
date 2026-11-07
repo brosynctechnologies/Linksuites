@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { rememberSchool, setAuth } from "@/lib/auth";
 import { PRODUCT } from "@/lib/config";
 import type { AuthResponse } from "@/lib/types";
 import { nextPath } from "./auth-shell";
 import { ConfirmEmailStep, isSignupPending, isUnconfirmed, type SignupPending } from "./confirm-email";
-import { Button, ErrorBox, Input, Notice } from "./ui";
+import { Button, ErrorBox, Input, Notice, useFocusFirstInvalid } from "./ui";
 import { cx, linkClass } from "./styles";
 
 /**
@@ -71,9 +71,17 @@ function OrRule() {
   );
 }
 
+/** The error for a form's failed checks (field name to message, or false when it passed): each field is marked and the summary lists them all. */
+function invalid(checks: Record<string, string | false>): ApiError | null {
+  const errors: Record<string, string[]> = {};
+  for (const [name, message] of Object.entries(checks)) if (message) errors[name] = [message];
+  return Object.keys(errors).length ? new ApiError(400, { errors }) : null;
+}
+
 /**
  * Email-code sign-in: ask for the email, send a 6-digit code (`POST /api/auth/otp/request`), then verify it at `verifyPath`.
- * Staff verify at `/api/auth/otp/verify` with the product; parents at `/api/auth/parent/otp/verify`.
+ * Staff verify at `/api/auth/otp/verify` with the product; parents at `/api/auth/parent/otp/verify`. `autoFocus` puts focus on the
+ * email field when the visitor switched here from the password form; each later step focuses its own first field.
  */
 function EmailCode({
   verifyPath,
@@ -83,6 +91,7 @@ function EmailCode({
   onBack,
   backLabel,
   submit,
+  autoFocus,
 }: {
   verifyPath: string;
   product?: string;
@@ -91,8 +100,10 @@ function EmailCode({
   onBack: () => void;
   backLabel: string;
   submit: ReturnType<typeof useAuthSubmit>;
+  autoFocus?: boolean;
 }) {
   const [sent, setSent] = useState(false);
+  const [changedEmail, setChangedEmail] = useState(false);
   const [code, setCode] = useState("");
   const { busy, error, run, setError } = submit;
   const request = () => run(async () => void (await api("/api/auth/otp/request", { method: "POST", body: { email: email.trim() }, auth: false })));
@@ -110,7 +121,15 @@ function EmailCode({
         className="space-y-4"
       >
         <p className="text-sm text-slate-600">We&apos;ll email you a 6-digit code. No password needed.</p>
-        <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input
+          label="Email"
+          type="email"
+          autoComplete="email"
+          required
+          autoFocus={autoFocus || changedEmail}
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
         <ErrorBox error={error} />
         <Button type="submit" loading={busy} className="w-full" disabled={!email.trim()}>
           Send code
@@ -149,6 +168,7 @@ function EmailCode({
         pattern="[0-9]*"
         maxLength={6}
         required
+        autoFocus
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
         className="tnum text-center text-lg tracking-[0.4em]"
@@ -166,6 +186,7 @@ function EmailCode({
           className="min-h-11 text-slate-600 hover:text-ink"
           onClick={() => {
             setSent(false);
+            setChangedEmail(true);
             setCode("");
             setError(null);
           }}
@@ -182,6 +203,8 @@ function EmailCode({
 /** Staff sign in: password, or an emailed code. Goes to the school app. */
 export function StaffLoginForm({ schoolSlug }: { schoolSlug?: string }) {
   const [mode, setMode] = useState<"password" | "code">("password");
+  // Set once the visitor switches mode: the new step's first field takes focus (never on first load).
+  const [switched, setSwitched] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const submit = useAuthSubmit("/app");
@@ -212,6 +235,7 @@ export function StaffLoginForm({ schoolSlug }: { schoolSlug?: string }) {
         onBack={() => setMode("password")}
         backLabel="Use my password instead"
         submit={submit}
+        autoFocus={switched}
       />
     );
   }
@@ -225,7 +249,7 @@ export function StaffLoginForm({ schoolSlug }: { schoolSlug?: string }) {
         }}
         className="space-y-4"
       >
-        <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input label="Email" type="email" autoComplete="email" required autoFocus={switched} value={email} onChange={(e) => setEmail(e.target.value)} />
         <Input label="Password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
         <p className="-mt-2 text-right text-sm">
           <Link href="/forgot-password" className={linkClass}>
@@ -243,6 +267,7 @@ export function StaffLoginForm({ schoolSlug }: { schoolSlug?: string }) {
         className="w-full"
         onClick={() => {
           setError(null);
+          setSwitched(true);
           setMode("code");
         }}
       >
@@ -256,16 +281,20 @@ export function StaffLoginForm({ schoolSlug }: { schoolSlug?: string }) {
 export function SchoolSignupForm() {
   const [form, setForm] = useState({ businessName: "", fullName: "", email: "", password: "" });
   const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/app");
+  const formRef = useRef<HTMLFormElement>(null);
+  useFocusFirstInvalid(formRef, error);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!form.businessName.trim() || !form.fullName.trim() || !form.email.trim()) {
-      setError(new ApiError(400, { detail: "Enter the school's name, your name and your email." }));
-      return;
-    }
-    if (form.password.length < 8) {
-      setError(new ApiError(400, { errors: { password: ["Use at least 8 characters."] } }));
+    const problem = invalid({
+      businessName: !form.businessName.trim() && "Enter the school's name.",
+      fullName: !form.fullName.trim() && "Enter your full name.",
+      email: !form.email.trim() && "Enter your email.",
+      password: form.password.length < 8 && "Use at least 8 characters for your password.",
+    });
+    if (problem) {
+      setError(problem);
       return;
     }
     run(() =>
@@ -298,9 +327,8 @@ export function SchoolSignupForm() {
     );
   }
 
-  const fieldError = error && (error.field("businessName") || error.field("fullName") || error.field("email") || error.field("password"));
   return (
-    <form onSubmit={submit} className="space-y-4" noValidate>
+    <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
       <Input
         label="School name"
         autoComplete="organization"
@@ -323,7 +351,7 @@ export function SchoolSignupForm() {
         hint="At least 8 characters."
         error={error?.field("password")}
       />
-      <ErrorBox error={error && !fieldError ? error : null} />
+      <ErrorBox error={error} />
       <Button type="submit" loading={busy} className="w-full">
         Create my school
       </Button>
@@ -337,6 +365,7 @@ export function SchoolSignupForm() {
 /** Parent sign in: an emailed code (the default, no password to remember) or a password. */
 export function ParentSignInForm({ schoolSlug, onSignedIn }: { schoolSlug?: string; onSignedIn?: (res: AuthResponse) => Promise<string | void> | string | void }) {
   const [mode, setMode] = useState<"code" | "password">("code");
+  const [switched, setSwitched] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const submit = useAuthSubmit(
@@ -372,9 +401,13 @@ export function ParentSignInForm({ schoolSlug, onSignedIn }: { schoolSlug?: stri
           verifyPath="/api/auth/parent/otp/verify"
           email={email}
           setEmail={setEmail}
-          onBack={() => setMode("password")}
+          onBack={() => {
+            setSwitched(true);
+            setMode("password");
+          }}
           backLabel="Use a password instead"
           submit={submit}
+          autoFocus={switched}
         />
       </div>
     );
@@ -388,7 +421,7 @@ export function ParentSignInForm({ schoolSlug, onSignedIn }: { schoolSlug?: stri
       }}
       className="space-y-4"
     >
-      <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+      <Input label="Email" type="email" autoComplete="email" required autoFocus={switched} value={email} onChange={(e) => setEmail(e.target.value)} />
       <Input label="Password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
       <p className="-mt-2 text-right text-sm">
         <Link href="/forgot-password" className={linkClass}>
@@ -404,6 +437,7 @@ export function ParentSignInForm({ schoolSlug, onSignedIn }: { schoolSlug?: stri
         className="w-full"
         onClick={() => {
           setError(null);
+          setSwitched(true);
           setMode("code");
         }}
       >
@@ -420,16 +454,19 @@ export function ParentSignInForm({ schoolSlug, onSignedIn }: { schoolSlug?: stri
 export function ParentSignupForm({ onSignedIn }: { onSignedIn: (res: AuthResponse) => Promise<string | void> | string | void }) {
   const [form, setForm] = useState({ fullName: "", email: "", password: "" });
   const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/parent", onSignedIn);
+  const formRef = useRef<HTMLFormElement>(null);
+  useFocusFirstInvalid(formRef, error);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!form.fullName.trim() || !form.email.trim()) {
-      setError(new ApiError(400, { detail: "Enter your name and email." }));
-      return;
-    }
-    if (form.password.length < 8) {
-      setError(new ApiError(400, { errors: { password: ["Use at least 8 characters."] } }));
+    const problem = invalid({
+      fullName: !form.fullName.trim() && "Enter your full name.",
+      email: !form.email.trim() && "Enter your email.",
+      password: form.password.length < 8 && "Use at least 8 characters for your password.",
+    });
+    if (problem) {
+      setError(problem);
       return;
     }
     run(() =>
@@ -454,9 +491,8 @@ export function ParentSignupForm({ onSignedIn }: { onSignedIn: (res: AuthRespons
     );
   }
 
-  const fieldError = error && (error.field("fullName") || error.field("email") || error.field("password"));
   return (
-    <form onSubmit={submit} className="space-y-4" noValidate>
+    <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
       <Input label="Your full name" autoComplete="name" required value={form.fullName} onChange={set("fullName")} error={error?.field("fullName")} />
       <Input label="Email" type="email" autoComplete="email" required value={form.email} onChange={set("email")} error={error?.field("email")} />
       <Input
@@ -470,7 +506,7 @@ export function ParentSignupForm({ onSignedIn }: { onSignedIn: (res: AuthRespons
         onChange={set("password")}
         error={error?.field("password")}
       />
-      <ErrorBox error={error && !fieldError ? error : null} />
+      <ErrorBox error={error} />
       <Button type="submit" loading={busy} className="w-full">
         Create my parent account
       </Button>
@@ -488,9 +524,12 @@ export function StudentSignInForm({ schoolSlug }: { schoolSlug: string }) {
     rememberSchool(schoolSlug);
     return "/student";
   });
+  const formRef = useRef<HTMLFormElement>(null);
+  useFocusFirstInvalid(formRef, error);
 
   return (
     <form
+      ref={formRef}
       onSubmit={(e) => {
         e.preventDefault();
         run(() =>
@@ -522,7 +561,7 @@ export function StudentSignInForm({ schoolSlug }: { schoolSlug: string }) {
         onChange={(e) => setPassword(e.target.value)}
         error={error?.field("password")}
       />
-      <ErrorBox error={error && !error.field("admissionNo") && !error.field("password") ? error : null} />
+      <ErrorBox error={error} />
       <Button type="submit" loading={busy} className="w-full">
         Sign in
       </Button>

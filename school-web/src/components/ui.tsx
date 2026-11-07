@@ -4,15 +4,19 @@ import Link from "next/link";
 import {
   useEffect,
   useId,
+  useRef,
   type ButtonHTMLAttributes,
   type CSSProperties,
   type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type RefObject,
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
 import { createPortal } from "react-dom";
 import type { ApiError } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { BackIcon, CloseIcon, SearchIcon, WhatsAppIcon } from "./icons";
 import {
   buttonClass,
@@ -198,7 +202,7 @@ export function Checkbox({ checked, onChange, label, disabled }: { checked: bool
     <label className="flex items-start gap-2.5 text-sm text-slate-800">
       <input
         type="checkbox"
-        className="mt-0.5 h-4 w-4 shrink-0 rounded border-rule accent-[#6b1d33]"
+        className="mt-0.5 h-4 w-4 shrink-0 rounded border-field accent-[#6b1d33]"
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
@@ -256,6 +260,16 @@ export function ErrorBox({ error, onRetry }: { error: ApiError | string | null |
   );
 }
 
+/**
+ * After a failed submit, moves focus to the form's first field marked invalid, so a keyboard or screen-reader user lands on what to
+ * fix. The form's ErrorBox (role="alert") lists every problem.
+ */
+export function useFocusFirstInvalid(form: RefObject<HTMLFormElement | null>, error: unknown) {
+  useEffect(() => {
+    if (error) form.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [form, error]);
+}
+
 const noticeTones = {
   info: "border-blazer bg-blazer-wash text-ink",
   success: "border-pass bg-pass-wash text-ink",
@@ -275,11 +289,13 @@ const UPGRADE_COPY =
   "You have reached a limit of your current plan. Standard takes 300 students and 15 staff; Premium takes 1,000 students and 50 staff. Existing records are never blocked.";
 
 export function UpgradePrompt({ message, plan }: { message?: string; plan?: string }) {
+  // Staff open the school's plan page; parent and student sessions (no school tenant) have no plan page.
+  const staff = !!useAuth()?.tenant;
   return (
     <div className={cx(panelClass, "border-l-[3px] border-l-crest p-4 text-sm")} role="alert">
       <p className="font-semibold text-ink">{plan ? `Upgrade to ${plan} to continue` : "Upgrade your plan to continue"}</p>
       <p className="mt-1 max-w-prose text-slate-600">{message || UPGRADE_COPY}</p>
-      <Link href="/pricing" className={buttonClass("primary", "mt-3")}>
+      <Link href={staff ? "/app/billing" : "/#plans"} className={buttonClass("primary", "mt-3")}>
         See plans
       </Link>
     </div>
@@ -383,7 +399,28 @@ export function PageHeader({ title, back, action, subtitle }: { title: ReactNode
   );
 }
 
-/** Underlined tabs on a rule. Pass `ids` to wire tabpanels (`${idBase}-tab-x` / `${idBase}-panel-x`). */
+/** Left and Right arrows (and Home, End) move between tabs and select them; only the active tab is in the tab order. */
+function useTabKeys<T extends string>(items: { value: T }[], onChange: (v: T) => void) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const onKeyDown = (i: number) => (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const last = items.length - 1;
+    const next =
+      e.key === "ArrowRight" ? (i === last ? 0 : i + 1) : e.key === "ArrowLeft" ? (i === 0 ? last : i - 1) : e.key === "Home" ? 0 : e.key === "End" ? last : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    onChange(items[next].value);
+    refs.current[next]?.focus();
+  };
+  const ref = (i: number) => (el: HTMLButtonElement | null) => {
+    refs.current[i] = el;
+  };
+  return { ref, onKeyDown };
+}
+
+/**
+ * Underlined tabs on a rule. Pass `idBase` to wire the rendered tabpanel (`${idBase}-tab-x` / `${idBase}-panel-x`): only the active
+ * tab points at a panel, because only the active panel is rendered.
+ */
 export function Tabs<T extends string>({
   items,
   value,
@@ -399,19 +436,23 @@ export function Tabs<T extends string>({
   className?: string;
   idBase?: string;
 }) {
+  const keys = useTabKeys(items, onChange);
   return (
     <div className={cx("no-scrollbar -mx-4 flex gap-1 overflow-x-auto border-b border-rule px-4 sm:mx-0 sm:px-0", className)} role="tablist" aria-label={label}>
-      {items.map((t) => {
+      {items.map((t, i) => {
         const active = value === t.value;
         return (
           <button
             key={t.value}
+            ref={keys.ref(i)}
             id={idBase ? `${idBase}-tab-${t.value}` : undefined}
-            aria-controls={idBase ? `${idBase}-panel-${t.value}` : undefined}
+            aria-controls={idBase && active ? `${idBase}-panel-${t.value}` : undefined}
             type="button"
             role="tab"
             aria-selected={active}
+            tabIndex={active ? 0 : -1}
             onClick={() => onChange(t.value)}
+            onKeyDown={keys.onKeyDown(i)}
             className={cx(
               "relative min-h-11 shrink-0 rounded-t-control px-3 pt-2 pb-2.5 text-sm font-medium whitespace-nowrap transition-colors",
               active ? "text-ink" : "text-muted hover:text-ink",
@@ -440,6 +481,7 @@ export function Segmented<T extends string>({
   label: string;
   className?: string;
 }) {
+  const keys = useTabKeys(items, onChange);
   return (
     <div
       className={cx("grid rounded-control border border-rule bg-ruled-2 p-1", className)}
@@ -447,13 +489,16 @@ export function Segmented<T extends string>({
       role="tablist"
       aria-label={label}
     >
-      {items.map((t) => (
+      {items.map((t, i) => (
         <button
           key={t.value}
+          ref={keys.ref(i)}
           type="button"
           role="tab"
           aria-selected={value === t.value}
+          tabIndex={value === t.value ? 0 : -1}
           onClick={() => onChange(t.value)}
+          onKeyDown={keys.onKeyDown(i)}
           className={cx(
             "min-h-10 rounded-[4px] px-2 py-1.5 text-sm font-semibold",
             value === t.value ? "bg-surface text-ink shadow-[0_1px_2px_rgb(31_27_36/0.12)]" : "text-muted hover:text-ink",

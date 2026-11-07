@@ -5,7 +5,12 @@ import { AuthSwitchLink, StaffLoginForm } from "@/components/auth-forms";
 import { AuthShell } from "@/components/auth-shell";
 import { linkClass } from "@/components/styles";
 
-export const metadata: Metadata = { title: "Staff sign in" };
+export const metadata: Metadata = {
+  title: "Staff sign in",
+  description: "Sign in to CareLink as the medical director, an admin, a doctor, a nurse, the front desk or a cashier.",
+  robots: { index: false, follow: true },
+  alternates: {},
+};
 
 export default function LoginPage() {
   return (

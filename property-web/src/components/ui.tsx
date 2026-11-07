@@ -4,9 +4,11 @@ import Link from "next/link";
 import {
   useEffect,
   useId,
+  useRef,
   type ButtonHTMLAttributes,
   type CSSProperties,
   type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
@@ -236,6 +238,20 @@ export function Skeleton({ className, style }: { className?: string; style?: CSS
   return <span aria-hidden="true" className={cx("block animate-pulse rounded-[4px] bg-plaster-2", className)} style={style} />;
 }
 
+/**
+ * After a failed submit, move focus to the first field marked invalid, so keyboard and screen-reader users land on
+ * what to fix. Pass something that changes on every failure (the new error, or a counter); attach the ref to the form.
+ */
+export function useFocusFirstInvalid<T extends HTMLElement = HTMLFormElement>(failure: unknown) {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    if (!failure) return;
+    ref.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [failure]);
+  return ref;
+}
+
+/** The error summary: always shown after a failed submit, listing every problem (role="alert" announces it). */
 export function ErrorBox({ error, onRetry }: { error: ApiError | string | null | undefined; onRetry?: () => void }) {
   if (!error) return null;
   const message = typeof error === "string" ? error : error.message;
@@ -343,7 +359,7 @@ export function UsageMeter({ label, used, limit }: { label: string; used: number
   );
 }
 
-/** Learner progress: seal on a quiet track, with the number beside it. */
+/** Progress: seal on a quiet track, with the number beside it. */
 export function ProgressBar({ percent, label = "Progress", className, showValue = true }: { percent: number; label?: string; className?: string; showValue?: boolean }) {
   const pct = Math.max(0, Math.min(100, Math.round(percent || 0)));
   return (
@@ -417,7 +433,31 @@ export function PageHeader({ title, back, action, subtitle }: { title: ReactNode
   );
 }
 
-/** Underlined tabs on a line. Pass `ids` to wire tabpanels (`${idBase}-tab-x` / `${idBase}-panel-x`). */
+/**
+ * Arrow keys for a row of tabs (Left and Right wrap, Home and End jump): select the tab and move focus to it. Only the
+ * selected tab is in the Tab order, so Tab moves on to the panel.
+ */
+function useTabKeys<T extends string>(items: { value: T }[], onChange: (v: T) => void) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const onKeyDown = (i: number) => (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const last = items.length - 1;
+    const moves: Partial<Record<string, number>> = { ArrowRight: i === last ? 0 : i + 1, ArrowLeft: i === 0 ? last : i - 1, Home: 0, End: last };
+    const next = moves[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    onChange(items[next].value);
+    refs.current[next]?.focus();
+  };
+  const ref = (i: number) => (el: HTMLButtonElement | null) => {
+    refs.current[i] = el;
+  };
+  return { onKeyDown, ref };
+}
+
+/**
+ * Underlined tabs on a line. Pass `idBase` to wire the tabpanel: tabs get `${idBase}-tab-x`, and the selected tab points
+ * at `${idBase}-panel-x`, which the caller renders with role="tabpanel".
+ */
 export function Tabs<T extends string>({
   items,
   value,
@@ -433,18 +473,22 @@ export function Tabs<T extends string>({
   className?: string;
   idBase?: string;
 }) {
+  const keys = useTabKeys(items, onChange);
   return (
     <div className={cx("no-scrollbar -mx-4 flex gap-1 overflow-x-auto border-b border-line px-4 sm:mx-0 sm:px-0", className)} role="tablist" aria-label={label}>
-      {items.map((t) => {
+      {items.map((t, i) => {
         const active = value === t.value;
         return (
           <button
             key={t.value}
+            ref={keys.ref(i)}
             id={idBase ? `${idBase}-tab-${t.value}` : undefined}
-            aria-controls={idBase ? `${idBase}-panel-${t.value}` : undefined}
+            aria-controls={idBase && active ? `${idBase}-panel-${t.value}` : undefined}
             type="button"
             role="tab"
             aria-selected={active}
+            tabIndex={active ? 0 : -1}
+            onKeyDown={keys.onKeyDown(i)}
             onClick={() => onChange(t.value)}
             className={cx(
               "relative min-h-11 shrink-0 rounded-t-control px-3 pt-2 pb-2.5 text-sm font-medium whitespace-nowrap transition-colors",
@@ -474,6 +518,7 @@ export function Segmented<T extends string>({
   label: string;
   className?: string;
 }) {
+  const keys = useTabKeys(items, onChange);
   return (
     <div
       className={cx("grid rounded-control border border-line bg-plaster-2 p-1", className)}
@@ -481,12 +526,15 @@ export function Segmented<T extends string>({
       role="tablist"
       aria-label={label}
     >
-      {items.map((t) => (
+      {items.map((t, i) => (
         <button
           key={t.value}
+          ref={keys.ref(i)}
           type="button"
           role="tab"
           aria-selected={value === t.value}
+          tabIndex={value === t.value ? 0 : -1}
+          onKeyDown={keys.onKeyDown(i)}
           onClick={() => onChange(t.value)}
           className={cx(
             "min-h-10 rounded-[4px] px-2 py-1.5 text-sm font-semibold",
@@ -583,6 +631,46 @@ export function DataList({
   );
 }
 
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Keeps keyboard focus inside a dialog while it is open: focus moves to its first control, Tab and Shift+Tab wrap
+ * around inside it, and focus returns to whatever opened it on close. Attach the ref to the dialog element.
+ */
+export function useFocusTrap<T extends HTMLElement>(active: boolean) {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    const box = ref.current;
+    if (!active || !box) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const items = () => [...box.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.getClientRects().length > 0);
+    if (!box.contains(document.activeElement)) (items()[0] ?? box).focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const list = items();
+      const first = list[0];
+      const last = list[list.length - 1];
+      const inside = box.contains(document.activeElement);
+      if (!first) {
+        e.preventDefault();
+        box.focus();
+      } else if (e.shiftKey && (!inside || document.activeElement === first)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (!inside || document.activeElement === last)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [active]);
+  return ref;
+}
+
 /** Accessible modal dialog: a bottom sheet on phones, centred panel on larger screens. */
 export function Modal({
   open,
@@ -603,6 +691,7 @@ export function Modal({
   dark?: boolean;
 }) {
   const titleId = useId();
+  const panelRef = useFocusTrap<HTMLDivElement>(open);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -622,11 +711,13 @@ export function Modal({
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
       <div className="absolute inset-0 animate-fade-in bg-asphalt/55" aria-hidden="true" onClick={onClose} />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
         className={cx(
-          "relative flex max-h-[92dvh] w-full animate-sheet-up flex-col rounded-t-[14px] shadow-float sm:rounded-panel",
+          "relative flex max-h-[92dvh] w-full animate-sheet-up flex-col rounded-t-[14px] shadow-float outline-none sm:rounded-panel",
           dark ? "on-asphalt bg-asphalt text-white" : "bg-surface",
           wide ? "sm:max-w-3xl" : "sm:max-w-md",
         )}
@@ -659,6 +750,7 @@ export function Modal({
 /** Side sheet on large screens, bottom sheet on phones. */
 export function Drawer({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: ReactNode }) {
   const titleId = useId();
+  const panelRef = useFocusTrap<HTMLDivElement>(open);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -678,10 +770,12 @@ export function Drawer({ open, title, onClose, children }: { open: boolean; titl
     <div className="fixed inset-0 z-50 flex items-end sm:items-stretch sm:justify-end">
       <div className="absolute inset-0 animate-fade-in bg-asphalt/45" aria-hidden="true" onClick={onClose} />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative flex max-h-[88dvh] w-full animate-sheet-up flex-col rounded-t-[14px] bg-surface shadow-float sm:max-h-none sm:max-w-md sm:rounded-none"
+        tabIndex={-1}
+        className="relative flex max-h-[88dvh] w-full animate-sheet-up flex-col rounded-t-[14px] bg-surface shadow-float outline-none sm:max-h-none sm:max-w-md sm:rounded-none"
       >
         <div className="flex items-center justify-between gap-3 border-b border-line-soft px-5 py-3.5">
           <h2 id={titleId} className="text-lg font-semibold text-asphalt">

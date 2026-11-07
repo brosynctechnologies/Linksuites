@@ -1,4 +1,4 @@
-import { SitePage } from "@/components/site-chrome";
+import { SitePage } from "@/components/site-page";
 
 export default function ShelfLayout({ children }: { children: React.ReactNode }) {
   return (

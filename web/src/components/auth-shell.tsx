@@ -1,13 +1,15 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { APP_NAME } from "@/lib/config";
+import { hubUrl } from "@/lib/suite";
+import { SuiteMark } from "./suite/suite-mark";
 import { OrderTicket } from "./order-ticket";
 
 export function AuthShell({ title, subtitle, children, footer }: { title: string; subtitle?: string; children: ReactNode; footer?: ReactNode }) {
   return (
     <div className="flex min-h-screen bg-paper lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-      {/* Calm brand panel (desktop) */}
-      <aside className="relative hidden flex-col justify-between overflow-hidden bg-ink px-10 py-10 text-white lg:flex xl:px-14">
+      {/* Calm brand panel (desktop). */}
+      <aside className="relative hidden flex-col justify-between overflow-hidden ol-on-ink bg-ink px-10 py-10 text-white lg:flex xl:px-14">
         <Link href="/" className="inline-flex min-h-11 w-fit items-center gap-2 font-display text-xl font-extrabold text-white">
           <span className="h-3 w-3 rounded-full bg-marigold" aria-hidden="true" />
           {APP_NAME}
@@ -29,7 +31,7 @@ export function AuthShell({ title, subtitle, children, footer }: { title: string
             />
           </div>
         </div>
-        <p className="text-sm text-white/60">Free for up to 20 products.</p>
+        <p className="text-sm text-white/75">Free to start. No card needed.</p>
       </aside>
 
       {/* Form column */}
@@ -40,12 +42,18 @@ export function AuthShell({ title, subtitle, children, footer }: { title: string
             {APP_NAME}
           </Link>
         </header>
-        <main className="flex flex-1 items-start justify-center px-4 pt-4 pb-12 sm:px-6 sm:pt-10 lg:items-center lg:py-12">
+        <main id="main" tabIndex={-1} className="flex flex-1 items-start justify-center px-4 pt-4 pb-12 outline-none sm:px-6 sm:pt-10 lg:items-center lg:py-12">
           <div className="w-full max-w-md">
             <h1 className="font-display text-3xl font-bold text-ink">{title}</h1>
             {subtitle && <p className="mt-1.5 text-ink-2">{subtitle}</p>}
             <div className="mt-8">{children}</div>
             {footer && <div className="mt-8 border-t border-line pt-5 text-sm text-ink-2">{footer}</div>}
+            <p className="mt-6 text-sm">
+              <a href={hubUrl} className="-ml-1 inline-flex min-h-11 items-center gap-2 rounded-control px-1 text-muted hover:text-ink hover:underline">
+                <SuiteMark size={16} />
+                Part of LinkSuite
+              </a>
+            </p>
           </div>
         </main>
       </div>
@@ -53,9 +61,16 @@ export function AuthShell({ title, subtitle, children, footer }: { title: string
   );
 }
 
-/** Where to go after authenticating: a safe local `?next=` or the dashboard. */
-export function nextPath(): string {
-  if (typeof window === "undefined") return "/dashboard";
+/** Where to go after authenticating: a safe local `?next=`, or `fallback`. */
+export function nextPath(fallback = "/dashboard"): string {
+  if (typeof window === "undefined") return fallback;
   const next = new URLSearchParams(window.location.search).get("next");
-  return next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+  if (!next || !next.startsWith("/") || next.includes("\\")) return fallback;
+  // Browsers treat "/\host" and "//host" as other sites; only accept paths that resolve to this origin.
+  try {
+    const url = new URL(next, window.location.origin);
+    return url.origin === window.location.origin ? `${url.pathname}${url.search}${url.hash}` : fallback;
+  } catch {
+    return fallback;
+  }
 }

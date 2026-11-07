@@ -2,20 +2,31 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { setAuth } from "@/lib/auth";
 import type { AuthResponse } from "@/lib/types";
 import { Button, ErrorBox, Input, Notice, linkClass } from "@/components/ui";
 import { nextPath } from "@/components/auth-shell";
 import { ConfirmEmailStep, isUnconfirmed } from "@/components/confirm-email";
+import { useFocusOnStep } from "@/components/form-focus";
 import { PRODUCT } from "@/lib/config";
 
 type Mode = "password" | "otp-email" | "otp-code" | "confirm";
 
 export function LoginForm() {
-  const router = useRouter();
   const [mode, setMode] = useState<Mode>("password");
+  const root = useRef<HTMLDivElement>(null);
+  useFocusOnStep(root, mode);
+  return (
+    <div ref={root}>
+      <LoginStep mode={mode} setMode={setMode} />
+    </div>
+  );
+}
+
+function LoginStep({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");

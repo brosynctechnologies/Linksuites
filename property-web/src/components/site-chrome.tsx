@@ -1,17 +1,16 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { APP_NAME } from "@/lib/config";
+import { suiteFonts } from "@/lib/suite-fonts";
+import { hubUrl, productByKey } from "@/lib/suite";
 import { AccountLinks } from "./account-links";
+import { SuiteFooter } from "./suite/suite-footer";
+import { SuiteMark } from "./suite/suite-mark";
+import { lsButton } from "./suite/ui";
 import { cx } from "./styles";
 
-/** The PropertyLink wordmark: Archivo at signboard width. */
-export function Wordmark({ className, dark }: { className?: string; dark?: boolean }) {
-  return (
-    <span className={cx("display-wide text-[1.375rem] leading-none font-bold", dark ? "text-white" : "text-asphalt", className)}>
-      Property<span className={dark ? "text-adire-light" : "text-adire"}>Link</span>
-    </span>
-  );
-}
+/** PropertyLink's entry in the LinkSuite product list (name, colours, free and paid plan lines, sign-up paths). */
+export const propertyApp = productByKey("property");
 
 const NAV = [
   { href: "/rent", label: "Rent" },
@@ -19,31 +18,46 @@ const NAV = [
   { href: "/shortlet", label: "Short-let" },
 ];
 
-/** Public header: wordmark, the three ways to search, agents link, account. */
+/**
+ * The public header: the LinkSuite header (docs/design/linksuite.md, suite/suite-header.tsx) with the marketplace's
+ * three searches and the seeker's account on the right, because signed-in seekers need their saved homes on every page.
+ * Not sticky: on a phone the screen belongs to the listings.
+ */
 export function SiteHeader() {
   return (
-    <header className="border-b border-line bg-surface">
-      <div className="mx-auto flex max-w-7xl items-center gap-x-2 px-4 py-2 sm:gap-x-4 sm:px-6">
-        <Link href="/" className="flex min-h-11 shrink-0 items-center rounded-control" aria-label={`${APP_NAME} home`}>
-          <Wordmark />
-        </Link>
-        <nav className="hidden items-center gap-1 md:flex" aria-label="Search">
+    <header className={cx(suiteFonts, "border-b border-ls-line bg-ls-chalk font-ls-text text-ls-ink")}>
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded-ls-control focus:bg-ls-ink focus:px-4 focus:py-3 focus:text-white"
+      >
+        Skip to content
+      </a>
+      <div className="ls-container flex min-h-16 items-center gap-2">
+        <div className="flex min-w-0 items-center gap-1">
+          <a href={hubUrl} aria-label="Part of LinkSuite: all apps" className="flex min-h-11 min-w-11 items-center justify-center rounded-ls-control">
+            <SuiteMark size={20} />
+          </a>
+          <Link href="/" className="flex min-h-11 items-center rounded-ls-control px-1 font-ls-display text-[1.375rem] font-extrabold text-app-text">
+            {APP_NAME}
+          </Link>
+        </div>
+        <nav aria-label="Main" className="ml-3 hidden items-center gap-0.5 md:flex">
           {NAV.map((n) => (
-            <Link key={n.href} href={n.href} className="flex min-h-11 items-center rounded-control px-3 text-sm font-semibold text-asphalt hover:bg-asphalt/[0.06]">
+            <Link key={n.href} href={n.href} className={lsButton("quiet", "md")}>
               {n.label}
             </Link>
           ))}
         </nav>
-        <nav className="ml-auto flex items-center gap-1" aria-label="Account">
-          <Link href="/studio" className="hidden min-h-11 items-center rounded-control px-3 text-sm font-semibold text-asphalt hover:bg-asphalt/[0.06] lg:flex">
+        <div className="ml-auto flex items-center gap-0.5">
+          <Link href="/for-agents" className={lsButton("quiet", "md", "max-lg:hidden")}>
             For agents
           </Link>
           <AccountLinks />
-        </nav>
+        </div>
       </div>
-      <nav className="no-scrollbar flex gap-1 overflow-x-auto border-t border-line-soft px-2 md:hidden" aria-label="Search">
-        {NAV.map((n) => (
-          <Link key={n.href} href={n.href} className="flex min-h-11 items-center px-3 text-sm font-semibold text-asphalt">
+      <nav aria-label="Main" className="no-scrollbar flex gap-0.5 overflow-x-auto border-t border-ls-line px-2 md:hidden">
+        {[...NAV, { href: "/for-agents", label: "For agents" }].map((n) => (
+          <Link key={n.href} href={n.href} className={lsButton("quiet", "md", "px-3")}>
             {n.label}
           </Link>
         ))}
@@ -52,39 +66,32 @@ export function SiteHeader() {
   );
 }
 
+const FOOTER_LINKS = [
+  { href: "/rent", label: "Homes for rent" },
+  { href: "/buy", label: "Homes for sale" },
+  { href: "/shortlet", label: "Short-lets" },
+  { href: "/how-verification-works", label: "How verification works" },
+  { href: "/for-agents", label: "For agents and landlords" },
+  { href: "/studio/login", label: "Log in to the studio" },
+];
+
+/** The LinkSuite footer, with PropertyLink's own links. */
 export function SiteFooter() {
   return (
-    <footer className="mt-auto border-t border-line bg-surface">
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 text-sm text-muted sm:grid-cols-[minmax(0,1fr)_auto] sm:px-6">
-        <div>
-          <Wordmark className="text-lg" />
-          <p className="mt-1 max-w-sm">What you see is real, and what you pay is all here.</p>
-        </div>
-        <nav className="flex flex-wrap gap-x-5 gap-y-1" aria-label="Footer">
-          {[
-            { href: "/rent", label: "Homes for rent" },
-            { href: "/buy", label: "Homes for sale" },
-            { href: "/shortlet", label: "Short-lets" },
-            { href: "/how-verification-works", label: "How verification works" },
-            { href: "/pricing", label: "Pricing for agents" },
-            { href: "/studio/signup", label: "List a property" },
-          ].map((l) => (
-            <Link key={l.href} href={l.href} className="flex min-h-11 items-center hover:text-asphalt hover:underline">
-              {l.label}
-            </Link>
-          ))}
-        </nav>
-      </div>
-    </footer>
+    <div className={cx(suiteFonts, "mt-auto flex flex-col font-ls-text")}>
+      <SuiteFooter app={propertyApp} links={FOOTER_LINKS} />
+    </div>
   );
 }
 
-/** Standard public page frame. */
+/** Standard public page frame. The skip link in the header targets `#main`. */
 export function SitePage({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div className="flex min-h-screen flex-col">
       <SiteHeader />
-      <main className={cx("flex-1", className)}>{children}</main>
+      <main id="main" tabIndex={-1} className={cx("flex-1 outline-none", className)}>
+        {children}
+      </main>
       <SiteFooter />
     </div>
   );

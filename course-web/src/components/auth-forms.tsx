@@ -50,6 +50,7 @@ function useAuthSubmit(fallback: string) {
 export function LearnerLoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [returned, setReturned] = useState(false);
   const { busy, error, run, finish, unconfirmed, setUnconfirmed } = useAuthSubmit("/learn");
 
   function submit(e: FormEvent) {
@@ -65,7 +66,10 @@ export function LearnerLoginForm() {
         confirmPath="/api/auth/learner/signup/confirm"
         notice={unconfirmed}
         onConfirmed={finish}
-        onBack={() => setUnconfirmed(null)}
+        onBack={() => {
+          setReturned(true);
+          setUnconfirmed(null);
+        }}
         backLabel="Back to log in"
       />
     );
@@ -73,7 +77,7 @@ export function LearnerLoginForm() {
 
   return (
     <form onSubmit={submit} className="space-y-4">
-      <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+      <Input label="Email" type="email" autoComplete="email" required autoFocus={returned} value={email} onChange={(e) => setEmail(e.target.value)} />
       <Input label="Password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
       <p className="-mt-2 text-right text-sm">
         <Link href="/forgot-password" className={linkClass}>
@@ -90,6 +94,7 @@ export function LearnerLoginForm() {
 
 export function LearnerSignupForm() {
   const [form, setForm] = useState({ fullName: "", email: "", password: "" });
+  const [returned, setReturned] = useState(false);
   const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/learn");
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -119,7 +124,10 @@ export function LearnerSignupForm() {
         password={form.password}
         confirmPath="/api/auth/learner/signup/confirm"
         onConfirmed={finish}
-        onBack={() => setPending(null)}
+        onBack={() => {
+          setReturned(true);
+          setPending(null);
+        }}
         backLabel="Change my details"
       />
     );
@@ -131,6 +139,7 @@ export function LearnerSignupForm() {
         label="Full name"
         autoComplete="name"
         required
+        autoFocus={returned}
         value={form.fullName}
         onChange={set("fullName")}
         hint="As it should appear on your certificates."
@@ -165,10 +174,13 @@ export function TutorLoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
+  /** After a switch between password and code, the new step's first field takes focus (the button that had it is gone). */
+  const [switched, setSwitched] = useState(false);
   const { busy, error, setError, run, finish, unconfirmed, setUnconfirmed } = useAuthSubmit("/studio");
 
   const switchMode = (m: TutorMode) => {
     setError(null);
+    setSwitched(true);
     setMode(m);
   };
 
@@ -181,7 +193,10 @@ export function TutorLoginForm() {
         product={PRODUCT}
         notice={unconfirmed}
         onConfirmed={finish}
-        onBack={() => setUnconfirmed(null)}
+        onBack={() => {
+          setSwitched(true);
+          setUnconfirmed(null);
+        }}
         backLabel="Back to log in"
       />
     );
@@ -197,7 +212,7 @@ export function TutorLoginForm() {
           }}
           className="space-y-4"
         >
-          <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Input label="Email" type="email" autoComplete="email" required autoFocus={switched} value={email} onChange={(e) => setEmail(e.target.value)} />
           <Input label="Password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
           <p className="-mt-2 text-right text-sm">
             <Link href="/forgot-password" className={linkClass}>
@@ -232,7 +247,7 @@ export function TutorLoginForm() {
         className="space-y-4"
       >
         <p className="text-sm text-slate-600">We&apos;ll email you a 6-digit code to log in without a password.</p>
-        <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input label="Email" type="email" autoComplete="email" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
         <ErrorBox error={error} />
         <Button type="submit" loading={busy} className="w-full" disabled={!email}>
           Send code
@@ -262,6 +277,7 @@ export function TutorLoginForm() {
         pattern="[0-9]*"
         maxLength={6}
         required
+        autoFocus
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
         className="text-center text-lg tracking-[0.4em] tabular-nums"
@@ -296,6 +312,7 @@ export function TutorSignupForm({ defaultName, defaultEmail }: { defaultName?: s
     product: PRODUCT,
     businessName: "",
   });
+  const [returned, setReturned] = useState(false);
   const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/studio");
   const set = (k: keyof TutorSignupRequest) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -327,7 +344,10 @@ export function TutorSignupForm({ defaultName, defaultEmail }: { defaultName?: s
         confirmPath="/api/auth/signup/confirm"
         product={PRODUCT}
         onConfirmed={finish}
-        onBack={() => setPending(null)}
+        onBack={() => {
+          setReturned(true);
+          setPending(null);
+        }}
         backLabel="Change my details"
       />
     );
@@ -335,7 +355,7 @@ export function TutorSignupForm({ defaultName, defaultEmail }: { defaultName?: s
 
   return (
     <form onSubmit={submit} className="space-y-4" noValidate>
-      <Input label="Your full name" autoComplete="name" required value={form.fullName} onChange={set("fullName")} error={error?.field("fullName")} />
+      <Input label="Your full name" autoComplete="name" required autoFocus={returned} value={form.fullName} onChange={set("fullName")} error={error?.field("fullName")} />
       <Input label="Email" type="email" autoComplete="email" required value={form.email} onChange={set("email")} error={error?.field("email")} />
       <Input
         label="Password"

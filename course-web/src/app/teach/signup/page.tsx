@@ -5,13 +5,17 @@ import { AuthShell } from "@/components/auth-shell";
 import { CheckIcon } from "@/components/icons";
 import { MARKETPLACE_FEE_PCT, REFUND_WINDOW_DAYS } from "@/lib/config";
 
-export const metadata: Metadata = { title: "Create your academy" };
+export const metadata: Metadata = {
+  title: "Create your academy free",
+  description: "Open a free LearnLink academy: sell your courses in naira to the people who already follow you, and list them on the marketplace if you choose.",
+  alternates: { canonical: "/teach/signup" },
+};
 
 const POINTS = [
   "Your own academy page in your colours, to share from your bio",
   `Optional listing on the marketplace (a ${MARKETPLACE_FEE_PCT}% fee applies to marketplace sales)`,
   `Learners pay in naira; earnings clear ${REFUND_WINDOW_DAYS} days after each sale`,
-  "Free plan: 2 courses and 2 GB of video. Upgrade when you need more",
+  "Free plan: 2 courses and 2 GB of video. Upgrade inside LearnLink when you need more",
 ];
 
 export default function TutorSignupPage() {

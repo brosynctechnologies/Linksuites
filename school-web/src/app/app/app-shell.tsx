@@ -6,7 +6,7 @@ import type { ComponentType, ReactNode, SVGProps } from "react";
 import { logout } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { can, roleLabel, type Action } from "@/lib/roles";
-import { AccountIcon, HomeIcon, LogoutIcon, MoreIcon, PromoteIcon, SettingsIcon, SetupIcon, StaffIcon, StudentsIcon } from "@/components/icons";
+import { AccountIcon, HomeIcon, LogoutIcon, MoreIcon, PlanIcon, PromoteIcon, SettingsIcon, SetupIcon, StaffIcon, StudentsIcon } from "@/components/icons";
 import { Wordmark } from "@/components/site-chrome";
 import { cx } from "@/components/ui";
 import { AnnouncementIcon, MessageIcon, NotificationBell } from "@/components/notification-bell";
@@ -56,6 +56,8 @@ const NAV: NavItem[] = [
   { href: "/app/announcements", label: "Announcements", icon: AnnouncementIcon },
   // The school's name, motto, address, logo and the principal's signature: Owner and Admin (the API's admin policy).
   { href: "/app/settings/school", label: "School settings", icon: SettingsIcon, needs: "school.manage" },
+  // Proprietor and principal see the plan; only the proprietor can pay (the page decides).
+  { href: "/app/billing", label: "Plan and billing", icon: PlanIcon, needs: "billing.read" },
   { href: "/app/account", label: "Account", icon: AccountIcon },
 ];
 

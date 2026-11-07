@@ -1,5 +1,11 @@
 @import "tailwindcss";
-@import "maplibre-gl/dist/maplibre-gl.css";
+@import "./suite.css";
+
+:root {
+  --app: #33309a;
+  --app-ink: #ffffff;
+  --app-text: #33309a;
+}
 
 /*
  * PropertyLink design tokens (docs/design/propertylink.md).
@@ -20,6 +26,8 @@
   --color-line-soft: #e6eae4;
   --color-muted: #4d5a53;
   --color-faint: #7b8780;
+  /* Field: the border of inputs and outlined buttons, 3.5:1 on Surface (Line is for decorative rules only). */
+  --color-field: #7f8c84;
 
   --color-adire: #33309a;
   --color-adire-dark: #27257a;
@@ -33,8 +41,9 @@
   --color-brick: #b3261e;
   --color-brick-dark: #8f1d17;
   --color-brick-wash: #f9e7e5;
-  --color-whatsapp: #1da851;
-  --color-whatsapp-dark: #168a42;
+  /* White text on WhatsApp green: 5.4:1 (the brand #1da851 is only 3.1:1). */
+  --color-whatsapp: #147a3b;
+  --color-whatsapp-dark: #106331;
 
   /* Neutral scale re-tuned towards Asphalt, so any slate-* utility stays on-palette. */
   --color-slate-50: #f6f8f5;
@@ -113,13 +122,9 @@
     /* Room for the support-view banner (its height, set by SupportBanner; 0 otherwise). */
     padding-top: var(--support-bar, 0px);
   }
-  :focus-visible {
-    outline: 2px solid var(--focus-ring, #33309a);
-    outline-offset: 2px;
-  }
-  /* Focus ring that stays visible on the Asphalt studio rail. */
+  /* The focus ring itself is suite.css's (3px in --ls-focus). Keep it visible on the Asphalt studio rail and photo viewer. */
   .on-asphalt {
-    --focus-ring: #b7b5ff;
+    --ls-focus: #b7b5ff;
   }
   /* Icons never get squeezed by their flex row. */
   svg {

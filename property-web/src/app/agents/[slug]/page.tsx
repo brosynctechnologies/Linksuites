@@ -4,11 +4,14 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { formatDay } from "@/lib/format";
 import { serverGet } from "@/lib/server-api";
+import { shareMetadata } from "@/lib/site";
+import { agentJsonLd } from "@/lib/structured-data";
 import type { AgentPageDto } from "@/lib/types";
 import { Avatar, Rating, Stars, VerifiedSeal } from "@/components/badges";
 import { ListingGrid } from "@/components/listing-card";
 import { ProfileContact, ReportReviewButton, ReviewForm } from "@/components/profile-bits";
-import { LoadProblem, SiteFooter, SiteHeader } from "@/components/site-chrome";
+import { LoadProblem, SitePage } from "@/components/site-chrome";
+import { JsonLd } from "@/components/suite/sections";
 
 const BASIS: Record<string, string> = { Enquiry: "After an enquiry", Inspection: "After a viewing", Stay: "After a stay" };
 
@@ -17,18 +20,20 @@ export async function generateMetadata({ params }: PageProps<"/agents/[slug]">):
   const res = await serverGet<AgentPageDto>(`/api/agents/${encodeURIComponent(slug)}`);
   // A real 404 must be decided here: metadata resolves before the page streams, so the response gets a 404 status.
   if (!res.ok && res.status === 404) notFound();
-  return res.ok ? { title: `${res.data.agent.displayName}, ${res.data.agency.name}` } : { title: "Agent" };
+  if (!res.ok) return { title: "Agent" };
+  const { agent, agency, listings } = res.data;
+  const title = `${agent.displayName}, ${agency.name}`;
+  const homes = listings.length ? `${listings.length} live listing${listings.length === 1 ? "" : "s"}` : "Homes";
+  const description = `${agent.displayName} is an agent with ${agency.name}${agent.verified ? ", verified by PropertyLink" : ""}. ${homes}, viewings and reviews from seekers on PropertyLink.`;
+  const url = `/agents/${agent.slug}`;
+  return { title, description, alternates: { canonical: url }, ...shareMetadata({ title, description, url, image: agent.photoUrl }) };
 }
 
 export default function AgentPage({ params }: PageProps<"/agents/[slug]">) {
   return (
-    <div className="flex min-h-screen flex-col">
-      <SiteHeader />
-      <main className="flex-1">
-        <Suspense fallback={<div className="mx-auto h-48 max-w-6xl animate-pulse px-4 py-10" aria-hidden="true" />}>{params.then((p) => <Agent slug={p.slug} />)}</Suspense>
-      </main>
-      <SiteFooter />
-    </div>
+    <SitePage>
+      <Suspense fallback={<div className="mx-auto h-48 max-w-6xl animate-pulse px-4 py-10" aria-hidden="true" />}>{params.then((p) => <Agent slug={p.slug} />)}</Suspense>
+    </SitePage>
   );
 }
 
@@ -45,6 +50,7 @@ async function Agent({ slug }: { slug: string }) {
   const { agent, agency, bio, licenceNo, listings, reviews } = res.data;
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      <JsonLd data={agentJsonLd(agent, agency, bio)} />
       <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
         <Avatar src={agent.photoUrl} name={agent.displayName} size={88} />
         <div className="min-w-0 flex-1">

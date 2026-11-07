@@ -5,9 +5,10 @@ import { Suspense } from "react";
 import { formatCount } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
 import { serverGet } from "@/lib/server-api";
+import { shareMetadata } from "@/lib/site";
 import type { AreaGuideDto } from "@/lib/types";
 import { ListingGrid } from "@/components/listing-card";
-import { LoadProblem, SiteFooter, SiteHeader } from "@/components/site-chrome";
+import { LoadProblem, SitePage } from "@/components/site-chrome";
 import { buttonClass, chipClass } from "@/components/styles";
 
 export async function generateMetadata({ params }: PageProps<"/areas/[slug]">): Promise<Metadata> {
@@ -15,20 +16,19 @@ export async function generateMetadata({ params }: PageProps<"/areas/[slug]">): 
   const res = await serverGet<AreaGuideDto>(`/api/areas/${encodeURIComponent(slug)}`);
   // A real 404 must be decided here: metadata resolves before the page streams, so the response gets a 404 status.
   if (!res.ok && res.status === 404) notFound();
-  return res.ok
-    ? { title: `Living in ${res.data.location.name}`, description: `Typical rents by bedrooms, sale prices and the latest homes in ${res.data.location.name}.` }
-    : { title: "Area guide" };
+  if (!res.ok) return { title: "Area guide" };
+  const name = res.data.location.name;
+  const title = `Living in ${name}: rents, sale prices and homes`;
+  const description = `Typical yearly rents by bedrooms, sale prices and the latest homes in ${name}, from checked agents with the full move-in cost on every listing.`;
+  const url = `/areas/${res.data.location.slug}`;
+  return { title, description, alternates: { canonical: url }, ...shareMetadata({ title, description, url, image: res.data.latest[0]?.coverUrl }) };
 }
 
 export default function AreaPage({ params }: PageProps<"/areas/[slug]">) {
   return (
-    <div className="flex min-h-screen flex-col">
-      <SiteHeader />
-      <main className="flex-1">
-        <Suspense fallback={<div className="mx-auto h-48 max-w-6xl animate-pulse px-4 py-10" aria-hidden="true" />}>{params.then((p) => <Area slug={p.slug} />)}</Suspense>
-      </main>
-      <SiteFooter />
-    </div>
+    <SitePage>
+      <Suspense fallback={<div className="mx-auto h-48 max-w-6xl animate-pulse px-4 py-10" aria-hidden="true" />}>{params.then((p) => <Area slug={p.slug} />)}</Suspense>
+    </SitePage>
   );
 }
 

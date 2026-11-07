@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { SitePage } from "@/components/site-chrome";
+import { SitePage } from "@/components/site-page";
 import { PageLoader } from "@/components/ui";
 import { VerifyPayment } from "./verify-payment";
 

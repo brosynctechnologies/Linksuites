@@ -3,47 +3,56 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { formatCount } from "@/lib/format";
-import { purposeLabel, readSearch, searchApiPath, searchHref, type SearchState } from "@/lib/search";
+import { hasFilters, purposeLabel, readSearch, searchApiPath, searchHref, type SearchState } from "@/lib/search";
 import { serverGet } from "@/lib/server-api";
+import { shareMetadata } from "@/lib/site";
 import type { ListingPurpose, RefItem, SearchResultDto } from "@/lib/types";
-import { LoadProblem, SiteFooter, SiteHeader } from "../site-chrome";
+import { LoadProblem, SitePage } from "../site-chrome";
 import { buttonClass } from "../styles";
 import { SearchFilters } from "./filters";
 import { SearchView } from "./search-view";
 
 const PAGE_SIZE = 20;
 
-type SP = Record<string, string | string[] | undefined>;
+export type SP = Record<string, string | string[] | undefined>;
 
 function titleFor(purpose: ListingPurpose, place: string | undefined) {
   const what = purpose === "Sale" ? "Homes for sale" : purpose === "ShortLet" ? "Short-lets" : "Homes for rent";
   return place ? `${what} in ${place}` : what;
 }
 
-/** Metadata for /rent/[location] etc.: the place name from the slug (the API names it on the page itself). */
-export async function searchMetadata(purpose: ListingPurpose, params: Promise<{ location?: string }>): Promise<Metadata> {
-  const { location } = await params;
+/**
+ * Metadata for /rent/[location] etc.: the place name from the slug (the API names it on the page itself). Every filter,
+ * sort and page combination points its canonical at the clean purpose and place path; filtered views stay out of the
+ * index but their links are followed.
+ */
+export async function searchMetadata(purpose: ListingPurpose, params: Promise<{ location?: string }>, searchParams: Promise<SP>): Promise<Metadata> {
+  const [{ location }, sp] = await Promise.all([params, searchParams]);
   const place = location ? decodeURIComponent(location).replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : undefined;
+  const state = readSearch(purpose, location, sp);
+  const canonical = searchHref({ purpose, location: state.location });
+  const filtered = hasFilters(state) || !!state.sort;
+  const title = titleFor(purpose, place);
+  const description = `${title} from checked agents on PropertyLink, with the full move-in cost on every listing.`;
   return {
-    title: titleFor(purpose, place),
-    description: `${titleFor(purpose, place)} from checked agents on PropertyLink, with the full move-in cost on every listing.`,
+    title,
+    description,
+    alternates: { canonical },
+    robots: filtered ? { index: false, follow: true } : undefined,
+    ...shareMetadata({ title, description, url: canonical }),
   };
 }
 
 /** The shared search page behind /rent, /buy, /shortlet and their /[location] variants. */
 export function SearchPage({ purpose, params, searchParams }: { purpose: ListingPurpose; params: Promise<{ location?: string }>; searchParams: Promise<SP> }) {
   return (
-    <div className="flex min-h-screen flex-col">
-      <SiteHeader />
-      <main className="flex-1">
-        <Suspense fallback={<SearchSkeleton purpose={purpose} />}>
-          {Promise.all([params, searchParams]).then(([p, sp]) => (
-            <Results state={readSearch(purpose, p.location, sp)} />
-          ))}
-        </Suspense>
-      </main>
-      <SiteFooter />
-    </div>
+    <SitePage>
+      <Suspense fallback={<SearchSkeleton purpose={purpose} />}>
+        {Promise.all([params, searchParams]).then(([p, sp]) => (
+          <Results state={readSearch(purpose, p.location, sp)} />
+        ))}
+      </Suspense>
+    </SitePage>
   );
 }
 
@@ -81,7 +90,7 @@ async function Results({ state }: { state: SearchState }) {
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
           <h1 className="display-wide text-2xl font-bold text-asphalt sm:text-[1.75rem]">{title}</h1>
           {res.ok && (
-            <p className="text-sm text-muted">
+            <p role="status" className="text-sm text-muted">
               {formatCount(res.data.items.total)} home{res.data.items.total === 1 ? "" : "s"} {purposeLabel(state.purpose)}
             </p>
           )}

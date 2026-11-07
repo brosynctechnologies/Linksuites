@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { AuthSwitchLink, SeekerLoginForm } from "@/components/auth-forms";
 import { AuthShell } from "@/components/auth-shell";
 
-export const metadata: Metadata = { title: "Log in" };
+export const metadata: Metadata = { title: "Log in to your saved homes", robots: { index: false } };
 
 export default function LoginPage() {
   return (

@@ -1,40 +1,46 @@
 import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
 import { Bricolage_Grotesque, Onest } from "next/font/google";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_TITLE, SITE_URL, baseOpenGraph, baseTwitter } from "@/lib/site";
 import "./globals.css";
 
-/** Bricolage Grotesque: the wordmark, headline and product names. */
-const bricolage = Bricolage_Grotesque({
+/** Bricolage Grotesque: headings and signboards, narrowed on the width axis like a painted shop sign. */
+const display = Bricolage_Grotesque({
   subsets: ["latin"],
-  weight: ["500", "700", "800"],
-  variable: "--font-bricolage",
+  axes: ["opsz", "wdth"],
+  variable: "--font-ls-display-face",
   display: "swap",
 });
 
-/** Onest: everything else. */
-const onest = Onest({
-  subsets: ["latin"],
+/** Onest: everything else. Plain, open shapes and clear figures at small sizes; latin-ext carries the naira sign. */
+const text = Onest({
+  subsets: ["latin", "latin-ext"],
   weight: ["400", "500", "600"],
-  variable: "--font-onest",
+  variable: "--font-ls-text-face",
   display: "swap",
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3600"),
-  title: "LinkSuite: tools for running a business in Nigeria",
-  description:
-    "OrderLink, InvoiceLink, BookLink, LearnLink, PropertyLink, SchoolLink and CareLink. Pick the tool for your business and start free.",
+  metadataBase: new URL(SITE_URL),
+  title: { default: SITE_TITLE, template: `%s | ${SITE_NAME}` },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
+  openGraph: { ...baseOpenGraph, url: "/", title: SITE_TITLE, description: SITE_DESCRIPTION },
+  twitter: { ...baseTwitter, title: SITE_TITLE, description: SITE_DESCRIPTION },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#f3f4f6",
+  themeColor: "#f1f2ee",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en-NG" className={`${bricolage.variable} ${onest.variable}`}>
-      <body className="min-h-dvh">{children}</body>
+    <html lang="en-NG" className={`${display.variable} ${text.variable}`}>
+      <body className="flex min-h-dvh flex-col">{children}</body>
     </html>
   );
 }

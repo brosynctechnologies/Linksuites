@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Archivo, Instrument_Sans } from "next/font/google";
 import { SupportBanner } from "@/components/support-banner";
 import { APP_NAME, SITE_URL } from "@/lib/config";
+import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, baseOpenGraph, baseTwitter } from "@/lib/site";
 import "./globals.css";
 
 /** Archivo with the width axis: headlines at wdth 112 (estate signboards), prices at wdth 100. */
@@ -21,19 +22,21 @@ const instrument = Instrument_Sans({
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: {
-    default: `${APP_NAME}: homes from checked agents, every cost shown`,
-    template: `%s | ${APP_NAME}`,
-  },
-  description:
-    "Rent, buy or book a short-let in Lagos from verified agents. Every listing shows the full move-in cost: rent, agency fee, legal fee and caution, added up.",
+  title: { default: DEFAULT_TITLE, template: `%s | ${APP_NAME}` },
+  description: DEFAULT_DESCRIPTION,
+  applicationName: APP_NAME,
+  robots: { index: true, follow: true },
+  // No root canonical: it would be inherited by every listing and search page and point them all at the home page.
+  // Each indexable page sets its own `alternates.canonical`.
+  openGraph: { ...baseOpenGraph, url: "/", title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION },
+  twitter: { ...baseTwitter, title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#17201C",
+  themeColor: "#f1f2ee",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

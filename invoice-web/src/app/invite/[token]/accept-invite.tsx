@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
-import { api, toApiError, type ApiError } from "@/lib/api";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { api, ApiError, toApiError } from "@/lib/api";
 import { setAuth } from "@/lib/auth";
 import { ROLE_DESCRIPTIONS, toRole } from "@/lib/permissions";
 import type { AuthResponse, PublicInviteDto } from "@/lib/types";
 import { AuthShell } from "@/components/auth-shell";
+import { useFocusFirstInvalid } from "@/components/form-focus";
 import { Button, ErrorBox, Input, Notice, PageLoader, buttonClass } from "@/components/ui";
 
 /** Public page behind the invite email link: shows the invite and lets the person join (no sign-in needed). */
@@ -70,13 +71,17 @@ function AcceptForm({ token, invite }: { token: string; invite: PublicInviteDto 
   const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<ApiError | string | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  useFocusFirstInvalid(formRef, error);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!invite.hasAccount) {
-      if (!fullName.trim()) return setError("Please enter your full name.");
-      if (password.length < 8) return setError("Password must be at least 8 characters.");
+      const missing: Record<string, string[]> = {};
+      if (!fullName.trim()) missing.fullName = ["Enter your full name."];
+      if (password.length < 8) missing.password = ["Password must be at least 8 characters."];
+      if (Object.keys(missing).length > 0) return setError(new ApiError(400, { detail: "Some details are missing:", errors: missing }));
     }
     setBusy(true);
     setError(null);
@@ -92,12 +97,19 @@ function AcceptForm({ token, invite }: { token: string; invite: PublicInviteDto 
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4">
+    <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
       <Input label="Email" type="email" value={invite.email} readOnly disabled />
       {invite.hasAccount ? (
         <Notice>You already have an account. Enter your password to join.</Notice>
       ) : (
-        <Input label="Full name" autoComplete="name" required value={fullName} onChange={(e) => setFullName(e.target.value)} />
+        <Input
+          label="Full name"
+          autoComplete="name"
+          required
+          value={fullName}
+          onChange={(e) => setFullName(e.target.value)}
+          error={error?.field("fullName")}
+        />
       )}
       <Input
         label={invite.hasAccount ? "Password" : "Create a password"}
@@ -108,6 +120,7 @@ function AcceptForm({ token, invite }: { token: string; invite: PublicInviteDto 
         hint={invite.hasAccount ? undefined : "At least 8 characters."}
         value={password}
         onChange={(e) => setPassword(e.target.value)}
+        error={error?.field("password")}
       />
       <ErrorBox error={error} />
       <Button type="submit" loading={busy} className="w-full">

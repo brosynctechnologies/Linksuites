@@ -3,7 +3,12 @@ import { Suspense } from "react";
 import { AuthSwitchLink, StaffLoginForm } from "@/components/auth-forms";
 import { AuthShell } from "@/components/auth-shell";
 
-export const metadata: Metadata = { title: "Staff sign in" };
+export const metadata: Metadata = {
+  title: "Staff sign in",
+  description: "Sign in to SchoolLink as a proprietor, principal, bursar or teacher.",
+  robots: { index: false, follow: true },
+  alternates: {},
+};
 
 export default function LoginPage() {
   return (

@@ -1,4 +1,14 @@
 @import "tailwindcss";
+@import "./suite.css";
+
+/* LinkSuite app colour (docs/design/linksuite.md): Scrub, white on it, Scrub for accent text. The focus ring stays Scrub as in the
+ * app (4.8:1 on Chalk, 4.4:1 on Concrete); dark and Scrub bands switch it with ls-on-dark, ls-on-app and on-scrub. */
+:root {
+  --app: #0f766e;
+  --app-ink: #ffffff;
+  --app-text: #0f766e;
+  --ls-focus: #0f766e;
+}
 
 /*
  * CareLink design tokens (docs/design/carelink.md).
@@ -22,6 +32,8 @@
   --color-surface: #ffffff;
   --color-rule: #cbd8d4;
   --color-rule-soft: #dfe8e5;
+  /* The border of every input: 3.5:1 on Surface. Rule stays for decorative lines. */
+  --color-field: #7d8c88;
   --color-muted: #4d5d59;
   --color-faint: #7b8a86;
 
@@ -32,8 +44,9 @@
   --color-arterial: #b42318;
   --color-arterial-dark: #8e1b12;
   --color-arterial-wash: #fbe9e7;
-  --color-whatsapp: #1da851;
-  --color-whatsapp-dark: #168a42;
+  /* White on it is 5.4:1 (the brand green #1da851 is only 3.1:1). */
+  --color-whatsapp: #147a3b;
+  --color-whatsapp-dark: #106331;
 
   /* Neutral scale re-tuned toward Ink with a little green, so any slate-* utility stays on-palette. */
   --color-slate-50: #f5f8f7;
@@ -72,7 +85,6 @@
 
   --animate-sheet-up: sheet-up 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
   --animate-fade-in: fade-in 160ms ease-out both;
-  --animate-step-in: step-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 
   @keyframes sheet-up {
     from {
@@ -89,17 +101,6 @@
       opacity: 0;
     }
     to {
-      opacity: 1;
-    }
-  }
-  /* The landing page's visit path: each step slides in once, in order. */
-  @keyframes step-in {
-    from {
-      transform: translateX(-12px);
-      opacity: 0;
-    }
-    to {
-      transform: none;
       opacity: 1;
     }
   }
@@ -129,6 +130,7 @@
   /* Focus ring that stays visible on the Theatre bar and rail. */
   .on-scrub {
     --focus-ring: #9fe0d5;
+    --ls-focus: #9fe0d5;
   }
   svg {
     flex-shrink: 0;

@@ -2,8 +2,17 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { AuthSwitchLink, SeekerSignupForm } from "@/components/auth-forms";
 import { AuthShell } from "@/components/auth-shell";
+import { shareMetadata } from "@/lib/site";
 
-export const metadata: Metadata = { title: "Create an account" };
+const TITLE = "Create a free account to save homes and book viewings";
+const DESCRIPTION = "A free PropertyLink account saves homes and searches, emails you new listings, and books viewings and short-lets in Lagos.";
+
+export const metadata: Metadata = {
+  title: TITLE,
+  description: DESCRIPTION,
+  alternates: { canonical: "/signup" },
+  ...shareMetadata({ title: TITLE, description: DESCRIPTION, url: "/signup" }),
+};
 
 export default function SignupPage() {
   return (

@@ -239,7 +239,7 @@ function Preview({
         {!preview.fitsPlan && (
           <Notice tone="warning" className="mt-3">
             {planFullText(preview)} Upgrade your plan or remove rows, then upload the file again.{" "}
-            <Link href="/pricing" className="font-bold underline underline-offset-2">
+            <Link href="/app/billing" className="font-bold underline underline-offset-2">
               See plans
             </Link>
           </Notice>
@@ -288,7 +288,7 @@ function Preview({
               : `Import ${plural(preview.newCount + preview.updateCount, "student")}`}
         </Button>
         {!preview.fitsPlan && !refused && (
-          <Link href="/pricing" className={buttonClass("secondary")}>
+          <Link href="/app/billing" className={buttonClass("secondary")}>
             Upgrade your plan
           </Link>
         )}

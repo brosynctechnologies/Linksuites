@@ -6,6 +6,8 @@ import { formatDay, listingPath, placeLine, plural } from "@/lib/format";
 import { formatMoney, formatPrice, periodSuffix } from "@/lib/money";
 import { purposePath } from "@/lib/search";
 import { serverGet } from "@/lib/server-api";
+import { shareMetadata } from "@/lib/site";
+import { listingJsonLd } from "@/lib/structured-data";
 import type { ListingDetailDto } from "@/lib/types";
 import { VerifiedSeal } from "@/components/badges";
 import { BathIcon, BedIcon, CheckIcon, ClockIcon, ExternalIcon, HomeIcon, KeyIcon, RulerIcon } from "@/components/icons";
@@ -13,8 +15,9 @@ import { Ledger, priceLineLabel } from "@/components/ledger";
 import { ListingCard } from "@/components/listing-card";
 import { PointMap } from "@/components/maps";
 import { SaveHeart } from "@/components/save-heart";
-import { LoadProblem, SiteFooter, SiteHeader } from "@/components/site-chrome";
+import { LoadProblem, SitePage } from "@/components/site-chrome";
 import { linkClass } from "@/components/styles";
+import { JsonLd } from "@/components/suite/sections";
 import { AgentPanel, MobileContactBar, ViewTracker, type ContactListing } from "./contact";
 import { Gallery } from "./gallery";
 import { ReportLink } from "./report";
@@ -46,22 +49,21 @@ export async function generateMetadata({ params }: PageProps<"/listings/[agency]
     l.purpose === "ShortLet"
       ? `Cleaning ${formatMoney(l.shortLet?.cleaningFeeMinor ?? 0, l.currency)}${hostPaid > 0 ? `, plus ${formatMoney(hostPaid, l.currency)} paid to the host, not charged online` : ""}. Book and pay online.`
       : `${l.purpose === "Sale" ? "Total to buy" : "Move-in total"} ${formatMoney(l.moveInTotalMinor, l.currency)}, every cost shown.`;
+  const description = `${where} ${cost}`;
+  const url = listingPath(l.agency.slug, l.slug);
   return {
     title: l.title,
-    description: `${where} ${cost}`,
-    openGraph: l.photos[0] ? { images: [l.photos[0].cardUrl] } : undefined,
+    description,
+    alternates: { canonical: url },
+    ...shareMetadata({ title: l.title, description, url, image: l.photos[0]?.cardUrl }),
   };
 }
 
 export default function ListingPage({ params }: PageProps<"/listings/[agency]/[slug]">) {
   return (
-    <div className="flex min-h-screen flex-col">
-      <SiteHeader />
-      <main className="flex-1 pb-24 lg:pb-0">
-        <Suspense fallback={<ListingSkeleton />}>{params.then((p) => <Listing agency={p.agency} slug={p.slug} />)}</Suspense>
-      </main>
-      <SiteFooter />
-    </div>
+    <SitePage className="pb-24 lg:pb-0">
+      <Suspense fallback={<ListingSkeleton />}>{params.then((p) => <Listing agency={p.agency} slug={p.slug} />)}</Suspense>
+    </SitePage>
   );
 }
 
@@ -108,6 +110,7 @@ async function Listing({ agency, slug }: { agency: string; slug: string }) {
 
   return (
     <article>
+      <JsonLd data={listingJsonLd(l)} />
       <ViewTracker listingId={l.id} />
       <nav aria-label="Breadcrumb" className="mx-auto max-w-6xl px-4 pt-4 sm:px-6">
         <ol className="no-scrollbar flex items-center gap-1.5 overflow-x-auto text-sm whitespace-nowrap text-muted">

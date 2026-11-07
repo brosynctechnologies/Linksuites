@@ -1,4 +1,12 @@
 @import "tailwindcss";
+@import "./suite.css";
+
+/* LinkSuite app colour (docs/design/linksuite.md): rose, white on it, rose-dark for accent text on light grounds. */
+:root {
+  --app: #c2255c;
+  --app-ink: #ffffff;
+  --app-text: #a01c4b;
+}
 
 /*
  * BookLink design tokens. See docs/design/booklink.md for the plan these come from.
@@ -8,6 +16,8 @@
 :root {
   color-scheme: light;
   --focus-ring: #c2255c;
+  /* suite.css draws every focus ring from --ls-focus: rose in the app, ink on the LinkSuite pages (see (site)/layout). */
+  --ls-focus: var(--focus-ring);
   /* A business's own brand colour (public pages override these inline). */
   --brand: #c2255c;
   --on-brand: #ffffff;
@@ -26,6 +36,8 @@
   --color-surface: #ffffff;
   --color-line: #e6e1ec;
   --color-line-soft: #efebf3;
+  /* The border of inputs: 3.55:1 on white (line is only for decorative rules). */
+  --color-field: #8e8499;
   --color-muted: #6a5e78;
   --color-faint: #9a8fa6;
 
@@ -165,6 +177,7 @@
   /* Focus ring that stays visible on the aubergine sidebar and bottom bar. */
   .on-aubergine {
     --focus-ring: #f39ab9;
+    --ls-focus: #f39ab9;
   }
   ::selection {
     background: #f6cadb;

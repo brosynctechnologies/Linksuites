@@ -8,6 +8,7 @@ const stampFmt = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Africa/Lagos",
 });
 const dayFmt = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const lagosDayFmt = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Lagos" });
 
 /** "12 Oct 2026, 14:05" in Lagos time. */
 export function formatStamp(iso: string | null | undefined): string {
@@ -21,6 +22,13 @@ export function formatDay(date: string | null | undefined): string {
   if (!date) return "—";
   const d = new Date(`${date}T00:00:00Z`);
   return Number.isNaN(d.getTime()) ? date : dayFmt.format(d);
+}
+
+/** A timestamp as its day in Lagos, "12 Oct 2026". */
+export function formatStampDay(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : lagosDayFmt.format(d);
 }
 
 /** Today in Lagos as "YYYY-MM-DD". */

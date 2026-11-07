@@ -116,6 +116,7 @@ export function ConfirmEmailStep({
         pattern="[0-9]*"
         maxLength={6}
         required
+        autoFocus
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
         className="text-center text-lg tracking-[0.4em] tabular-nums"

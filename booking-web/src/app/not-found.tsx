@@ -1,9 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { buttonClass } from "@/components/styles";
 
+export const metadata: Metadata = { title: "Page not found", robots: { index: false, follow: true }, alternates: {} };
+
 export default function NotFound() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-mist px-6 text-center">
+    <main id="main" tabIndex={-1} className="flex min-h-screen flex-col items-center justify-center bg-mist px-6 text-center outline-none">
       <div className="mb-6 flex h-24 w-[4.25rem] rotate-[-4deg] items-center justify-center rounded-card bg-surface shadow-card" aria-hidden="true">
         <span className="font-expanded text-2xl font-extrabold text-faint">404</span>
       </div>

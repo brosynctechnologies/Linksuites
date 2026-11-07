@@ -8,6 +8,7 @@ import {
   type ButtonHTMLAttributes,
   type CSSProperties,
   type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
@@ -392,7 +393,28 @@ export function PageHeader({ title, back, action, subtitle }: { title: ReactNode
   );
 }
 
-/** Underlined tabs on a rule. Pass `ids` to wire tabpanels (`${idBase}-tab-x` / `${idBase}-panel-x`). */
+/**
+ * Arrow keys for a row of `role="tab"` buttons (the admin console's pattern): Left and Right move and select, Home and End jump to the
+ * ends. Only the selected tab is in the Tab order.
+ */
+function useTabKeys<T extends string>(items: { value: T }[], onChange: (v: T) => void) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const ref = (i: number) => (el: HTMLButtonElement | null) => {
+    refs.current[i] = el;
+  };
+  const onKeyDown = (i: number) => (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const last = items.length - 1;
+    const next =
+      e.key === "ArrowRight" ? (i + 1) % items.length : e.key === "ArrowLeft" ? (i - 1 + items.length) % items.length : e.key === "Home" ? 0 : e.key === "End" ? last : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    onChange(items[next].value);
+    refs.current[next]?.focus();
+  };
+  return { ref, onKeyDown };
+}
+
+/** Underlined tabs on a rule. Pass `idBase` to wire the rendered tabpanel (`${idBase}-tab-x` / `${idBase}-panel-x`). */
 export function Tabs<T extends string>({
   items,
   value,
@@ -408,19 +430,24 @@ export function Tabs<T extends string>({
   className?: string;
   idBase?: string;
 }) {
+  const keys = useTabKeys(items, onChange);
   return (
     <div className={cx("no-scrollbar -mx-4 flex gap-1 overflow-x-auto border-b border-rule px-4 sm:mx-0 sm:px-0", className)} role="tablist" aria-label={label}>
-      {items.map((t) => {
+      {items.map((t, i) => {
         const active = value === t.value;
         return (
           <button
             key={t.value}
+            ref={keys.ref(i)}
             id={idBase ? `${idBase}-tab-${t.value}` : undefined}
-            aria-controls={idBase ? `${idBase}-panel-${t.value}` : undefined}
+            // Only the selected tab's panel is rendered.
+            aria-controls={idBase && active ? `${idBase}-panel-${t.value}` : undefined}
             type="button"
             role="tab"
             aria-selected={active}
+            tabIndex={active ? 0 : -1}
             onClick={() => onChange(t.value)}
+            onKeyDown={keys.onKeyDown(i)}
             className={cx(
               "relative min-h-11 shrink-0 rounded-t-control px-3 pt-2 pb-2.5 text-sm font-medium whitespace-nowrap transition-colors",
               active ? "text-ink" : "text-muted hover:text-ink",
@@ -449,6 +476,7 @@ export function Segmented<T extends string>({
   label: string;
   className?: string;
 }) {
+  const keys = useTabKeys(items, onChange);
   return (
     <div
       className={cx("grid rounded-control border border-rule bg-gauze-2 p-1", className)}
@@ -456,13 +484,16 @@ export function Segmented<T extends string>({
       role="tablist"
       aria-label={label}
     >
-      {items.map((t) => (
+      {items.map((t, i) => (
         <button
           key={t.value}
+          ref={keys.ref(i)}
           type="button"
           role="tab"
           aria-selected={value === t.value}
+          tabIndex={value === t.value ? 0 : -1}
           onClick={() => onChange(t.value)}
+          onKeyDown={keys.onKeyDown(i)}
           className={cx(
             "min-h-10 rounded-[4px] px-2 py-1.5 text-sm font-semibold",
             value === t.value ? "bg-surface text-ink shadow-[0_1px_2px_rgb(31_27_36/0.12)]" : "text-muted hover:text-ink",

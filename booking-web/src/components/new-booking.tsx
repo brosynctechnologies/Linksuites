@@ -66,7 +66,7 @@ export function NewBookingProvider({ children }: { children: ReactNode }) {
       </Modal>
       {created && (
         <div className="fixed inset-x-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-40 mx-auto max-w-md animate-pop-in lg:bottom-6" role="status">
-          <div className="flex items-center gap-3 rounded-panel bg-aubergine px-4 py-3 text-sm text-white shadow-float">
+          <div className="on-aubergine flex items-center gap-3 rounded-panel bg-aubergine px-4 py-3 text-sm text-white shadow-float">
             <p className="min-w-0 flex-1">
               Booked {created.customerName} for {formatDateTime(created.startsAt, tz)}.
             </p>

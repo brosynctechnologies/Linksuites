@@ -20,6 +20,9 @@ x-web-build-args: &web-build-args
   NEXT_PUBLIC_PROPERTYLINK_URL: ${PROPERTY_URL}
   NEXT_PUBLIC_SCHOOLLINK_URL: ${SCHOOL_URL}
   NEXT_PUBLIC_CARELINK_URL: ${CARE_URL}
+  # The "Part of LinkSuite" link on every site, and the hub's optional contact email.
+  NEXT_PUBLIC_HUB_URL: ${HUB_URL}
+  NEXT_PUBLIC_CONTACT_EMAIL: ${CONTACT_EMAIL:-}
 
 services:
   db:

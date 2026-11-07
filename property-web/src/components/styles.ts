@@ -7,7 +7,7 @@ export function cx(...parts: (string | false | null | undefined)[]) {
 export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost" | "whatsapp";
 const variants: Record<ButtonVariant, string> = {
   primary: "bg-adire text-white hover:bg-adire-dark active:bg-adire-dark disabled:opacity-45",
-  secondary: "border border-line bg-surface text-asphalt hover:border-slate-300 hover:bg-slate-50 disabled:text-faint",
+  secondary: "border border-field bg-surface text-asphalt hover:border-asphalt hover:bg-slate-50 disabled:text-muted",
   danger: "border border-brick/30 bg-surface text-brick hover:bg-brick-wash disabled:text-brick/50",
   ghost: "text-slate-700 hover:bg-asphalt/[0.06] disabled:text-faint",
   /** Only "Chat on WhatsApp", always with the glyph. */
@@ -22,8 +22,9 @@ export const buttonClass = (variant: ButtonVariant = "primary", extra?: string) 
     extra,
   );
 
+/** Inputs: the Field border (3.5:1) is the only edge that shows where a field is; placeholders are hints in Muted. */
 export const inputClass =
-  "block min-h-11 w-full rounded-control border border-line bg-surface px-3 py-2.5 text-base text-asphalt placeholder:text-faint hover:border-slate-300 focus:border-adire disabled:bg-slate-50 disabled:text-muted aria-[invalid=true]:border-brick sm:text-sm";
+  "block min-h-11 w-full rounded-control border border-field bg-surface px-3 py-2.5 text-base text-asphalt placeholder:text-muted hover:border-asphalt focus:border-adire disabled:bg-slate-50 disabled:text-muted aria-[invalid=true]:border-brick sm:text-sm";
 
 /** Label text above fields (always visible). */
 export const labelClass = "block text-sm font-medium text-slate-700";
@@ -31,8 +32,8 @@ export const labelClass = "block text-sm font-medium text-slate-700";
 /** White panel on Plaster: 1px Line border, 10px radius, no shadow. */
 export const panelClass = "rounded-panel border border-line bg-surface";
 
-/** Text link in Adire. */
-export const linkClass = "font-semibold text-adire underline-offset-2 hover:underline";
+/** Text link in Adire: always underlined, so it never relies on colour alone. */
+export const linkClass = "font-semibold text-adire underline decoration-1 underline-offset-2 hover:decoration-2";
 
 /** Chip (filters, area links, small toggles): full round. */
 export const chipClass = (active: boolean, extra?: string) =>

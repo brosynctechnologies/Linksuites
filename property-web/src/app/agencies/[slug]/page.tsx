@@ -3,12 +3,15 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { serverGet } from "@/lib/server-api";
+import { shareMetadata } from "@/lib/site";
+import { agencyJsonLd } from "@/lib/structured-data";
 import type { AgencyPageDto } from "@/lib/types";
 import { Avatar, Rating, VerifiedSeal } from "@/components/badges";
 import { ListingGrid } from "@/components/listing-card";
 import { ProfileContact } from "@/components/profile-bits";
-import { LoadProblem, SiteFooter, SiteHeader } from "@/components/site-chrome";
+import { LoadProblem, SitePage } from "@/components/site-chrome";
 import { linkClass } from "@/components/styles";
+import { JsonLd } from "@/components/suite/sections";
 
 const KIND: Record<string, string> = { Agency: "Estate agency", Agent: "Independent agent", Landlord: "Landlord" };
 
@@ -17,18 +20,21 @@ export async function generateMetadata({ params }: PageProps<"/agencies/[slug]">
   const res = await serverGet<AgencyPageDto>(`/api/agencies/${encodeURIComponent(slug)}`);
   // A real 404 must be decided here: metadata resolves before the page streams, so the response gets a 404 status.
   if (!res.ok && res.status === 404) notFound();
-  return res.ok ? { title: res.data.agency.name } : { title: "Agency" };
+  if (!res.ok) return { title: "Agency" };
+  const { agency, address, listings } = res.data;
+  const title = agency.name;
+  const where = address ? ` in ${address}` : "";
+  const homes = listings.length ? `${listings.length} live listing${listings.length === 1 ? "" : "s"}` : "Homes";
+  const description = `${KIND[agency.kind] ?? agency.kind}${where}${agency.verified ? ", verified by PropertyLink" : ""}. ${homes} to rent, buy or short-let, each with the full move-in cost.`;
+  const url = `/agencies/${agency.slug}`;
+  return { title, description, alternates: { canonical: url }, ...shareMetadata({ title, description, url, image: agency.logoUrl }) };
 }
 
 export default function AgencyPage({ params }: PageProps<"/agencies/[slug]">) {
   return (
-    <div className="flex min-h-screen flex-col">
-      <SiteHeader />
-      <main className="flex-1">
-        <Suspense fallback={<div className="mx-auto h-48 max-w-6xl animate-pulse px-4 py-10" aria-hidden="true" />}>{params.then((p) => <Agency slug={p.slug} />)}</Suspense>
-      </main>
-      <SiteFooter />
-    </div>
+    <SitePage>
+      <Suspense fallback={<div className="mx-auto h-48 max-w-6xl animate-pulse px-4 py-10" aria-hidden="true" />}>{params.then((p) => <Agency slug={p.slug} />)}</Suspense>
+    </SitePage>
   );
 }
 
@@ -45,6 +51,7 @@ async function Agency({ slug }: { slug: string }) {
   const { agency, bio, address, agents, listings, ratingAverage, ratingCount } = res.data;
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      <JsonLd data={agencyJsonLd(agency, { bio, address, ratingAverage, ratingCount })} />
       <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
         {agency.logoUrl ? (
           <img src={agency.logoUrl} alt="" className="h-20 w-20 shrink-0 rounded-panel border border-line bg-surface object-contain p-1" />

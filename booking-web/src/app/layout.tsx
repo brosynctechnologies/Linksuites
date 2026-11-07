@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Archivo } from "next/font/google";
 import { SupportBanner } from "@/components/support-banner";
-import { APP_NAME, SITE_URL } from "@/lib/config";
+import { APP_NAME, SITE_DESCRIPTION, SITE_TITLE, SITE_URL, baseOpenGraph, baseTwitter } from "@/lib/site";
 import "./globals.css";
 
 /**
@@ -17,12 +17,13 @@ const archivo = Archivo({
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: {
-    default: `${APP_NAME} — Online booking for salons, barbers and studios`,
-    template: `%s · ${APP_NAME}`,
-  },
-  description:
-    "Let customers book and pay a deposit from your Instagram bio. See who is in which chair today, and stop no-shows with deposits and reminders.",
+  title: { default: SITE_TITLE, template: `%s | ${APP_NAME}` },
+  description: SITE_DESCRIPTION,
+  applicationName: APP_NAME,
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
+  openGraph: { ...baseOpenGraph, url: "/", title: SITE_TITLE, description: SITE_DESCRIPTION },
+  twitter: { ...baseTwitter, title: SITE_TITLE, description: SITE_DESCRIPTION },
 };
 
 export const viewport: Viewport = {
@@ -34,7 +35,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${archivo.variable} h-full antialiased`}>
+    <html lang="en-NG" className={`${archivo.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col bg-mist font-sans text-aubergine">
         <SupportBanner />
         {children}

@@ -15,7 +15,7 @@ type Props = PageProps<"/o/[code]">;
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { code } = await params;
-  return { title: `Order ${code}`, robots: { index: false } };
+  return { title: `Order ${code}`, robots: { index: false }, alternates: {} };
 }
 
 export default function OrderPage(props: Props) {
@@ -61,7 +61,7 @@ async function Order({ params }: Props) {
 
   return (
     <div className="min-h-screen bg-paper">
-      <main className="mx-auto max-w-[560px] space-y-6 px-4 pt-4 pb-10">
+      <main id="main" tabIndex={-1} className="mx-auto max-w-[560px] space-y-6 px-4 pt-4 pb-10 outline-none">
         <Link
           href={`/${order.storeSlug}`}
           className="-ml-2 inline-flex min-h-11 items-center gap-1 rounded-control pr-2 text-sm font-semibold text-ink-2 hover:text-ink"

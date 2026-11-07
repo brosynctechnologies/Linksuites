@@ -74,6 +74,38 @@ export interface TeamDto {
   seats: { used: number; limit: number };
 }
 
+// ---- Plan and billing (`GET /api/billing`) ----
+export interface PlanDto {
+  code: string;
+  name: string;
+  priceMinor: number;
+  currency: string;
+  /** "Term" for every school plan. */
+  interval: string;
+  limits: Record<string, number>;
+  features: string[];
+}
+export interface SubscriptionDto {
+  status: string;
+  currentPeriodEnd: string | null;
+  /** A free period given by LinkSuite, which a payment never extends. */
+  complimentary: boolean;
+}
+/** `limit` -1 = unlimited. */
+export interface UsageItemDto {
+  key: string;
+  label: string;
+  used: number;
+  limit: number;
+}
+export interface BillingDto {
+  currentPlan: PlanDto;
+  subscription: SubscriptionDto | null;
+  plans: PlanDto[];
+  usage: { items: UsageItemDto[] };
+  paymentsEnabled: boolean;
+}
+
 // ---- School setup ----
 export interface SchoolDto {
   name: string;

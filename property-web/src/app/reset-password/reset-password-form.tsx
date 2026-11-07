@@ -5,7 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { clearAuth, getAuth, useHydrated } from "@/lib/auth";
 import { AuthShell } from "@/components/auth-shell";
-import { Button, ErrorBox, Input, Notice, Spinner, buttonClass, linkClass } from "@/components/ui";
+import { Button, ErrorBox, Input, Notice, Spinner, buttonClass, linkClass, useFocusFirstInvalid } from "@/components/ui";
 
 interface ResetLink {
   email: string;
@@ -44,6 +44,8 @@ function ResetPassword() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [done, setDone] = useState(false);
+  const [failures, setFailures] = useState(0);
+  const formRef = useFocusFirstInvalid(failures);
 
   useEffect(() => {
     // Keep the token out of the address bar, history and referrers.
@@ -86,6 +88,7 @@ function ResetPassword() {
     setError(null);
     if (password !== confirm) {
       setMismatch(true);
+      setFailures((n) => n + 1);
       return;
     }
     setMismatch(false);
@@ -98,6 +101,7 @@ function ResetPassword() {
       setDone(true);
     } catch (err) {
       setError(toApiError(err));
+      setFailures((n) => n + 1);
     } finally {
       setBusy(false);
     }
@@ -107,7 +111,7 @@ function ResetPassword() {
 
   return (
     <AuthShell title="Choose a new password" subtitle={`For ${link.email}`}>
-      <form onSubmit={submit} className="space-y-4">
+      <form ref={formRef} onSubmit={submit} className="space-y-4">
         <Input
           label="New password"
           type="password"
@@ -115,6 +119,7 @@ function ResetPassword() {
           required
           minLength={8}
           hint="At least 8 characters."
+          error={error?.field("newPassword") ?? error?.field("password")}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
@@ -127,7 +132,7 @@ function ResetPassword() {
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
         />
-        <ErrorBox error={error} />
+        <ErrorBox error={mismatch ? "The passwords don't match. Type the same new password in both fields." : error} />
         {badLink && (
           <p className="text-sm">
             <Link href="/forgot-password" className={linkClass}>

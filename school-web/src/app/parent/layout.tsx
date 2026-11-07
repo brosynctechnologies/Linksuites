@@ -4,7 +4,7 @@ import { RequireSession } from "@/components/require-session";
 import { PageLoader } from "@/components/ui";
 import { ParentShell } from "./parent-shell";
 
-export const metadata: Metadata = { title: { default: "Parent", template: "%s | SchoolLink" }, robots: { index: false } };
+export const metadata: Metadata = { title: { default: "Parent", template: "%s | SchoolLink" }, robots: { index: false }, alternates: {} };
 
 export default function ParentLayout({ children }: { children: ReactNode }) {
   return (

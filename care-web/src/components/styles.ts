@@ -23,7 +23,7 @@ export const buttonClass = (variant: ButtonVariant = "primary", extra?: string) 
   );
 
 export const inputClass =
-  "block min-h-11 w-full rounded-control border border-rule bg-surface px-3 py-2.5 text-base text-ink placeholder:text-faint hover:border-slate-300 focus:border-scrub disabled:bg-slate-50 disabled:text-muted aria-[invalid=true]:border-arterial sm:text-sm";
+  "block min-h-11 w-full rounded-control border border-field bg-surface px-3 py-2.5 text-base text-ink placeholder:text-muted hover:border-slate-600 focus:border-scrub disabled:bg-slate-50 disabled:text-muted aria-[invalid=true]:border-arterial sm:text-sm";
 
 /** Label text above fields (always visible). */
 export const labelClass = "block text-sm font-medium text-slate-700";

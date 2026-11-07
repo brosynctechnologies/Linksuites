@@ -61,7 +61,7 @@ export function Button({
 // ---------- Form fields ----------
 
 export const inputClass =
-  "block min-h-11 w-full rounded-control border border-line-strong bg-surface px-3 py-2.5 text-base text-ink placeholder:text-subtle transition-colors hover:border-ink-2/50 focus:border-ink disabled:bg-paper disabled:text-muted aria-[invalid=true]:border-hibiscus";
+  "block min-h-11 w-full rounded-control border border-field bg-surface px-3 py-2.5 text-base text-ink placeholder:text-subtle transition-colors hover:border-ink-2/50 focus:border-ink disabled:bg-paper disabled:text-muted aria-[invalid=true]:border-hibiscus";
 
 export const labelClass = "block text-sm font-medium text-ink";
 export const hintClass = "text-xs text-subtle";

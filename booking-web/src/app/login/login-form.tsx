@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { setAuth } from "@/lib/auth";
 import type { AuthResponse } from "@/lib/types";
@@ -23,6 +23,16 @@ export function LoginForm() {
   const [error, setError] = useState<ApiError | null>(null);
   // Final fix pass B: a sign-up whose emailed code was never entered is told to confirm first (403 email_unconfirmed).
   const [notice, setNotice] = useState("");
+  // The button that switched mode unmounts, so focus moves to the new step's first field (not on first load).
+  const stepId = useId();
+  const firstMode = useRef(true);
+  useEffect(() => {
+    if (firstMode.current) {
+      firstMode.current = false;
+      return;
+    }
+    document.getElementById(stepId)?.querySelector<HTMLElement>("input:not([disabled]), button:not([disabled])")?.focus();
+  }, [mode, stepId]);
 
   function done(res: AuthResponse) {
     setAuth(res);
@@ -71,22 +81,24 @@ export function LoginForm() {
 
   if (mode === "confirm") {
     return (
-      <ConfirmEmailStep
-        email={email.trim()}
-        password={password}
-        confirmPath="/api/auth/signup/confirm"
-        product={PRODUCT}
-        notice={notice}
-        onConfirmed={done}
-        onBack={() => switchMode("password")}
-        backLabel="Back to log in"
-      />
+      <div id={stepId}>
+        <ConfirmEmailStep
+          email={email.trim()}
+          password={password}
+          confirmPath="/api/auth/signup/confirm"
+          product={PRODUCT}
+          notice={notice}
+          onConfirmed={done}
+          onBack={() => switchMode("password")}
+          backLabel="Back to log in"
+        />
+      </div>
     );
   }
 
   if (mode === "password") {
     return (
-      <div className="space-y-4">
+      <div id={stepId} className="space-y-4">
         <form onSubmit={submitPassword} className="space-y-4">
           <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
           <Input
@@ -119,7 +131,7 @@ export function LoginForm() {
 
   if (mode === "otp-email") {
     return (
-      <form onSubmit={requestCode} className="space-y-4">
+      <form id={stepId} onSubmit={requestCode} className="space-y-4">
         <p className="text-sm text-slate-600">We&apos;ll email you a 6-digit code to log in without a password.</p>
         <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
         <ErrorBox error={error} />
@@ -134,7 +146,7 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={verifyCode} className="space-y-4">
+    <form id={stepId} onSubmit={verifyCode} className="space-y-4">
       <Notice tone="success">
         If an account exists for <strong>{email}</strong>, a code is on its way.
       </Notice>

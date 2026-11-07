@@ -8,7 +8,8 @@ import { useAuth, useHydrated } from "@/lib/auth";
 import { ADMIN_URL } from "@/lib/config";
 import { initials } from "@/lib/format";
 import { HeartIcon } from "./icons";
-import { buttonClass, cx } from "./styles";
+import { lsButton } from "./suite/ui";
+import { cx } from "./styles";
 
 /** Header account area: Log in / Sign up when signed out; saved homes and a menu when signed in. */
 export function AccountLinks() {
@@ -39,10 +40,10 @@ export function AccountLinks() {
   if (!auth) {
     return (
       <div className="flex items-center gap-1">
-        <Link href="/login" className="flex min-h-11 items-center rounded-control px-3 text-sm font-semibold text-asphalt hover:bg-asphalt/[0.06]">
+        <Link href="/login" className={lsButton("quiet", "md", "px-2.5 sm:px-3.5")}>
           Log in
         </Link>
-        <Link href="/signup" className={buttonClass("primary", "hidden min-[400px]:inline-flex")}>
+        <Link href="/signup" className={lsButton("app", "md", "max-[399px]:hidden")}>
           Sign up
         </Link>
       </div>

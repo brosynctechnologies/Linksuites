@@ -64,9 +64,10 @@ export function PublicQuote() {
       <Card>
         <div className="flex flex-col-reverse items-start gap-3 sm:flex-row sm:justify-between">
           <div className="min-w-0">
-            <p className="text-sm text-muted">
+            <h1 className="text-sm text-muted">
               Quote <span className="tabular-nums">{data.number}</span>
-            </p>
+              {data.business?.name && <span className="sr-only"> from {data.business.name}</span>}
+            </h1>
             <p className="font-figure amount mt-1 text-[clamp(2rem,9vw,2.5rem)] leading-none text-graphite">{formatMoney(data.totalMinor, data.currency)}</p>
             <p className="mt-2 text-sm text-slate-600">Valid until {formatDay(data.expiryDate)}</p>
           </div>

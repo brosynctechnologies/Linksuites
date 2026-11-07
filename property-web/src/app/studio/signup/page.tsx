@@ -4,8 +4,17 @@ import { AgencySignupForm, AuthSwitchLink } from "@/components/auth-forms";
 import { AuthShell } from "@/components/auth-shell";
 import { CheckIcon } from "@/components/icons";
 import { linkClass } from "@/components/styles";
+import { shareMetadata } from "@/lib/site";
 
-export const metadata: Metadata = { title: "List your property" };
+const TITLE = "List your property free";
+const DESCRIPTION = "Create a free PropertyLink studio for your agency, your own agent business or your own homes. 3 live listings free, no card needed.";
+
+export const metadata: Metadata = {
+  title: TITLE,
+  description: DESCRIPTION,
+  alternates: { canonical: "/studio/signup" },
+  ...shareMetadata({ title: TITLE, description: DESCRIPTION, url: "/studio/signup" }),
+};
 
 const POINTS = [
   "Post up to 3 listings free; each one shows the full move-in cost.",
@@ -36,8 +45,8 @@ export default function StudioSignupPage() {
               </li>
             ))}
           </ul>
-          <Link href="/pricing" className={`${linkClass} mt-4 inline-flex min-h-11 items-center`}>
-            See plans and boosts
+          <Link href="/for-agents#plans" className={`${linkClass} mt-4 inline-flex min-h-11 items-center`}>
+            See what the free and paid plans include
           </Link>
         </div>
       }

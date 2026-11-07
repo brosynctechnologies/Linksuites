@@ -45,7 +45,7 @@ function ImageUpload({
       <p className="mb-1.5 text-sm font-medium text-ink">{label}</p>
       <label
         className={cx(
-          "relative flex cursor-pointer flex-col items-center justify-center gap-1 overflow-hidden rounded-control border-2 border-dashed border-line-strong bg-paper text-muted transition-colors hover:border-ink hover:text-ink has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-marigold",
+          "relative flex cursor-pointer flex-col items-center justify-center gap-1 overflow-hidden rounded-control border-2 border-dashed border-line-strong bg-paper text-muted transition-colors hover:border-ink hover:text-ink has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ink",
           wide ? "aspect-[3/1] w-full" : "h-24 w-24",
           url && "border-solid border-line",
         )}

@@ -219,7 +219,7 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
                   <span className="sr-only">Uploading photo…</span>
                 </div>
               ))}
-              <label className="flex aspect-square cursor-pointer flex-col items-center justify-center gap-1.5 rounded-control border-2 border-dashed border-line-strong text-muted transition-colors hover:border-ink hover:text-ink has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-marigold">
+              <label className="flex aspect-square cursor-pointer flex-col items-center justify-center gap-1.5 rounded-control border-2 border-dashed border-line-strong text-muted transition-colors hover:border-ink hover:text-ink has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ink">
                 <ImageIcon />
                 <span className="text-xs font-medium">Add photo</span>
                 <input

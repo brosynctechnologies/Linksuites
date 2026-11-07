@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Atkinson_Hyperlegible_Next, Zilla_Slab } from "next/font/google";
 import { SupportBanner } from "@/components/support-banner";
-import { APP_NAME, SITE_URL } from "@/lib/config";
+import { APP_NAME, DEFAULT_DESCRIPTION, DEFAULT_TITLE, SITE_URL, baseOpenGraph, baseTwitter } from "@/lib/site";
 import "./globals.css";
 
 /** Zilla Slab: titles, the school name, grades and figures (a textbook-cover slab). */
@@ -24,12 +24,13 @@ const atkinson = Atkinson_Hyperlegible_Next({
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: {
-    default: `${APP_NAME}: fees, results and parents for your school`,
-    template: `%s | ${APP_NAME}`,
-  },
-  description:
-    "School management for Nigerian nursery, primary and secondary schools: import students from Excel, collect fees, print report cards and keep parents informed.",
+  title: { default: DEFAULT_TITLE, template: `%s | ${APP_NAME}` },
+  description: DEFAULT_DESCRIPTION,
+  applicationName: APP_NAME,
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
+  openGraph: { ...baseOpenGraph, url: "/", title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION },
+  twitter: { ...baseTwitter, title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION },
 };
 
 export const viewport: Viewport = {

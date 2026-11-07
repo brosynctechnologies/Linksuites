@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { setAuth } from "@/lib/auth";
 import { COUNTRIES, PRODUCT } from "@/lib/config";
@@ -24,16 +24,28 @@ export function SignupForm() {
   const [error, setError] = useState<ApiError | null>(null);
   // Final fix pass B: the sign-up emails a 6-digit code; the account is usable once it is entered.
   const [pending, setPending] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const set = (k: keyof SignupRequest) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  /** Show the error summary and move focus to the first field it names. */
+  function fail(err: ApiError) {
+    setError(err);
+    requestAnimationFrame(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!form.fullName.trim() || !form.email.trim() || !form.businessName.trim()) {
-      setError(new ApiError(400, { detail: "Please fill in your name, email and business name." }));
+    const missing: Record<string, string[]> = {};
+    if (!form.fullName.trim()) missing.fullName = ["Add your full name."];
+    if (!form.email.trim()) missing.email = ["Add your email."];
+    if (!form.businessName.trim()) missing.businessName = ["Add your business name."];
+    if (Object.keys(missing).length) {
+      fail(new ApiError(400, { detail: "Please fill in your name, email and business name.", errors: missing }));
       return;
     }
     if (form.password.length < 8) {
-      setError(new ApiError(400, { detail: "Password must be at least 8 characters." }));
+      const detail = "Password must be at least 8 characters.";
+      fail(new ApiError(400, { detail, errors: { password: [detail] } }));
       return;
     }
     setBusy(true);
@@ -48,7 +60,7 @@ export function SignupForm() {
       setAuth(res);
       router.replace(nextPath());
     } catch (err) {
-      setError(toApiError(err));
+      fail(toApiError(err));
       setBusy(false);
     }
   }
@@ -71,7 +83,7 @@ export function SignupForm() {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4" noValidate>
+    <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
       <Input label="Your full name" autoComplete="name" required value={form.fullName} onChange={set("fullName")} error={error?.field("fullName")} />
       <Input label="Email" type="email" autoComplete="email" required value={form.email} onChange={set("email")} error={error?.field("email")} />
       <Input

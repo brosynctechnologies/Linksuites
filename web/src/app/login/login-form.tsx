@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { setAuth } from "@/lib/auth";
 import type { AuthResponse } from "@/lib/types";
@@ -22,6 +22,15 @@ export function LoginForm() {
   const [error, setError] = useState<ApiError | null>(null);
   // Final fix pass B: a sign-up whose emailed code was never entered is told to confirm first (403 email_unconfirmed).
   const [notice, setNotice] = useState("");
+
+  // Switching between password and code unmounts the button that had focus, so move focus to the new step's first control.
+  const box = useRef<HTMLDivElement>(null);
+  const shownMode = useRef(mode);
+  useEffect(() => {
+    if (shownMode.current === mode) return;
+    shownMode.current = mode;
+    box.current?.querySelector<HTMLElement>("input, button")?.focus();
+  }, [mode]);
 
   function done(res: AuthResponse) {
     setAuth(res);
@@ -68,8 +77,10 @@ export function LoginForm() {
     setMode(m);
   };
 
+  const step = (node: ReactNode) => <div ref={box}>{node}</div>;
+
   if (mode === "confirm") {
-    return (
+    return step(
       <ConfirmEmailStep
         email={email.trim()}
         password={password}
@@ -84,7 +95,7 @@ export function LoginForm() {
   }
 
   if (mode === "password") {
-    return (
+    return step(
       <div className="space-y-5">
         <form onSubmit={submitPassword} className="space-y-5">
           <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -117,7 +128,7 @@ export function LoginForm() {
   }
 
   if (mode === "otp-email") {
-    return (
+    return step(
       <form onSubmit={requestCode} className="space-y-5">
         <p className="text-sm text-ink-2">We&apos;ll email you a 6-digit code to log in without a password.</p>
         <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -132,7 +143,7 @@ export function LoginForm() {
     );
   }
 
-  return (
+  return step(
     <form onSubmit={verifyCode} className="space-y-5">
       <Notice tone="success">
         If an account exists for <strong>{email}</strong>, a code is on its way.

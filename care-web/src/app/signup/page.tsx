@@ -2,8 +2,19 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { AuthSwitchLink, ClinicSignupForm } from "@/components/auth-forms";
 import { AuthShell } from "@/components/auth-shell";
+import { baseOpenGraph, baseTwitter } from "@/lib/site";
 
-export const metadata: Metadata = { title: "Set up your clinic" };
+const TITLE = "Set up your clinic free";
+const DESCRIPTION =
+  "Start CareLink free for your clinic in Nigeria: register patients, run the queue and bill visits with up to 3 staff logins. No card needed.";
+
+export const metadata: Metadata = {
+  title: TITLE,
+  description: DESCRIPTION,
+  alternates: { canonical: "/signup" },
+  openGraph: { ...baseOpenGraph, url: "/signup", title: TITLE, description: DESCRIPTION },
+  twitter: { ...baseTwitter, title: TITLE, description: DESCRIPTION },
+};
 
 /** What the setup checklist asks for, in the order a clinic usually does it. */
 const STEPS = [

@@ -5,7 +5,7 @@ import { getStore } from "@/lib/storefront";
 import { CartView } from "@/components/store/cart-view";
 import { StoreShell, StoreSkeleton, StoreTopBar } from "@/components/store/store-shell";
 
-export const metadata: Metadata = { title: "Cart", robots: { index: false } };
+export const metadata: Metadata = { title: "Cart", robots: { index: false }, alternates: {} };
 
 export default function CartPage(props: PageProps<"/[slug]/cart">) {
   return (

@@ -198,7 +198,7 @@ function GeneratorForm({ intro }: { intro?: ReactNode }) {
                 type="color"
                 value={d.business.brandColor}
                 onChange={setBiz("brandColor")}
-                className="h-10 w-14 cursor-pointer rounded-control border border-rule bg-paper p-1"
+                className="h-10 w-14 cursor-pointer rounded-control border border-field bg-paper p-1"
               />
               <span className="text-sm text-muted tabular-nums">{d.business.brandColor}</span>
             </div>
@@ -206,7 +206,7 @@ function GeneratorForm({ intro }: { intro?: ReactNode }) {
         </div>
       </div>
 
-      <div className={cx("min-w-0 space-y-3 lg:sticky lg:top-20 lg:self-start", view !== "preview" && "hidden lg:block")}>
+      <div className={cx("min-w-0 space-y-3 lg:sticky lg:top-6 lg:self-start", view !== "preview" && "hidden lg:block")}>
         <div className="flex flex-wrap gap-2">
           <Button onClick={download} loading={busy} className="flex-1">
             <DownloadIcon className="h-4 w-4" /> Download PDF
@@ -222,9 +222,9 @@ function GeneratorForm({ intro }: { intro?: ReactNode }) {
             Start over
           </button>
         </p>
-        <div aria-label="Invoice preview" className="pt-1">
+        <section aria-label="Invoice preview" className="pt-1 font-sans">
           <InvoicePreview doc={doc} />
-        </div>
+        </section>
         <p className="text-center text-xs text-muted">
           Already have an account?{" "}
           <Link href="/login?import=1" className="font-semibold text-ink underline-offset-2 hover:underline">

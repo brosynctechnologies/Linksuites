@@ -1,16 +1,39 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+import { SuiteFooter } from "@/components/suite/suite-footer";
+import { SuiteHeader } from "@/components/suite/suite-header";
+import { lsButton } from "@/components/suite/ui";
+import { productByKey } from "@/lib/suite";
+
+const app = productByKey("orders");
+
+export const metadata: Metadata = {
+  title: "Page not found",
+  robots: { index: false, follow: true },
+  alternates: {},
+};
 
 export default function NotFound() {
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col justify-center px-6">
-      <p className="font-display text-4xl font-extrabold text-line-strong" aria-hidden="true">
-        404
-      </p>
-      <h1 className="mt-2 font-display text-2xl font-bold text-ink">Page not found</h1>
-      <p className="mt-2 text-sm text-muted">The page you&apos;re looking for doesn&apos;t exist. Check the link, or start from the home page.</p>
-      <Link href="/" className="mt-6 inline-flex min-h-12 w-fit items-center rounded-control bg-marigold px-6 font-semibold text-ink hover:bg-marigold-hover">
-        Go home
-      </Link>
-    </main>
+    <div className="ls-body flex min-h-dvh flex-col bg-ls-chalk font-ls-text text-ls-ink">
+      <SuiteHeader app={app} nav={[{ href: "/login", label: "Log in" }]} action={{ href: app.startPath, label: "Start free" }} />
+      <main id="main" tabIndex={-1} className="ls-container ls-section-y flex-1 outline-none">
+        <h1 className="ls-h1 max-w-[14ch] text-ls-ink">This page isn&apos;t here.</h1>
+        <p className="ls-lead mt-4 max-w-[32rem] text-ls-ink-2">
+          Check the link you were sent. If you were looking for a store, its name may have changed. Plans are now on the home page.
+        </p>
+        <Link href="/" className={lsButton("app", "lg", "mt-8")}>
+          Go to the OrderLink home page
+        </Link>
+      </main>
+      <SuiteFooter
+        app={app}
+        links={[
+          { href: "/#plans", label: "Plans" },
+          { href: "/#faq", label: "Questions" },
+          { href: "/login", label: "Log in" },
+        ]}
+      />
+    </div>
   );
 }

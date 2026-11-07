@@ -19,14 +19,16 @@ export function PublicDocShell({
     <div className="min-h-screen bg-desk">
       <header className="border-b border-rule bg-paper" style={{ borderTop: `4px solid ${accent}` }}>
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3.5">
-          {business?.logoUrl && <img src={business.logoUrl} alt="" className="h-10 w-10 rounded-[6px] object-contain" />}
+          {business?.logoUrl && <img src={business.logoUrl} alt="" width={40} height={40} className="h-10 w-10 rounded-[6px] object-contain" />}
           <div className="min-w-0">
             <p className="truncate font-display text-lg font-semibold text-graphite">{business?.name ?? ""}</p>
             {business?.email && <p className="truncate text-xs text-muted">{business.email}</p>}
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-3xl space-y-5 px-3 py-5 sm:px-4 sm:py-8">{children}</main>
+      <main id="main" tabIndex={-1} className="mx-auto max-w-3xl space-y-5 px-3 py-5 outline-none sm:px-4 sm:py-8">
+        {children}
+      </main>
       {showBranding && (
         <footer className="px-4 pb-10 text-center text-xs text-muted">
           Invoice made with{" "}

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { clearAuth, getAuth, useHydrated } from "@/lib/auth";
 import { AuthShell } from "@/components/auth-shell";
@@ -46,11 +46,18 @@ function ResetPassword() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [done, setDone] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     // Keep the token out of the address bar, history and referrers.
     if (window.location.hash) window.history.replaceState(null, "", window.location.pathname + window.location.search);
   }, []);
+
+  // After a failed submit the error summary is announced; focus moves to the field that needs fixing.
+  useEffect(() => {
+    if (attempt > 0) formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [attempt]);
 
   if (!link) {
     return (
@@ -85,6 +92,7 @@ function ResetPassword() {
     setError(null);
     if (password !== confirm) {
       setMismatch(true);
+      setAttempt((n) => n + 1);
       return;
     }
     setMismatch(false);
@@ -106,7 +114,7 @@ function ResetPassword() {
 
   return (
     <AuthShell title="Choose a new password" subtitle={`For ${link.email}`}>
-      <form onSubmit={submit} className="space-y-5">
+      <form ref={formRef} onSubmit={submit} className="space-y-5">
         <Input
           label="New password"
           type="password"
@@ -126,7 +134,7 @@ function ResetPassword() {
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
         />
-        <ErrorBox error={error} />
+        <ErrorBox error={error ?? (mismatch ? "The passwords don't match." : null)} />
         {badLink && (
           <p className="text-sm text-ink-2">
             <Link href="/forgot-password" className={linkClass}>

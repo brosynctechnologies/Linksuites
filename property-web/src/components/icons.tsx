@@ -303,7 +303,7 @@ export const BellIcon = (p: P) => (
   </Svg>
 );
 
-// ---- LearnLink additions ----
+// ---- Media, files and text ----
 export const PlayIcon = (p: P) => (
   <Svg {...p}>
     <path d="M7 4.5v15l12.5-7.5z" fill="currentColor" stroke="none" />

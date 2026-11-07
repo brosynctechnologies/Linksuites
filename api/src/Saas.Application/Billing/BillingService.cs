@@ -158,9 +158,9 @@ public sealed class BillingService(
     public static string BillingPath(string product) => product switch
     {
         Products.WhatsAppOrders => "/dashboard/billing",
-        Products.Invoices or Products.Bookings => "/app/billing",
+        Products.Invoices or Products.Bookings or Products.School => "/app/billing",
         Products.Courses or Products.Property => "/studio/billing",
-        _ => "/app", // SchoolLink has no billing page yet: back to the dashboard
+        _ => "/app", // CareLink: back to the dashboard
     };
 
     /// <summary>

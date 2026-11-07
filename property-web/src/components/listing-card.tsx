@@ -41,7 +41,7 @@ function Cover({ l, className, row }: { l: ListingCardDto; className?: string; r
   return (
     <div className={cx("relative overflow-hidden bg-plaster-2", row ? "h-full min-h-32" : "aspect-[4/3]", className)}>
       {l.coverUrl ? (
-        <img src={l.coverUrl} alt={l.title} loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-cover" />
+        <img src={l.coverUrl} alt="" loading="lazy" decoding="async" className="absolute inset-0 h-full w-full object-cover" />
       ) : (
         <span className="absolute inset-0 flex items-center justify-center text-faint">
           <ImageIcon className="h-8 w-8" />

@@ -10,7 +10,9 @@ export function StoreShell({ store, children }: { store: PublicStoreDto; childre
   return (
     <div className="flex min-h-screen flex-col bg-paper" style={{ "--accent": accent, "--accent-ink": readableOn(accent) } as CSSProperties}>
       <div className="mx-auto flex w-full max-w-[560px] flex-1 flex-col bg-surface pb-[calc(7rem+env(safe-area-inset-bottom))] sm:border-x sm:border-line">
-        {children}
+        <main id="main" tabIndex={-1} className="flex flex-col outline-none">
+          {children}
+        </main>
         {store.showBranding && (
           <footer className="mt-auto px-4 pt-10 text-center text-xs text-subtle">
             Made with{" "}
@@ -24,7 +26,9 @@ export function StoreShell({ store, children }: { store: PublicStoreDto; childre
   );
 }
 
+/** The bar on inner store pages. A page `title` (cart, checkout) is that page's h1; without one the store name is just a label. */
 export function StoreTopBar({ store, back, title }: { store: PublicStoreDto; back?: string; title?: string }) {
+  const Title = title ? "h1" : "span";
   return (
     <header className="sticky top-0 z-10 flex min-h-14 items-center gap-1 border-b border-line bg-surface/95 px-2 backdrop-blur">
       <Link
@@ -36,7 +40,7 @@ export function StoreTopBar({ store, back, title }: { store: PublicStoreDto; bac
           <path d="m15 18-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </Link>
-      <span className="min-w-0 truncate font-display text-lg font-bold text-ink">{title ?? store.name}</span>
+      <Title className="min-w-0 truncate font-display text-lg font-bold text-ink">{title ?? store.name}</Title>
     </header>
   );
 }

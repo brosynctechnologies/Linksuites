@@ -7,7 +7,8 @@ import { logout } from "@/lib/api";
 import { useAuth, useHydrated } from "@/lib/auth";
 import { ADMIN_URL } from "@/lib/config";
 import { initials } from "@/lib/color";
-import { buttonClass, cx } from "./styles";
+import { cx } from "./styles";
+import { lsButton } from "./suite/ui";
 
 /** Header account area: Log in / Sign up when signed out; a menu with My learning, Certificates, Account, Studio and the admin console when signed in. */
 export function AccountLinks({ band }: { band?: boolean }) {
@@ -33,15 +34,21 @@ export function AccountLinks({ band }: { band?: boolean }) {
     };
   }, [open]);
 
-  if (!hydrated) return <span className="block h-10 w-28" aria-hidden="true" />;
+  if (!hydrated) return <span className="block h-11 w-36" aria-hidden="true" />;
 
   if (!auth) {
     return (
-      <div className="flex items-center gap-1.5">
-        <Link href="/login" className={cx("rounded-control px-3 py-2 text-sm font-semibold", band ? "text-current hover:bg-black/10" : "text-ink hover:bg-ink/[0.06]")}>
+      <div className="flex items-center gap-1">
+        <Link
+          href="/login"
+          className={band ? "inline-flex min-h-11 items-center rounded-control px-3 text-sm font-semibold text-current hover:bg-black/10" : lsButton("quiet", "md", "px-2.5 sm:px-3.5")}
+        >
           Log in
         </Link>
-        <Link href="/signup" className={band ? "hidden min-h-10 items-center rounded-control border-2 border-current px-4 text-sm font-semibold min-[400px]:inline-flex" : buttonClass("primary", "hidden min-[400px]:inline-flex")}>
+        <Link
+          href="/signup"
+          className={band ? "hidden min-h-11 items-center rounded-control border-2 border-current px-4 text-sm font-semibold min-[400px]:inline-flex" : lsButton("app", "md", "ml-1")}
+        >
           Sign up
         </Link>
       </div>
@@ -60,7 +67,11 @@ export function AccountLinks({ band }: { band?: boolean }) {
     <div className="flex items-center gap-1.5">
       <Link
         href="/learn"
-        className={cx("hidden rounded-control px-3 py-2 text-sm font-semibold sm:block", band ? "text-current hover:bg-black/10" : "text-ink hover:bg-ink/[0.06]")}
+        className={
+          band
+            ? "hidden min-h-11 items-center rounded-control px-3 text-sm font-semibold text-current hover:bg-black/10 sm:inline-flex"
+            : lsButton("quiet", "md", "px-2.5 max-sm:hidden sm:px-3.5")
+        }
       >
         My learning
       </Link>
@@ -70,7 +81,7 @@ export function AccountLinks({ band }: { band?: boolean }) {
           aria-haspopup="menu"
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className={cx("flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold", band ? "border-2 border-current" : "bg-lagoon text-on-lagoon")}
+          className={cx("flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold", band ? "border-2 border-current" : "bg-lagoon text-on-lagoon")}
         >
           <span className="sr-only">Account menu for {auth.user.fullName}</span>
           <span aria-hidden="true">{initials(auth.user.fullName)}</span>

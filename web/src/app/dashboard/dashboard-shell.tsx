@@ -94,7 +94,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
       </a>
 
       {/* Desktop rail */}
-      <aside className="sticky top-[var(--support-bar,0px)] hidden h-[calc(100vh-var(--support-bar,0px))] w-64 shrink-0 flex-col bg-ink text-white lg:flex">
+      <aside className="sticky top-[var(--support-bar,0px)] hidden h-[calc(100vh-var(--support-bar,0px))] w-64 shrink-0 flex-col ol-on-ink bg-ink text-white lg:flex">
         <div className="px-5 pt-6 pb-5">
           <Link href="/dashboard" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-white/75 hover:text-white">
             <span className="h-2.5 w-2.5 rounded-full bg-marigold" aria-hidden="true" />

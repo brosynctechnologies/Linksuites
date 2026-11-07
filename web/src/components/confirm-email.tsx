@@ -108,6 +108,7 @@ export function ConfirmEmailStep({
         We emailed a 6-digit code to <strong>{email}</strong>. Enter it to confirm your email. It works for 10 minutes.
         {resent ? " A new code is on its way." : ""}
       </Notice>
+      {/* This step only appears after a submit or a tap, which unmounted the control that had focus. */}
       <Input
         label="6-digit code"
         inputMode="numeric"
@@ -115,6 +116,7 @@ export function ConfirmEmailStep({
         pattern="[0-9]*"
         maxLength={6}
         required
+        autoFocus
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
         className="tracking-[0.4em]"

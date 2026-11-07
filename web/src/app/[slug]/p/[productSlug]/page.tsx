@@ -1,20 +1,51 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { SITE_URL, baseOpenGraph, baseTwitter } from "@/lib/config";
 import { getProduct, getStore } from "@/lib/storefront";
+import type { PublicProductDto, PublicStoreDto } from "@/lib/types";
 import { ProductPurchase } from "@/components/store/product-purchase";
 import { ClosedBanner, StoreShell, StoreSkeleton, StoreTopBar } from "@/components/store/store-shell";
+import { JsonLd } from "@/components/suite/sections";
 
 type Props = PageProps<"/[slug]/p/[productSlug]">;
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug, productSlug } = await params;
   const [store, product] = await Promise.all([getStore(slug).catch(() => null), getProduct(slug, productSlug).catch(() => null)]);
-  if (!store || !product) return { title: "Product not found" };
+  if (!store || !product) return { title: "Product not found", robots: { index: false }, alternates: {} };
+  const title = `${product.name} from ${store.name}`;
+  const description = product.description?.slice(0, 160) ?? `Order ${product.name} from ${store.name} on WhatsApp.`;
+  const url = `/${store.slug}/p/${product.slug}`;
+  const image = product.images[0]?.url;
   return {
-    title: { absolute: `${product.name} · ${store.name}` },
-    description: product.description?.slice(0, 160) ?? `Order ${product.name} from ${store.name}.`,
-    openGraph: { title: product.name, images: product.images[0]?.url },
+    title: { absolute: title },
+    description,
+    alternates: { canonical: url },
+    openGraph: { ...baseOpenGraph, url, title, description, images: image },
+    twitter: { ...baseTwitter, title, description, images: image },
+  };
+}
+
+/** schema.org Product with the store's own price for it. This is the business's price, shown on its own store. */
+function productJsonLd(store: PublicStoreDto, product: PublicProductDto) {
+  const url = `${SITE_URL}/${store.slug}/p/${product.slug}`;
+  return {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: product.name,
+    url,
+    ...(product.description ? { description: product.description } : {}),
+    ...(product.images.length > 0 ? { image: product.images.map((i) => i.url) } : {}),
+    brand: { "@type": "Brand", name: store.name },
+    offers: {
+      "@type": "Offer",
+      url,
+      price: (product.priceMinor / 100).toFixed(2),
+      priceCurrency: store.currency,
+      availability: product.inStock ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+      seller: { "@type": "OnlineStore", name: store.name, url: `${SITE_URL}/${store.slug}` },
+    },
   };
 }
 
@@ -33,11 +64,12 @@ async function Product({ params }: Props) {
 
   return (
     <StoreShell store={store}>
+      <JsonLd data={productJsonLd(store, product)} />
       <StoreTopBar store={store} />
       <ClosedBanner store={store} />
       {product.images.length > 0 ? (
         <div className="relative bg-paper">
-          <div className="no-scrollbar flex snap-x snap-mandatory overflow-x-auto" aria-label="Product photos" tabIndex={0}>
+          <div className="no-scrollbar flex snap-x snap-mandatory overflow-x-auto" role="region" aria-label="Product photos" tabIndex={0}>
             {product.images.map((img, i) => (
               <img
                 key={img.url}

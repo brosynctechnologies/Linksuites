@@ -10,7 +10,7 @@ const variants: Record<ButtonVariant, string> = {
   secondary: "border border-rule bg-surface text-ink hover:border-slate-300 hover:bg-slate-50 disabled:text-faint",
   danger: "border border-brick/30 bg-surface text-brick hover:bg-brick-wash disabled:text-brick/50",
   ghost: "text-slate-700 hover:bg-ink/[0.06] disabled:text-faint",
-  /** Only "Chat on WhatsApp", always with the glyph. */
+  /** Only "Chat on WhatsApp", always with the glyph. #147a3b: white on it is 5.4:1. */
   whatsapp: "bg-whatsapp text-white hover:bg-whatsapp-dark disabled:opacity-45",
 };
 
@@ -23,7 +23,7 @@ export const buttonClass = (variant: ButtonVariant = "primary", extra?: string) 
   );
 
 export const inputClass =
-  "block min-h-11 w-full rounded-control border border-rule bg-surface px-3 py-2.5 text-base text-ink placeholder:text-faint hover:border-slate-300 focus:border-blazer disabled:bg-slate-50 disabled:text-muted aria-[invalid=true]:border-brick sm:text-sm";
+  "block min-h-11 w-full rounded-control border border-field bg-surface px-3 py-2.5 text-base text-ink placeholder:text-muted hover:border-slate-500 focus:border-blazer disabled:bg-slate-50 disabled:text-muted aria-[invalid=true]:border-brick sm:text-sm";
 
 /** Label text above fields (always visible). */
 export const labelClass = "block text-sm font-medium text-slate-700";

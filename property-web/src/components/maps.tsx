@@ -1,6 +1,7 @@
 "use client";
 
 import type { GeoJSONSource, LngLatBoundsLike, Map as MlMap, Marker } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_CENTER, MAP_STYLE } from "@/lib/config";
@@ -12,7 +13,13 @@ import { SearchIcon } from "./icons";
 
 // MapLibre GL with the OpenFreeMap "liberty" style (no API key). Loaded on the client only.
 
-const loadLib = () => import("maplibre-gl");
+// MapLibre 6 derives its worker's address from import.meta.url and gives up unless that is an http(s) URL, which it isn't in
+// a bundled chunk; without a worker no tiles load. Point it at the worker file the bundler emits.
+const loadLib = () =>
+  import("maplibre-gl").then((ml) => {
+    if (!ml.getWorkerUrl()) ml.setWorkerUrl(new URL("maplibre-gl/dist/maplibre-gl-worker.mjs", import.meta.url).href);
+    return ml;
+  });
 
 function reducedMotion() {
   return typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;

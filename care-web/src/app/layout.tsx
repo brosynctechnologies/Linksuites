@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Red_Hat_Display, Red_Hat_Text } from "next/font/google";
 import { SupportBanner } from "@/components/support-banner";
 import { APP_NAME, SITE_URL } from "@/lib/config";
+import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, baseOpenGraph, baseTwitter } from "@/lib/site";
 import "./globals.css";
 
 /** Red Hat Display: titles, the clinic name, the wordmark and big figures (hospital wayfinding signs). */
@@ -23,12 +24,13 @@ const text = Red_Hat_Text({
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: {
-    default: `${APP_NAME}: patients, wards and billing for your clinic`,
-    template: `%s | ${APP_NAME}`,
-  },
-  description:
-    "Clinic software for private clinics and small hospitals in Nigeria: register patients, run the front desk and the wards, bill and take payments.",
+  title: { default: DEFAULT_TITLE, template: `%s | ${APP_NAME}` },
+  description: DEFAULT_DESCRIPTION,
+  applicationName: APP_NAME,
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
+  openGraph: { ...baseOpenGraph, url: "/", title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION },
+  twitter: { ...baseTwitter, title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION },
 };
 
 export const viewport: Viewport = {

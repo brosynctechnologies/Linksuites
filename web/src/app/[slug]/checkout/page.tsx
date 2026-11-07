@@ -5,7 +5,7 @@ import { getStore } from "@/lib/storefront";
 import { CheckoutForm } from "@/components/store/checkout-form";
 import { StoreShell, StoreSkeleton, StoreTopBar } from "@/components/store/store-shell";
 
-export const metadata: Metadata = { title: "Checkout", robots: { index: false } };
+export const metadata: Metadata = { title: "Checkout", robots: { index: false }, alternates: {} };
 
 export default function CheckoutPage(props: PageProps<"/[slug]/checkout">) {
   return (

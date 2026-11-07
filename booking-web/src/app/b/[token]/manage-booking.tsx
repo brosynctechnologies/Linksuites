@@ -58,7 +58,7 @@ export function ManageBooking() {
   if (error && !data) {
     return (
       <PublicFrame brand={null}>
-        <div className="px-4 py-16 text-center">
+        <main id="main" tabIndex={-1} className="px-4 py-16 text-center outline-none">
           <h1 className="font-expanded text-2xl font-extrabold">{error.status === 404 ? "Booking not found" : "This page didn't load"}</h1>
           <p className="mx-auto mt-2 max-w-sm text-sm text-muted">
             {error.status === 404 ? "Check the link in your confirmation message. It may have been mistyped." : error.message}
@@ -68,7 +68,7 @@ export function ManageBooking() {
               Try again
             </Button>
           )}
-        </div>
+        </main>
       </PublicFrame>
     );
   }
@@ -100,14 +100,14 @@ function BookingView({
   const [panel, setPanel] = useState<"none" | "reschedule" | "cancel">("none");
   const [notice, setNotice] = useState<string | null>(null);
 
-  let heading: string | null = null;
+  let heading = `Your booking at ${b.business.name}`;
   if (justBooked && b.status === "Confirmed") heading = "You're booked";
   else if (b.status === "Pending" && !holdOver) heading = "Pay the deposit to keep this time";
 
   return (
     <PublicFrame brand={b.business.brandColor}>
-      <div className="space-y-5 px-4 pt-6 pb-16 sm:px-0 sm:pt-10">
-        {heading && <h1 className="text-xl font-bold">{heading}</h1>}
+      <main id="main" tabIndex={-1} className="space-y-5 px-4 pt-6 pb-16 outline-none sm:px-0 sm:pt-10">
+        <h1 className="text-xl font-bold">{heading}</h1>
         {verifyError && (
           <Notice tone="warning">
             We couldn&apos;t confirm your payment yet ({verifyError.message}). If you paid, refresh in a minute; the business will see it either way.
@@ -267,7 +267,7 @@ function BookingView({
             Book another appointment
           </Link>
         </p>
-      </div>
+      </main>
 
       <CancelModal
         open={panel === "cancel"}

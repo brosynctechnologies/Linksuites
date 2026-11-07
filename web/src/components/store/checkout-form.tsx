@@ -11,7 +11,7 @@ import { StoreIcon, TruckIcon, WhatsAppIcon } from "../icons";
 import { clampCartToStock, unsellableLines, useLastOrder, useQuote } from "./use-quote";
 
 const inputCls =
-  "block min-h-12 w-full rounded-control border border-line-strong bg-surface px-3 py-3 text-base text-ink placeholder:text-subtle focus:border-ink";
+  "block min-h-12 w-full rounded-control border border-field bg-surface px-3 py-3 text-base text-ink placeholder:text-subtle focus:border-ink";
 
 function Field({ label, children, hint }: { label: string; hint?: string; children: (id: string, describedBy?: string) => ReactNode }) {
   const id = useId();
@@ -177,7 +177,7 @@ export function CheckoutForm({ store }: { store: PublicStoreDto }) {
           {(["Delivery", "Pickup"] as Fulfilment[]).map((f) => (
             <label
               key={f}
-              className={`flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-control px-3 text-sm font-semibold transition-colors has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-marigold ${
+              className={`flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-control px-3 text-sm font-semibold transition-colors has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ink ${
                 fulfilment === f ? "bg-accent text-accent-ink" : "bg-surface text-ink ring-1 ring-line-strong ring-inset hover:ring-ink"
               }`}
             >

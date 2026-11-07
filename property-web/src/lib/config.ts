@@ -60,13 +60,3 @@ export const REPORT_REASONS = [
 ] as const;
 
 export const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
-
-/**
- * Agency plans exactly as the contract's plan table lists them (the public pricing page shows these before
- * anyone has an account; the studio billing page reads the live plans from /api/billing).
- */
-export const AGENCY_PLANS = [
-  { code: "free", name: "Free", priceMinor: 0, listings: "3 live listings", expiry: "Listings stay up 30 days", stats: false, seats: "1 team seat" },
-  { code: "pro", name: "Pro", priceMinor: 1_000_000, listings: "30 live listings", expiry: "Listings stay up 60 days", stats: true, seats: "3 team seats" },
-  { code: "agency", name: "Agency", priceMinor: 3_500_000, listings: "Unlimited live listings", expiry: "Listings stay up 60 days", stats: true, seats: "10 team seats" },
-] as const;

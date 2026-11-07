@@ -9,7 +9,7 @@ import { ADMIN_URL } from "@/lib/config";
 import { can } from "@/lib/permissions";
 import { BusinessSwitcher } from "@/components/business-switcher";
 import { HeartIcon, LogoutIcon, MenuIcon, PlusIcon, ShieldIcon } from "@/components/icons";
-import { Wordmark } from "@/components/site-chrome";
+import { Wordmark } from "@/components/wordmark";
 import { navFor, primaryNav, secondaryNav } from "@/components/studio-nav";
 import { cx } from "@/components/ui";
 

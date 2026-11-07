@@ -9,7 +9,7 @@ import { PRODUCT } from "@/lib/config";
 import type { AgencyKind, AuthResponse } from "@/lib/types";
 import { nextPath } from "./auth-shell";
 import { ConfirmEmailStep, isSignupPending, isUnconfirmed, type SignupPending } from "./confirm-email";
-import { Button, ErrorBox, Input, Notice } from "./ui";
+import { Button, ErrorBox, Input, Notice, useFocusFirstInvalid } from "./ui";
 import { cx, linkClass } from "./styles";
 
 /**
@@ -64,10 +64,18 @@ export function AuthSwitchLink({ href, children }: { href: string; children: Rea
 
 // ---------- Seekers ----------
 
+/** Client-side checks as a 400 with one message per field, so the summary lists them and each field is marked. */
+function fieldErrors(errors: Record<string, string | false>): ApiError | null {
+  const found = Object.entries(errors).filter((e): e is [string, string] => !!e[1]);
+  return found.length ? new ApiError(400, { errors: Object.fromEntries(found.map(([k, m]) => [k, [m]])) }) : null;
+}
+
 export function SeekerLoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [returned, setReturned] = useState(false);
   const { busy, error, run, finish, unconfirmed, setUnconfirmed } = useAuthSubmit("/me");
+  const formRef = useFocusFirstInvalid(error);
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -82,15 +90,27 @@ export function SeekerLoginForm() {
         confirmPath="/api/auth/seeker/signup/confirm"
         notice={unconfirmed}
         onConfirmed={finish}
-        onBack={() => setUnconfirmed(null)}
+        onBack={() => {
+          setUnconfirmed(null);
+          setReturned(true);
+        }}
         backLabel="Back to log in"
       />
     );
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4">
-      <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} error={error?.field("email")} />
+    <form ref={formRef} onSubmit={submit} className="space-y-4">
+      <Input
+        label="Email"
+        type="email"
+        autoComplete="email"
+        required
+        autoFocus={returned}
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        error={error?.field("email")}
+      />
       <Input
         label="Password"
         type="password"
@@ -115,17 +135,20 @@ export function SeekerLoginForm() {
 
 export function SeekerSignupForm() {
   const [form, setForm] = useState({ fullName: "", email: "", password: "" });
+  const [returned, setReturned] = useState(false);
   const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/me");
+  const formRef = useFocusFirstInvalid(error);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!form.fullName.trim() || !form.email.trim()) {
-      setError(new ApiError(400, { detail: "Enter your name and email." }));
-      return;
-    }
-    if (form.password.length < 8) {
-      setError(new ApiError(400, { errors: { password: ["Use at least 8 characters."] } }));
+    const invalid = fieldErrors({
+      fullName: !form.fullName.trim() && "Enter your full name.",
+      email: !form.email.trim() && "Enter your email.",
+      password: form.password.length < 8 && "Use at least 8 characters for your password.",
+    });
+    if (invalid) {
+      setError(invalid);
       return;
     }
     run(() =>
@@ -144,15 +167,26 @@ export function SeekerSignupForm() {
         password={form.password}
         confirmPath="/api/auth/seeker/signup/confirm"
         onConfirmed={finish}
-        onBack={() => setPending(null)}
+        onBack={() => {
+          setPending(null);
+          setReturned(true);
+        }}
         backLabel="Change my details"
       />
     );
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4" noValidate>
-      <Input label="Full name" autoComplete="name" required value={form.fullName} onChange={set("fullName")} error={error?.field("fullName")} />
+    <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
+      <Input
+        label="Full name"
+        autoComplete="name"
+        required
+        autoFocus={returned}
+        value={form.fullName}
+        onChange={set("fullName")}
+        error={error?.field("fullName")}
+      />
       <Input label="Email" type="email" autoComplete="email" required value={form.email} onChange={set("email")} error={error?.field("email")} />
       <Input
         label="Password"
@@ -165,7 +199,7 @@ export function SeekerSignupForm() {
         hint="At least 8 characters."
         error={error?.field("password")}
       />
-      <ErrorBox error={error && !error.field("fullName") && !error.field("email") && !error.field("password") ? error : null} />
+      <ErrorBox error={error} />
       <Button type="submit" loading={busy} className="w-full">
         Create my account
       </Button>
@@ -182,10 +216,13 @@ export function AgencyLoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
+  // After the first switch between password and code, each step's first field takes focus as it appears.
+  const [switched, setSwitched] = useState(false);
   const { busy, error, setError, run, finish, unconfirmed, setUnconfirmed } = useAuthSubmit("/studio");
 
   const switchMode = (m: LoginMode) => {
     setError(null);
+    setSwitched(true);
     setMode(m);
   };
 
@@ -198,7 +235,10 @@ export function AgencyLoginForm() {
         product={PRODUCT}
         notice={unconfirmed}
         onConfirmed={finish}
-        onBack={() => setUnconfirmed(null)}
+        onBack={() => {
+          setUnconfirmed(null);
+          setSwitched(true);
+        }}
         backLabel="Back to log in"
       />
     );
@@ -214,7 +254,7 @@ export function AgencyLoginForm() {
           }}
           className="space-y-4"
         >
-          <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Input label="Email" type="email" autoComplete="email" required autoFocus={switched} value={email} onChange={(e) => setEmail(e.target.value)} />
           <Input label="Password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
           <p className="-mt-2 text-right text-sm">
             <Link href="/forgot-password" className={linkClass}>
@@ -243,13 +283,14 @@ export function AgencyLoginForm() {
           e.preventDefault();
           run(async () => {
             await api("/api/auth/otp/request", { method: "POST", body: { email: email.trim() }, auth: false });
+            setSwitched(true);
             setMode("otp-code");
           });
         }}
         className="space-y-4"
       >
         <p className="text-sm text-slate-600">We&apos;ll email you a 6-digit code to log in without a password.</p>
-        <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input label="Email" type="email" autoComplete="email" required autoFocus={switched} value={email} onChange={(e) => setEmail(e.target.value)} />
         <ErrorBox error={error} />
         <Button type="submit" loading={busy} className="w-full" disabled={!email}>
           Send code
@@ -279,6 +320,7 @@ export function AgencyLoginForm() {
         pattern="[0-9]*"
         maxLength={6}
         required
+        autoFocus={switched}
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
         className="text-center text-lg tracking-[0.4em] tabular-nums"
@@ -313,18 +355,22 @@ const KINDS: { value: AgencyKind; label: string; hint: string; nameLabel: string
 export function AgencySignupForm() {
   const [kind, setKind] = useState<AgencyKind>("Agency");
   const [form, setForm] = useState({ fullName: "", email: "", password: "", businessName: "" });
+  const [returned, setReturned] = useState(false);
   const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/studio");
+  const formRef = useFocusFirstInvalid(error);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const current = KINDS.find((k) => k.value === kind)!;
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!form.fullName.trim() || !form.email.trim() || !form.businessName.trim()) {
-      setError(new ApiError(400, { detail: `Enter your name, email and ${current.nameLabel.toLowerCase()}.` }));
-      return;
-    }
-    if (form.password.length < 8) {
-      setError(new ApiError(400, { errors: { password: ["Use at least 8 characters."] } }));
+    const invalid = fieldErrors({
+      businessName: !form.businessName.trim() && `Enter the ${current.nameLabel.toLowerCase()}.`,
+      fullName: !form.fullName.trim() && "Enter your full name.",
+      email: !form.email.trim() && "Enter your email.",
+      password: form.password.length < 8 && "Use at least 8 characters for your password.",
+    });
+    if (invalid) {
+      setError(invalid);
       return;
     }
     run(() =>
@@ -352,14 +398,17 @@ export function AgencySignupForm() {
         confirmPath="/api/auth/signup/confirm"
         product={PRODUCT}
         onConfirmed={finish}
-        onBack={() => setPending(null)}
+        onBack={() => {
+          setPending(null);
+          setReturned(true);
+        }}
         backLabel="Change my details"
       />
     );
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4" noValidate>
+    <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
       <fieldset>
         <legend className="text-sm font-medium text-slate-700">I am</legend>
         <div className="mt-1.5 grid gap-2">
@@ -371,7 +420,15 @@ export function AgencySignupForm() {
                 kind === k.value ? "border-adire bg-adire-wash" : "border-line hover:bg-slate-50",
               )}
             >
-              <input type="radio" name="kind" value={k.value} checked={kind === k.value} onChange={() => setKind(k.value)} className="mt-1 accent-[#33309a]" />
+              <input
+                type="radio"
+                name="kind"
+                value={k.value}
+                checked={kind === k.value}
+                onChange={() => setKind(k.value)}
+                autoFocus={returned && kind === k.value}
+                className="mt-1 accent-[#33309a]"
+              />
               <span>
                 <span className="block text-sm font-semibold text-asphalt">{k.label}</span>
                 <span className="block text-xs text-slate-600">{k.hint}</span>
@@ -402,7 +459,7 @@ export function AgencySignupForm() {
         hint="At least 8 characters. Already searching on PropertyLink? Use the same email and password."
         error={error?.field("password")}
       />
-      <ErrorBox error={error && !error.field("businessName") && !error.field("fullName") && !error.field("email") && !error.field("password") ? error : null} />
+      <ErrorBox error={error} />
       <Button type="submit" loading={busy} className="w-full">
         Create my studio
       </Button>

@@ -85,7 +85,7 @@ function Shell({ children }: { children: ReactNode }) {
             <NewBookingButton className="flex min-h-10 w-full items-center justify-center gap-2 rounded-control bg-rose px-3 py-2 text-sm font-semibold text-white hover:bg-rose-dark" />
           </div>
         )}
-        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pb-4" aria-label="App">
+        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 pt-1.5 pb-4" aria-label="App">
           {sideNav.map((item) => {
             const active = isActive(pathname, item.href, item.exact === true);
             return (
@@ -146,7 +146,8 @@ function Shell({ children }: { children: ReactNode }) {
               href={item.href}
               aria-current={active ? "page" : undefined}
               className={cx(
-                "relative flex h-16 flex-col items-center justify-center gap-1 text-xs font-medium",
+                // The cells fill the bar edge to edge, so the ring is drawn inside them, on aubergine.
+                "relative flex h-16 flex-col items-center justify-center gap-1 text-xs font-medium focus-visible:outline-offset-[-4px]!",
                 active ? "text-white" : "text-on-aubergine",
               )}
             >

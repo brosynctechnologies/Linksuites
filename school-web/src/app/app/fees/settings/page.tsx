@@ -162,7 +162,7 @@ function PaystackSettings() {
         <p className="max-w-prose text-sm text-slate-700">
           Parents pay fees online straight into the school&apos;s own Paystack account. SchoolLink never holds the money. Parents see Pay now
           once a key is saved and the school&apos;s plan includes online fees.{" "}
-          <Link href="/pricing" className={linkClass}>
+          <Link href="/app/billing" className={linkClass}>
             See plans
           </Link>
         </p>

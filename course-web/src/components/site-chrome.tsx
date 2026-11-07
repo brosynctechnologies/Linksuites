@@ -1,11 +1,17 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { APP_NAME } from "@/lib/config";
+import { productByKey, hubUrl } from "@/lib/suite";
 import { AccountLinks } from "./account-links";
 import { SearchIcon } from "./icons";
 import { cx, inputClass } from "./styles";
+import { SuiteFooter } from "./suite/suite-footer";
+import { SuiteMark } from "./suite/suite-mark";
+import { lsButton } from "./suite/ui";
 
-/** The LearnLink wordmark: Literata, the reading face. */
+export const learnLink = productByKey("courses");
+
+/** The LearnLink wordmark: Literata, the reading face. Used inside the product (studio, sign-in, academy pages). */
 export function Wordmark({ className, dark }: { className?: string; dark?: boolean }) {
   return (
     <span className={cx("font-serif text-[1.375rem] leading-none font-semibold tracking-[-0.015em]", dark ? "text-white" : "text-ink", className)}>
@@ -21,34 +27,48 @@ export function SearchForm({ defaultValue, className, id = "site-search", big }:
       <label htmlFor={id} className="sr-only">
         Search courses
       </label>
-      <SearchIcon className={cx("pointer-events-none absolute top-1/2 -translate-y-1/2 text-faint", big ? "left-4 h-5 w-5" : "left-3 h-4 w-4")} />
+      <SearchIcon className={cx("pointer-events-none absolute top-1/2 -translate-y-1/2 text-muted", big ? "left-4 h-5 w-5" : "left-3 h-4 w-4")} />
       <input
         id={id}
         name="q"
         type="search"
         defaultValue={defaultValue}
         placeholder="Search courses, e.g. JAMB physics, Excel, UI design"
-        className={cx(inputClass, big ? "h-13 rounded-[12px] pl-11 text-base sm:text-base" : "pl-9")}
+        className={cx(inputClass, big ? "h-13 rounded-[12px] pl-11 text-base sm:text-base" : "min-h-11 pl-9")}
         enterKeyHint="search"
       />
     </form>
   );
 }
 
-/** Marketplace header: wordmark, search, Teach, account. */
+/**
+ * The marketplace header, on the LinkSuite frame: the suite mark (back to the hub), LearnLink, course search, Browse,
+ * Teach and the learner's account. It matches SuiteHeader, which has no room for search or a signed-in menu.
+ */
 export function SiteHeader({ query, hideSearch }: { query?: string; hideSearch?: boolean }) {
   return (
-    <header className="border-b border-line bg-surface">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3 sm:px-6">
-        <Link href="/" className="shrink-0 rounded-control py-1">
-          <Wordmark />
-        </Link>
-        {!hideSearch && <SearchForm defaultValue={query} className="order-last w-full md:order-none md:max-w-md md:flex-1" />}
-        <nav className="ml-auto flex items-center gap-1" aria-label="Site">
-          <Link href="/courses" className="hidden rounded-control px-3 py-2 text-sm font-semibold text-ink hover:bg-ink/[0.06] lg:block">
+    <header className="border-b border-ls-line bg-ls-chalk">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded-ls-control focus:bg-ls-ink focus:px-4 focus:py-3 focus:text-white"
+      >
+        Skip to content
+      </a>
+      <div className="ls-container flex min-h-16 flex-wrap items-center gap-x-2 gap-y-2 py-2.5">
+        <div className="flex min-w-0 items-center gap-1">
+          <a href={hubUrl} aria-label="Part of LinkSuite: all apps" className="flex min-h-11 min-w-11 items-center justify-center rounded-ls-control">
+            <SuiteMark size={20} />
+          </a>
+          <Link href="/" className="flex min-h-11 items-center rounded-ls-control px-1 font-ls-display text-[1.375rem] font-extrabold text-app-text">
+            {APP_NAME}
+          </Link>
+        </div>
+        {!hideSearch && <SearchForm defaultValue={query} className="order-last w-full md:order-none md:mx-3 md:max-w-md md:flex-1" />}
+        <nav aria-label="Main" className="ml-auto flex items-center gap-0.5">
+          <Link href="/courses" className={lsButton("quiet", "md", "px-2.5 max-md:hidden sm:px-3.5")}>
             Browse
           </Link>
-          <Link href="/teach" className="hidden rounded-control px-3 py-2 text-sm font-semibold text-ink hover:bg-ink/[0.06] md:block">
+          <Link href="/teach" className={lsButton("quiet", "md", "px-2.5 max-sm:hidden sm:px-3.5")}>
             Teach
           </Link>
           <AccountLinks />
@@ -58,38 +78,28 @@ export function SiteHeader({ query, hideSearch }: { query?: string; hideSearch?:
   );
 }
 
+/** The LinkSuite footer, with the marketplace's own links. */
 export function SiteFooter() {
   return (
-    <footer className="mt-auto border-t border-line bg-surface">
-      <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-8 text-sm text-muted sm:flex-row sm:items-center sm:justify-between sm:px-6">
-        <div>
-          <Wordmark className="text-lg" />
-          <p className="mt-1">Courses from tutors you trust. Pay in naira, learn on your phone.</p>
-        </div>
-        <nav className="flex flex-wrap gap-x-5 gap-y-2" aria-label="Footer">
-          <Link href="/courses" className="hover:text-ink hover:underline">
-            Browse courses
-          </Link>
-          <Link href="/teach" className="hover:text-ink hover:underline">
-            Teach on {APP_NAME}
-          </Link>
-          <Link href="/learn" className="hover:text-ink hover:underline">
-            My learning
-          </Link>
-        </nav>
-      </div>
-    </footer>
+    <SuiteFooter
+      app={learnLink}
+      links={[
+        { href: "/courses", label: "Browse courses" },
+        { href: "/learn", label: "My learning" },
+        { href: "/teach", label: "Teach on LearnLink" },
+        { href: "/teach#plans", label: "Plans for tutors" },
+        { href: "/teach/login", label: "Tutor log in" },
+      ]}
+    />
   );
 }
 
-/** Standard public page frame. */
-export function SitePage({ children, query, hideSearch }: { children: ReactNode; query?: string; hideSearch?: boolean }) {
+/** The public page body: the one main landmark, which the skip link targets. */
+export function SiteMain({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className="flex min-h-screen flex-col">
-      <SiteHeader query={query} hideSearch={hideSearch} />
-      <main className="flex-1">{children}</main>
-      <SiteFooter />
-    </div>
+    <main id="main" tabIndex={-1} className={cx("flex-1 outline-none", className)}>
+      {children}
+    </main>
   );
 }
 

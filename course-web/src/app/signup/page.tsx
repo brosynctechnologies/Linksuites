@@ -3,7 +3,11 @@ import { AuthSwitchLink } from "@/components/auth-links";
 import { LearnerSignupForm } from "@/components/auth-forms";
 import { AuthShell } from "@/components/auth-shell";
 
-export const metadata: Metadata = { title: "Create your account" };
+export const metadata: Metadata = {
+  title: "Create a free learner account",
+  description: "One LearnLink account for every course you take, from WAEC and JAMB prep to digital skills. Learn on your phone and earn certificates.",
+  alternates: { canonical: "/signup" },
+};
 
 export default function SignupPage() {
   return (

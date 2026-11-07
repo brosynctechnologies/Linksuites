@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { setAuth } from "@/lib/auth";
 import { COUNTRIES } from "@/lib/config";
@@ -31,10 +31,23 @@ export function SignupForm() {
   const [pending, setPending] = useState<string | null>(null);
   const set = (k: keyof SignupRequest) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  // After a failed submit the error summary is announced; focus moves to the first field that needs fixing.
+  const formRef = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (error) formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [error]);
+
+  // Back from the code step ("Change my details"): the button that had focus is gone, so start at the first field again.
+  const wasPending = useRef(false);
+  useEffect(() => {
+    if (wasPending.current && !pending) formRef.current?.querySelector<HTMLElement>("input")?.focus();
+    wasPending.current = !!pending;
+  }, [pending]);
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (form.password.length < 8) {
-      setError(new ApiError(400, { detail: "Password must be at least 8 characters." }));
+      setError(new ApiError(400, { errors: { password: ["Password must be at least 8 characters."] } }));
       return;
     }
     setBusy(true);
@@ -73,7 +86,7 @@ export function SignupForm() {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-5" noValidate>
+    <form ref={formRef} onSubmit={submit} className="space-y-5" noValidate>
       <Input label="Your full name" autoComplete="name" required value={form.fullName} onChange={set("fullName")} error={fieldError(error, "fullName")} />
       <Input label="Email" type="email" autoComplete="email" required value={form.email} onChange={set("email")} error={fieldError(error, "email")} />
       <Input

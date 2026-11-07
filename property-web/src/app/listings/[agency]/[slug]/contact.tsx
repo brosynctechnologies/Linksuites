@@ -11,7 +11,7 @@ import { trackEvent } from "@/lib/track";
 import type { AgencyCardDto, AgentCardDto, InspectionDto } from "@/lib/types";
 import { Avatar, Rating, VerifiedSeal } from "@/components/badges";
 import { PhoneIcon, WhatsAppIcon } from "@/components/icons";
-import { Button, ErrorBox, Input, Modal, Notice, Tabs, Textarea, buttonClass, cx, linkClass } from "@/components/ui";
+import { Button, ErrorBox, Input, Modal, Notice, Tabs, Textarea, buttonClass, cx, linkClass, useFocusFirstInvalid } from "@/components/ui";
 
 export interface ContactListing {
   id: string;
@@ -95,13 +95,16 @@ export function AgentPanel({ agent, agency, listing, showViewing }: { agent: Age
               label="Contact the agent"
               value={tab}
               onChange={setTab}
+              idBase="contact"
               items={[
                 { value: "enquiry", label: "Send enquiry" },
                 { value: "viewing", label: "Book a viewing" },
               ]}
               className="mx-0 px-0"
             />
-            <div className="pt-4">{tab === "enquiry" ? <EnquiryForm listing={listing} /> : <ViewingPicker listing={listing} />}</div>
+            <div role="tabpanel" id={`contact-panel-${tab}`} aria-labelledby={`contact-tab-${tab}`} className="pt-4">
+              {tab === "enquiry" ? <EnquiryForm listing={listing} /> : <ViewingPicker listing={listing} />}
+            </div>
           </>
         ) : (
           <>
@@ -127,6 +130,7 @@ function EnquiryForm({ listing }: { listing: ContactListing }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [sent, setSent] = useState(false);
+  const formRef = useFocusFirstInvalid(error);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const name = form.name ?? auth?.user.fullName ?? "";
   const email = form.email ?? auth?.user.email ?? "";
@@ -162,12 +166,12 @@ function EnquiryForm({ listing }: { listing: ContactListing }) {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-3">
+    <form ref={formRef} onSubmit={submit} className="space-y-3">
       <Input label="Your name" autoComplete="name" required value={name} onChange={set("name")} error={error?.field("name")} />
       <Input label="Phone" type="tel" autoComplete="tel" required value={form.phone} onChange={set("phone")} placeholder="0803 123 4567" error={error?.field("phone")} />
       <Input label="Email (optional)" type="email" autoComplete="email" value={email} onChange={set("email")} error={error?.field("email")} />
       <Textarea label="Message" rows={3} value={form.message} onChange={set("message")} error={error?.field("message")} />
-      <ErrorBox error={error && !error.errors ? error : null} />
+      <ErrorBox error={error} />
       <Button type="submit" loading={busy} className="w-full">
         Send enquiry
       </Button>

@@ -52,35 +52,7 @@ export const SORTS = [
 ] as const;
 
 /**
- * Tutor plans as listed in the contract (the /teach page shows these before anyone has an account;
- * the billing page reads the live plans from /api/billing).
+ * Fee on academy sales on the free plan (paid plans take none). Public pages never show plan prices: the plans and their
+ * naira prices are read live from /api/billing inside the studio.
  */
-export const TUTOR_PLANS = [
-  {
-    code: "free",
-    name: "Free",
-    priceMinor: 0,
-    courses: "2 courses",
-    storage: "2 GB of video",
-    academyFee: "10% fee on academy sales",
-    extras: ["Your own academy page", "Marketplace listing", "LearnLink branding shown", "1 team seat"],
-  },
-  {
-    code: "pro",
-    name: "Pro",
-    priceMinor: 1_500_000,
-    courses: "Unlimited courses",
-    storage: "50 GB of video",
-    academyFee: "0% fee on academy sales",
-    extras: ["Coupons", "Certificates of completion", "Branding removed", "3 team seats"],
-  },
-  {
-    code: "business",
-    name: "Business",
-    priceMinor: 4_000_000,
-    courses: "Unlimited courses",
-    storage: "250 GB of video",
-    academyFee: "0% fee on academy sales",
-    extras: ["Coupons", "Certificates of completion", "Branding removed", "10 team seats"],
-  },
-] as const;
+export const FREE_PLAN_ACADEMY_FEE_PCT = 10;

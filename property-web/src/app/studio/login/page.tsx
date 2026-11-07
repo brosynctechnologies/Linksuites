@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { AgencyLoginForm, AuthSwitchLink } from "@/components/auth-forms";
 import { AuthShell } from "@/components/auth-shell";
 
-export const metadata: Metadata = { title: "Log in to the studio" };
+export const metadata: Metadata = { title: "Log in to the studio", robots: { index: false } };
 
 export default function StudioLoginPage() {
   return (

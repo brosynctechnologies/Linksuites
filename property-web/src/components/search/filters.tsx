@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 import { SORTS } from "@/lib/config";
 import { hasFilters, searchHref, type SearchState } from "@/lib/search";
 import type { LocationDto, RefItem } from "@/lib/types";
@@ -224,15 +224,17 @@ export function SearchFilters({
   );
 }
 
+/** Sorting applies on change; the page then re-renders and the results count (a status region) announces the new list. */
 function SortSelect({ state }: { state: SearchState }) {
   const router = useRouter();
+  const id = useId();
   return (
     <div className="flex items-center gap-2">
-      <label htmlFor="sort" className="sr-only">
+      <label htmlFor={id} className="sr-only">
         Sort by
       </label>
       <select
-        id="sort"
+        id={id}
         className={cx(inputClass, "w-auto min-w-[10rem]")}
         value={state.sort ?? "recommended"}
         onChange={(e) => router.push(searchHref({ ...state, sort: e.target.value, page: 1 }))}

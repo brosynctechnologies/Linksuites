@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { PageLoader } from "@/components/ui";
 import { AcceptInvite } from "./accept-invite";
 
-export const metadata: Metadata = { title: "Accept your invitation", robots: { index: false } };
+export const metadata: Metadata = { title: "Accept your invitation", robots: { index: false }, alternates: {} };
 
 /** One link shape for both invitations the school sends: parents (guardian invites) and staff (team invites). */
 export default function InvitePage() {

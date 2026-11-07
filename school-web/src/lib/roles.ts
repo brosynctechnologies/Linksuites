@@ -30,7 +30,7 @@ export function roleLabel(role: string | null | undefined, jobTitle?: string | n
 
 /** Roles staff can be invited as, with what each can do. */
 export const INVITE_ROLES: { role: Role; label: string; text: string }[] = [
-  { role: "Admin", label: "Principal or school admin", text: "Runs setup, students, staff, results and fees. No billing." },
+  { role: "Admin", label: "Principal or school admin", text: "Runs setup, students, staff, results and fees. Sees the plan but can't pay for it." },
   { role: "Accountant", label: "Bursar", text: "Fees, payments and expenses. Reads the student list." },
   { role: "Staff", label: "Teacher", text: "Takes the register and enters scores for their own classes." },
 ];
@@ -49,7 +49,11 @@ export type Action =
   /** The school's own Paystack key. */
   | "fees.paystack"
   /** Attendance, scores, results, the timetable, assignments, lesson plans and exams (leadership and teachers; not the bursar). */
-  | "academic.read";
+  | "academic.read"
+  /** The plan and billing page: the plan, usage and prices. */
+  | "billing.read"
+  /** Paying for a plan (the API's owner policy). */
+  | "billing.manage";
 
 const TABLE: Record<Action, readonly Role[]> = {
   "school.manage": ["Owner", "Admin"],
@@ -59,6 +63,8 @@ const TABLE: Record<Action, readonly Role[]> = {
   "fees.settings": ["Owner", "Admin"],
   "fees.paystack": ["Owner"],
   "academic.read": ["Owner", "Admin", "Staff"],
+  "billing.read": ["Owner", "Admin"],
+  "billing.manage": ["Owner"],
 };
 
 export function can(role: string | null | undefined, action: Action): boolean {

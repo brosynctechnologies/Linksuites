@@ -3,7 +3,7 @@ import { AuthShell } from "@/components/auth-shell";
 import { AuthSwitchLink } from "@/components/auth-links";
 import { ForgotPasswordForm } from "./forgot-password-form";
 
-export const metadata: Metadata = { title: "Reset your password" };
+export const metadata: Metadata = { title: "Reset your password", alternates: { canonical: "/forgot-password" }, robots: { index: false } };
 
 export default function ForgotPasswordPage() {
   return (

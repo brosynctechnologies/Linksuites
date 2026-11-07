@@ -96,9 +96,10 @@ export function PublicInvoice() {
       <Card>
         <div className="flex flex-col-reverse items-start gap-3 sm:flex-row sm:justify-between">
           <div className="min-w-0">
-            <p className="text-sm text-muted">
+            <h1 className="text-sm text-muted">
               Invoice <span className="tabular-nums">{data.number}</span>
-            </p>
+              {data.business?.name && <span className="sr-only"> from {data.business.name}</span>}
+            </h1>
             {isVoid ? (
               // A cancelled invoice is not owed, so it shows no amount due and no due date.
               <p className="font-figure mt-1 text-[clamp(2rem,9vw,2.5rem)] leading-none text-graphite">Cancelled</p>

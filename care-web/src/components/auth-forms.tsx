@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { setAuth } from "@/lib/auth";
 import { PRODUCT } from "@/lib/config";
@@ -47,6 +47,24 @@ export function useAuthSubmit(fallback: string, then?: (res: AuthResponse) => Pr
   return { busy, error, setError, run, finish, pending, setPending, unconfirmed, setUnconfirmed };
 }
 
+/** After a failed submit, moves focus to the form's first invalid field (the error summary above the button is announced either way). */
+function useFocusInvalid(error: ApiError | null) {
+  const ref = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (!error) return;
+    const frame = requestAnimationFrame(() => ref.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [error]);
+  return ref;
+}
+
+/** One message per failed check, shaped like the API's field errors, so each field is marked and the summary lists them all. */
+function fieldErrors(checks: [field: string, failed: boolean, message: string][]): ApiError | null {
+  const errors: Record<string, string[]> = {};
+  for (const [field, failed, message] of checks) if (failed) errors[field] = [message];
+  return Object.keys(errors).length ? new ApiError(400, { errors }) : null;
+}
+
 const noop = () => () => {};
 /** A link to the other auth page that keeps `?next=`. */
 export function AuthSwitchLink({ href, children }: { href: string; children: ReactNode }) {
@@ -83,6 +101,7 @@ function EmailCode({
   onBack,
   backLabel,
   submit,
+  focusFirst,
 }: {
   verifyPath: string;
   product?: string;
@@ -91,8 +110,11 @@ function EmailCode({
   onBack: () => void;
   backLabel: string;
   submit: ReturnType<typeof useAuthSubmit>;
+  /** Set when the visitor switched to this step, so focus follows them; not on the page's first view. */
+  focusFirst?: boolean;
 }) {
   const [sent, setSent] = useState(false);
+  const [changed, setChanged] = useState(false);
   const [code, setCode] = useState("");
   const { busy, error, run, setError } = submit;
   const request = () => run(async () => void (await api("/api/auth/otp/request", { method: "POST", body: { email: email.trim() }, auth: false })));
@@ -110,7 +132,15 @@ function EmailCode({
         className="space-y-4"
       >
         <p className="text-sm text-slate-600">We&apos;ll email you a 6-digit code. No password needed.</p>
-        <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input
+          label="Email"
+          type="email"
+          autoComplete="email"
+          required
+          autoFocus={focusFirst || changed}
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
         <ErrorBox error={error} />
         <Button type="submit" loading={busy} className="w-full" disabled={!email.trim()}>
           Send code
@@ -149,6 +179,7 @@ function EmailCode({
         pattern="[0-9]*"
         maxLength={6}
         required
+        autoFocus
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
         className="tnum text-center text-lg tracking-[0.4em]"
@@ -166,6 +197,7 @@ function EmailCode({
           className="min-h-11 text-slate-600 hover:text-ink"
           onClick={() => {
             setSent(false);
+            setChanged(true);
             setCode("");
             setError(null);
           }}
@@ -182,6 +214,8 @@ function EmailCode({
 /** Staff sign in: password, or an emailed code. Goes to the clinic app. */
 export function StaffLoginForm() {
   const [mode, setMode] = useState<"password" | "code">("password");
+  // After any switch between steps, the new step's first field takes focus.
+  const [switched, setSwitched] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const submit = useAuthSubmit("/app");
@@ -196,7 +230,10 @@ export function StaffLoginForm() {
         product={PRODUCT}
         notice={submit.unconfirmed}
         onConfirmed={submit.finish}
-        onBack={() => submit.setUnconfirmed(null)}
+        onBack={() => {
+          setSwitched(true);
+          submit.setUnconfirmed(null);
+        }}
         backLabel="Back to sign in"
       />
     );
@@ -209,9 +246,13 @@ export function StaffLoginForm() {
         product={PRODUCT}
         email={email}
         setEmail={setEmail}
-        onBack={() => setMode("password")}
+        onBack={() => {
+          setSwitched(true);
+          setMode("password");
+        }}
         backLabel="Use my password instead"
         submit={submit}
+        focusFirst={switched}
       />
     );
   }
@@ -225,7 +266,7 @@ export function StaffLoginForm() {
         }}
         className="space-y-4"
       >
-        <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input label="Email" type="email" autoComplete="email" required autoFocus={switched} value={email} onChange={(e) => setEmail(e.target.value)} />
         <Input label="Password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
         <p className="-mt-2 text-right text-sm">
           <Link href="/forgot-password" className={linkClass}>
@@ -243,6 +284,7 @@ export function StaffLoginForm() {
         className="w-full"
         onClick={() => {
           setError(null);
+          setSwitched(true);
           setMode("code");
         }}
       >
@@ -255,17 +297,21 @@ export function StaffLoginForm() {
 /** Medical director signup: creates the clinic (product `care`) on the Free plan with its setup checklist. */
 export function ClinicSignupForm() {
   const [form, setForm] = useState({ businessName: "", fullName: "", email: "", password: "" });
+  const [returned, setReturned] = useState(false);
   const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/app");
+  const formRef = useFocusInvalid(error);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!form.businessName.trim() || !form.fullName.trim() || !form.email.trim()) {
-      setError(new ApiError(400, { detail: "Enter the clinic's name, your name and your email." }));
-      return;
-    }
-    if (form.password.length < 8) {
-      setError(new ApiError(400, { errors: { password: ["Use at least 8 characters."] } }));
+    const invalid = fieldErrors([
+      ["businessName", !form.businessName.trim(), "Enter the clinic's name."],
+      ["fullName", !form.fullName.trim(), "Enter your full name."],
+      ["email", !form.email.trim(), "Enter your email."],
+      ["password", form.password.length < 8, "Use at least 8 characters for your password."],
+    ]);
+    if (invalid) {
+      setError(invalid);
       return;
     }
     run(() =>
@@ -292,19 +338,22 @@ export function ClinicSignupForm() {
         confirmPath="/api/auth/signup/confirm"
         product={PRODUCT}
         onConfirmed={finish}
-        onBack={() => setPending(null)}
+        onBack={() => {
+          setReturned(true);
+          setPending(null);
+        }}
         backLabel="Change my details"
       />
     );
   }
 
-  const fieldError = error && (error.field("businessName") || error.field("fullName") || error.field("email") || error.field("password"));
   return (
-    <form onSubmit={submit} className="space-y-4" noValidate>
+    <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
       <Input
         label="Clinic name"
         autoComplete="organization"
         required
+        autoFocus={returned}
         value={form.businessName}
         onChange={set("businessName")}
         placeholder="e.g. Harbour Clinic, Yaba"
@@ -323,7 +372,7 @@ export function ClinicSignupForm() {
         hint="At least 8 characters."
         error={error?.field("password")}
       />
-      <ErrorBox error={error && !fieldError ? error : null} />
+      <ErrorBox error={error} />
       <Button type="submit" loading={busy} className="w-full">
         Create my clinic
       </Button>
@@ -340,6 +389,8 @@ export function ClinicSignupForm() {
  */
 export function PatientSignInForm({ onSignedIn }: { onSignedIn?: (res: AuthResponse) => Promise<string | void> | string | void }) {
   const [mode, setMode] = useState<"code" | "password">("code");
+  // After any switch between steps, the new step's first field takes focus.
+  const [switched, setSwitched] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const submit = useAuthSubmit("/portal", onSignedIn);
@@ -353,7 +404,10 @@ export function PatientSignInForm({ onSignedIn }: { onSignedIn?: (res: AuthRespo
         confirmPath="/api/auth/patient/signup/confirm"
         notice={submit.unconfirmed}
         onConfirmed={submit.finish}
-        onBack={() => submit.setUnconfirmed(null)}
+        onBack={() => {
+          setSwitched(true);
+          submit.setUnconfirmed(null);
+        }}
         backLabel="Back to sign in"
       />
     );
@@ -365,9 +419,13 @@ export function PatientSignInForm({ onSignedIn }: { onSignedIn?: (res: AuthRespo
         verifyPath="/api/auth/patient/otp/verify"
         email={email}
         setEmail={setEmail}
-        onBack={() => setMode("password")}
+        onBack={() => {
+          setSwitched(true);
+          setMode("password");
+        }}
         backLabel="Use a password instead"
         submit={submit}
+        focusFirst={switched}
       />
     );
   }
@@ -380,7 +438,7 @@ export function PatientSignInForm({ onSignedIn }: { onSignedIn?: (res: AuthRespo
       }}
       className="space-y-4"
     >
-      <Input label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+      <Input label="Email" type="email" autoComplete="email" required autoFocus={switched} value={email} onChange={(e) => setEmail(e.target.value)} />
       <Input label="Password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
       <p className="-mt-2 text-right text-sm">
         <Link href="/forgot-password" className={linkClass}>
@@ -396,6 +454,7 @@ export function PatientSignInForm({ onSignedIn }: { onSignedIn?: (res: AuthRespo
         className="w-full"
         onClick={() => {
           setError(null);
+          setSwitched(true);
           setMode("code");
         }}
       >
@@ -412,17 +471,20 @@ export function PatientSignInForm({ onSignedIn }: { onSignedIn?: (res: AuthRespo
  */
 export function PatientSignupForm({ onSignedIn }: { onSignedIn?: (res: AuthResponse) => Promise<string | void> | string | void }) {
   const [form, setForm] = useState({ fullName: "", email: "", password: "" });
+  const [returned, setReturned] = useState(false);
   const { busy, error, setError, run, finish, pending, setPending } = useAuthSubmit("/portal", onSignedIn);
+  const formRef = useFocusInvalid(error);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!form.fullName.trim() || !form.email.trim()) {
-      setError(new ApiError(400, { detail: "Enter your name and email." }));
-      return;
-    }
-    if (form.password.length < 8) {
-      setError(new ApiError(400, { errors: { password: ["Use at least 8 characters."] } }));
+    const invalid = fieldErrors([
+      ["fullName", !form.fullName.trim(), "Enter your full name."],
+      ["email", !form.email.trim(), "Enter your email."],
+      ["password", form.password.length < 8, "Use at least 8 characters for your password."],
+    ]);
+    if (invalid) {
+      setError(invalid);
       return;
     }
     run(() =>
@@ -441,16 +503,26 @@ export function PatientSignupForm({ onSignedIn }: { onSignedIn?: (res: AuthRespo
         password={form.password}
         confirmPath="/api/auth/patient/signup/confirm"
         onConfirmed={finish}
-        onBack={() => setPending(null)}
+        onBack={() => {
+          setReturned(true);
+          setPending(null);
+        }}
         backLabel="Change my details"
       />
     );
   }
 
-  const fieldError = error && (error.field("fullName") || error.field("email") || error.field("password"));
   return (
-    <form onSubmit={submit} className="space-y-4" noValidate>
-      <Input label="Your full name" autoComplete="name" required value={form.fullName} onChange={set("fullName")} error={error?.field("fullName")} />
+    <form ref={formRef} onSubmit={submit} className="space-y-4" noValidate>
+      <Input
+        label="Your full name"
+        autoComplete="name"
+        required
+        autoFocus={returned}
+        value={form.fullName}
+        onChange={set("fullName")}
+        error={error?.field("fullName")}
+      />
       <Input label="Email" type="email" autoComplete="email" required value={form.email} onChange={set("email")} error={error?.field("email")} />
       <Input
         label="Choose a password"
@@ -463,7 +535,7 @@ export function PatientSignupForm({ onSignedIn }: { onSignedIn?: (res: AuthRespo
         onChange={set("password")}
         error={error?.field("password")}
       />
-      <ErrorBox error={error && !fieldError ? error : null} />
+      <ErrorBox error={error} />
       <Button type="submit" loading={busy} className="w-full">
         Create my account
       </Button>

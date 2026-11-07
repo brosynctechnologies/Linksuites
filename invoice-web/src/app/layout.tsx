@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Fraunces, Hanken_Grotesk } from "next/font/google";
 import { SupportBanner } from "@/components/support-banner";
 import { APP_NAME, SITE_URL } from "@/lib/config";
+import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, baseOpenGraph, baseTwitter } from "@/lib/site";
 import "./globals.css";
 
 /** Display serif for titles, document headings and big amounts (optical size follows font size). */
@@ -21,12 +22,13 @@ const hanken = Hanken_Grotesk({
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: {
-    default: `${APP_NAME} — Free invoice generator`,
-    template: `%s · ${APP_NAME}`,
-  },
-  description:
-    "Create a professional invoice in 60 seconds — no sign-up. Send invoices, get paid online, and track who owes you.",
+  title: { default: DEFAULT_TITLE, template: `%s | ${APP_NAME}` },
+  description: DEFAULT_DESCRIPTION,
+  applicationName: APP_NAME,
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
+  openGraph: { ...baseOpenGraph, url: "/", title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION },
+  twitter: { ...baseTwitter, title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION },
 };
 
 export const viewport: Viewport = {
@@ -38,7 +40,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${fraunces.variable} ${hanken.variable} h-full antialiased`}>
+    <html lang="en-NG" className={`${fraunces.variable} ${hanken.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col bg-desk font-sans text-graphite">
         <SupportBanner />
         {children}

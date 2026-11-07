@@ -58,6 +58,13 @@ export const PromoteIcon = (p: P) => (
     <path d="M4 20h4v-5h4v-5h4V5h4" />
   </Svg>
 );
+/** A card, for the plan and billing page. */
+export const PlanIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="2.5" y="5" width="19" height="14" rx="2" />
+    <path d="M2.5 10h19M6.5 15h4" />
+  </Svg>
+);
 export const MoreIcon = (p: P) => (
   <Svg {...p}>
     <circle cx="5" cy="12" r="1" />

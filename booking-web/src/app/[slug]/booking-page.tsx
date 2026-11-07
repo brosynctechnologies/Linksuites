@@ -1,81 +1,16 @@
 "use client";
 
-import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { initials } from "@/lib/color";
 import { STORAGE_PREFIX } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
 import { addDays, cityOf, formatDate, formatDuration, formatTime, todayIn } from "@/lib/time";
 import type { PublicBookingPageDto, PublicBookResponse, PublicServiceDto, PublicStaffDto, SlotDto } from "@/lib/types";
-import { useApi } from "@/lib/use-api";
 import { DateSlotPicker } from "@/components/slot-picker";
-import { BrandingFooter, BusinessHeader, ContactButtons, HoursList, PublicFrame } from "@/components/public-parts";
-import { Button, ErrorBox, Input, Notice, PageLoader, Textarea, buttonClass, cx } from "@/components/ui";
+import { ErrorBox, Input, Notice, Textarea, cx } from "@/components/ui";
 import { CheckIcon } from "@/components/icons";
-
-export function BookingPage() {
-  const { slug } = useParams<{ slug: string }>();
-  const embed = useSearchParams().get("embed") === "1";
-  const { data, error, reload } = useApi<PublicBookingPageDto>(`/api/public/book/${encodeURIComponent(slug)}`, { auth: false });
-
-  if (error && !data) {
-    return (
-      <PublicFrame brand={null}>
-        <div className="px-4 py-16 text-center">
-          <h1 className="font-expanded text-2xl font-extrabold">{error.status === 404 ? "No booking page here" : "This page didn't load"}</h1>
-          <p className="mx-auto mt-2 max-w-sm text-sm text-muted">
-            {error.status === 404
-              ? "Check the link you were given. The business may have changed its booking address."
-              : error.message}
-          </p>
-          {error.status === 404 ? (
-            <Link href="/" className={buttonClass("secondary", "mt-6")}>
-              Go to the home page
-            </Link>
-          ) : (
-            <Button className="mt-6" onClick={reload}>
-              Try again
-            </Button>
-          )}
-        </div>
-      </PublicFrame>
-    );
-  }
-  if (!data) return <PageLoader />;
-
-  return (
-    <PublicFrame brand={data.brandColor} className={embed ? "bg-surface" : undefined}>
-      {!embed && (
-        <BusinessHeader
-          name={data.name}
-          coverUrl={data.coverUrl}
-          logoUrl={data.logoUrl}
-          address={data.address}
-          rating={data.rating}
-          hasPolicies={!!data.policies}
-        />
-      )}
-
-      {data.bookingEnabled ? (
-        <BookingFlow page={data} slug={slug} embed={embed} />
-      ) : (
-        <div className="px-4 pt-6 sm:px-0">
-          <Notice tone="warning">{data.name} isn&apos;t taking online bookings right now. Call or message them to book.</Notice>
-          <div className="mt-4">
-            <ContactButtons phone={data.phone} whatsapp={data.whatsappNumber} message={`Hello ${data.name}, I'd like to book an appointment.`} />
-          </div>
-        </div>
-      )}
-
-      <AboutSection page={data} embed={embed} />
-      {!embed && data.showBranding && <BrandingFooter />}
-      {/* Room for the sticky book bar. */}
-      {data.bookingEnabled && <div className="h-28" aria-hidden="true" />}
-    </PublicFrame>
-  );
-}
 
 // ---------- The four steps ----------
 
@@ -112,8 +47,10 @@ function manageTarget(manageUrl: string): { internal: boolean; href: string } {
   }
 }
 
-function BookingFlow({ page, slug, embed }: { page: PublicBookingPageDto; slug: string; embed: boolean }) {
+/** The interactive part of a business's booking page: service, who, when, details, and the sticky book bar. */
+export function BookingFlow({ page, slug, embed }: { page: PublicBookingPageDto; slug: string; embed: boolean }) {
   const router = useRouter();
+  const staffGroup = useId();
   const tz = page.timezone;
   const today = todayIn(tz);
   const maxDate = addDays(today, Math.max(0, page.maxDaysAhead));
@@ -177,7 +114,10 @@ function BookingFlow({ page, slug, embed }: { page: PublicBookingPageDto; slug: 
     if (!slot) return scrollTo(whenRef.current);
     if (missingName || missingPhone) {
       setTried(true);
-      return scrollTo(detailsRef.current);
+      scrollTo(detailsRef.current);
+      // The field's own message is read out with it (aria-describedby).
+      requestAnimationFrame(() => detailsRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus({ preventScroll: true }));
+      return;
     }
     setBusy(true);
     setError(null);
@@ -294,12 +234,20 @@ function BookingFlow({ page, slug, embed }: { page: PublicBookingPageDto; slug: 
       {service && (
         <Step n={2} title="Who" done={eligibleStaff.length <= 1} open summary={eligibleStaff.length === 1 ? `With ${eligibleStaff[0].displayName}` : eligibleStaff.length === 0 ? "Whoever is free" : undefined}>
           {eligibleStaff.length > 1 && (
-            <div className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:-mx-5 sm:px-5" role="radiogroup" aria-label="Who would you like?">
-              <StaffChoice selected={staffId === null} onClick={() => chooseStaff(null)} name="Anyone available" />
+            <fieldset className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 py-1.5 sm:-mx-5 sm:px-5">
+              <legend className="sr-only">Who would you like?</legend>
+              <StaffChoice group={staffGroup} selected={staffId === null} onSelect={() => chooseStaff(null)} name="Anyone available" />
               {eligibleStaff.map((st) => (
-                <StaffChoice key={st.id} selected={staffId === st.id} onClick={() => chooseStaff(st.id)} name={st.displayName} staff={st} />
+                <StaffChoice
+                  key={st.id}
+                  group={staffGroup}
+                  selected={staffId === st.id}
+                  onSelect={() => chooseStaff(st.id)}
+                  name={st.displayName}
+                  staff={st}
+                />
               ))}
-            </div>
+            </fieldset>
           )}
         </Step>
       )}
@@ -450,20 +398,31 @@ function Step({
   );
 }
 
-function StaffChoice({ selected, onClick, name, staff }: { selected: boolean; onClick: () => void; name: string; staff?: PublicStaffDto }) {
+/** One choice in the "Who" step: a native radio (arrow keys move between people), drawn as a card. */
+function StaffChoice({
+  group,
+  selected,
+  onSelect,
+  name,
+  staff,
+}: {
+  group: string;
+  selected: boolean;
+  onSelect: () => void;
+  name: string;
+  staff?: PublicStaffDto;
+}) {
   return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      onClick={onClick}
+    <label
       className={cx(
-        "flex w-24 shrink-0 flex-col items-center gap-1.5 rounded-control border px-2 py-3 text-center text-sm transition-colors",
+        "relative flex w-24 shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-control border px-2 py-3 text-center text-sm transition-colors",
+        "has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-[var(--ls-focus)]",
         selected ? "border-brand bg-brand-wash font-semibold" : "border-line hover:bg-brand-wash",
       )}
     >
+      <input type="radio" name={group} checked={selected} onChange={onSelect} className="sr-only" />
       {staff?.photoUrl ? (
-        <img src={staff.photoUrl} alt="" className={cx("h-12 w-12 rounded-full object-cover", selected && "ring-2 ring-brand ring-offset-2")} />
+        <img src={staff.photoUrl} alt="" width={48} height={48} loading="lazy" className={cx("h-12 w-12 rounded-full object-cover", selected && "ring-2 ring-brand ring-offset-2")} />
       ) : (
         <span
           className={cx(
@@ -476,45 +435,6 @@ function StaffChoice({ selected, onClick, name, staff }: { selected: boolean; on
         </span>
       )}
       <span className="leading-tight">{name}</span>
-    </button>
-  );
-}
-
-function AboutSection({ page, embed }: { page: PublicBookingPageDto; embed: boolean }) {
-  const hasHours = page.hours.length > 0;
-  if (embed && !page.policies) return null;
-  return (
-    <div className="mt-8 space-y-6 px-4 sm:px-0">
-      {!embed && page.description && (
-        <section>
-          <h2 className="mb-1.5 font-bold">About {page.name}</h2>
-          <p className="text-sm whitespace-pre-line text-slate-700">{page.description}</p>
-        </section>
-      )}
-      {!embed && hasHours && (
-        <section>
-          <h2 className="mb-2 font-bold">Opening hours</h2>
-          <HoursList hours={page.hours} />
-          <p className="mt-2 text-xs text-muted">Times are in {cityOf(page.timezone)} time.</p>
-        </section>
-      )}
-      {page.policies && (
-        <section id="policies" className="scroll-mt-4">
-          <h2 className="mb-1.5 font-bold">Booking policies</h2>
-          <p className="text-sm whitespace-pre-line text-slate-700">{page.policies}</p>
-          {page.cancellationHours > 0 && (
-            <p className="mt-2 text-sm text-slate-700">
-              You can cancel or move your booking up to {page.cancellationHours} hour{page.cancellationHours === 1 ? "" : "s"} before it starts.
-            </p>
-          )}
-        </section>
-      )}
-      {!embed && (page.phone || page.whatsappNumber) && (
-        <section>
-          <h2 className="mb-2 font-bold">Questions first?</h2>
-          <ContactButtons phone={page.phone} whatsapp={page.whatsappNumber} message={`Hello ${page.name}, I have a question about booking.`} />
-        </section>
-      )}
-    </div>
+    </label>
   );
 }

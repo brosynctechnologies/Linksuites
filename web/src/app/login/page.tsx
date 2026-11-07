@@ -3,7 +3,7 @@ import Link from "next/link";
 import { AuthShell } from "@/components/auth-shell";
 import { LoginForm } from "./login-form";
 
-export const metadata: Metadata = { title: "Log in" };
+export const metadata: Metadata = { title: "Log in to your store", robots: { index: false, follow: true }, alternates: {} };
 
 export default function LoginPage() {
   return (

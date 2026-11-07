@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { clearAuth, getAuth, useHydrated } from "@/lib/auth";
 import { AuthShell } from "@/components/auth-shell";
+import { useFocusFirstInvalid } from "@/components/form-focus";
 import { Button, ErrorBox, Input, Notice, Spinner, buttonClass, linkClass } from "@/components/ui";
 
 interface ResetLink {
@@ -40,10 +41,11 @@ function ResetPassword() {
   const [link] = useState(readLink);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [mismatch, setMismatch] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [done, setDone] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  useFocusFirstInvalid(formRef, error);
 
   useEffect(() => {
     // Keep the token out of the address bar, history and referrers.
@@ -80,12 +82,11 @@ function ResetPassword() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!link) return;
-    setError(null);
     if (password !== confirm) {
-      setMismatch(true);
+      setError(new ApiError(400, { errors: { confirm: ["The passwords don't match."] } }));
       return;
     }
-    setMismatch(false);
+    setError(null);
     setBusy(true);
     try {
       await api("/api/auth/password/reset", { method: "POST", body: { email: link.email, token: link.token, newPassword: password }, auth: false });
@@ -104,7 +105,7 @@ function ResetPassword() {
 
   return (
     <AuthShell title="Choose a new password" subtitle={`For ${link.email}`}>
-      <form onSubmit={submit} className="space-y-4">
+      <form ref={formRef} onSubmit={submit} className="space-y-4">
         <Input
           label="New password"
           type="password"
@@ -120,7 +121,7 @@ function ResetPassword() {
           type="password"
           autoComplete="new-password"
           required
-          error={mismatch ? "The passwords don't match." : undefined}
+          error={error?.field("confirm")}
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
         />

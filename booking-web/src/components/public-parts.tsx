@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { brandVars, initials } from "@/lib/color";
 import { APP_NAME } from "@/lib/config";
+import { hubUrl } from "@/lib/suite";
 import { WEEK_ORDER, WEEKDAYS } from "@/lib/time";
 import type { OpeningHours } from "@/lib/types";
 import { MapPinIcon, PhoneIcon, StarIcon, WhatsAppIcon } from "./icons";
@@ -72,7 +73,7 @@ export function BusinessHeader({
       <div className="px-4 sm:px-0">
         <div className="-mt-9 flex items-end gap-3">
           {logoUrl ? (
-            <img src={logoUrl} alt="" className="h-[4.5rem] w-[4.5rem] shrink-0 rounded-full border-4 border-mist bg-surface object-cover" />
+            <img src={logoUrl} alt="" width={72} height={72} className="h-[4.5rem] w-[4.5rem] shrink-0 rounded-full border-4 border-mist bg-surface object-cover" />
           ) : (
             <span
               className="flex h-[4.5rem] w-[4.5rem] shrink-0 items-center justify-center rounded-full border-4 border-mist bg-surface font-expanded text-xl font-extrabold text-brand"
@@ -135,6 +136,10 @@ export function BrandingFooter() {
       <Link href="/" className="font-expanded font-bold text-aubergine hover:underline">
         {APP_NAME}
       </Link>
+      , part of{" "}
+      <a href={hubUrl} className="font-semibold text-aubergine hover:underline">
+        LinkSuite
+      </a>
     </footer>
   );
 }

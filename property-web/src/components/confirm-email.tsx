@@ -91,7 +91,7 @@ export function ConfirmEmailStep({
       <div className="space-y-4">
         <Notice tone="warning">{notice}</Notice>
         <ErrorBox error={error} />
-        <Button loading={busy} className="w-full" onClick={send}>
+        <Button loading={busy} className="w-full" onClick={send} autoFocus>
           Email me a code
         </Button>
         {onBack && (
@@ -116,6 +116,7 @@ export function ConfirmEmailStep({
         pattern="[0-9]*"
         maxLength={6}
         required
+        autoFocus
         value={code}
         onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
         className="text-center text-lg tracking-[0.4em] tabular-nums"
@@ -129,7 +130,7 @@ export function ConfirmEmailStep({
           Send a new code
         </button>
         {onBack && (
-          <button type="button" className="min-h-11 text-slate-600 hover:text-ink" onClick={onBack}>
+          <button type="button" className="min-h-11 text-slate-600 hover:text-asphalt" onClick={onBack}>
             {backLabel}
           </button>
         )}

@@ -558,14 +558,17 @@ function WeekGrid({
     <div className={cx("overflow-hidden rounded-panel border border-line bg-surface", busy && "opacity-60")}>
       <div className="overflow-x-auto">
         <div style={{ "--row": `${rowHeight(interval)}px`, minWidth: "60rem" } as CSSProperties}>
-          <div className="sticky top-0 z-30 grid border-b border-line bg-aubergine text-white" style={{ gridTemplateColumns: "4rem repeat(7, minmax(8rem, 1fr))" }}>
+          <div className="on-aubergine sticky top-0 z-30 grid border-b border-line bg-aubergine text-white" style={{ gridTemplateColumns: "4rem repeat(7, minmax(8rem, 1fr))" }}>
             <span />
             {dates.map((d) => (
               <button
                 key={d}
                 type="button"
                 onClick={() => onDay(d)}
-                className={cx("border-l border-white/10 px-3 py-2 text-left hover:bg-aubergine-2", d === today && "bg-aubergine-3")}
+                className={cx(
+                  "border-l border-white/10 px-3 py-2 text-left hover:bg-aubergine-2 focus-visible:outline-offset-[-4px]!",
+                  d === today && "bg-aubergine-3",
+                )}
                 aria-label={`Open ${formatPlainDate(d, "long")}`}
               >
                 <span className="block text-xs text-on-aubergine">{WEEKDAYS_SHORT[weekdayOf(d)]}</span>

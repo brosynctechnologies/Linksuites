@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { ImportDialog } from "@/components/import-dialog";
 import { api } from "@/lib/api";
@@ -65,7 +66,14 @@ export default function StaffPage() {
       {team.data && (
         <Card>
           <UsageMeter label="Staff seats on your plan" used={team.data.seats.used} limit={team.data.seats.limit} />
-          {full && <p className="mt-2 text-sm text-crest">Every seat is taken. Upgrade your plan to invite more staff.</p>}
+          {full && (
+            <p className="mt-2 text-sm text-crest">
+              Every seat is taken. Upgrade your plan to invite more staff.{" "}
+              <Link href="/app/billing" className="font-bold underline underline-offset-2">
+                See plans
+              </Link>
+            </p>
+          )}
         </Card>
       )}
       <ErrorBox error={action.error} />

@@ -3,7 +3,7 @@ import { AuthSwitchLink } from "@/components/auth-links";
 import { LearnerLoginForm } from "@/components/auth-forms";
 import { AuthShell } from "@/components/auth-shell";
 
-export const metadata: Metadata = { title: "Log in" };
+export const metadata: Metadata = { title: "Log in to keep learning", robots: { index: false, follow: true } };
 
 export default function LoginPage() {
   return (

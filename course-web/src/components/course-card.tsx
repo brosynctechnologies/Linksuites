@@ -39,7 +39,7 @@ export function CourseCard({ course, viaAcademy, className }: { course: CourseCa
       <Thumb src={course.thumbnailUrl} title={course.title} />
       <div className="flex flex-1 flex-col p-3.5">
         <h3 className="line-clamp-2 font-serif text-[1.0625rem] leading-snug font-semibold text-ink">
-          <Link href={coursePath(course.academySlug, course.slug, viaAcademy)} className="after:absolute after:inset-0 after:rounded-card hover:underline focus-visible:outline-none">
+          <Link href={coursePath(course.academySlug, course.slug, viaAcademy)} className="course-card-link after:absolute after:inset-0 after:rounded-card hover:underline">
             {course.title}
           </Link>
         </h3>

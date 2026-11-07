@@ -2,20 +2,41 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { SITE_URL, baseOpenGraph, baseTwitter } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
 import { getProducts, getStore } from "@/lib/storefront";
-import type { PublicProductDto } from "@/lib/types";
+import type { PublicProductDto, PublicStoreDto } from "@/lib/types";
 import { CartButton } from "@/components/store/cart-button";
 import { ClosedBanner, StoreShell, StoreSkeleton } from "@/components/store/store-shell";
+import { JsonLd } from "@/components/suite/sections";
 
 export async function generateMetadata({ params }: PageProps<"/[slug]">): Promise<Metadata> {
   const { slug } = await params;
   const store = await getStore(slug).catch(() => null);
-  if (!store) return { title: "Store not found" };
+  if (!store) return { title: "Store not found", robots: { index: false }, alternates: {} };
+  const title = store.name;
+  const description = store.description?.slice(0, 160) ?? `Order from ${store.name} on WhatsApp.`;
+  const url = `/${store.slug}`;
+  const image = store.coverUrl ?? store.logoUrl ?? undefined;
   return {
-    title: { absolute: store.name },
-    description: store.description ?? `Order from ${store.name} on WhatsApp.`,
-    openGraph: { title: store.name, description: store.description ?? undefined, images: store.coverUrl ?? store.logoUrl ?? undefined },
+    title: { absolute: title },
+    description,
+    alternates: { canonical: url },
+    openGraph: { ...baseOpenGraph, url, title, description, images: image },
+    twitter: { ...baseTwitter, title, description, images: image },
+  };
+}
+
+/** schema.org OnlineStore for the store's own page: its name, link, logo and what it says about itself. */
+function storeJsonLd(store: PublicStoreDto) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "OnlineStore",
+    name: store.name,
+    url: `${SITE_URL}/${store.slug}`,
+    ...(store.description ? { description: store.description } : {}),
+    ...(store.logoUrl ? { logo: store.logoUrl } : {}),
+    ...(store.coverUrl ? { image: store.coverUrl } : {}),
   };
 }
 
@@ -92,6 +113,7 @@ async function Store({ params, searchParams }: PageProps<"/[slug]">) {
 
   return (
     <StoreShell store={store}>
+      <JsonLd data={storeJsonLd(store)} />
       <ClosedBanner store={store} />
       <header>
         {store.coverUrl ? (
@@ -154,7 +176,7 @@ async function Store({ params, searchParams }: PageProps<"/[slug]">) {
             type="search"
             defaultValue={q}
             placeholder={`Search ${store.name}`}
-            className="block min-h-11 w-full rounded-control border border-line bg-paper py-2.5 pr-4 pl-10 text-base text-ink placeholder:text-subtle focus:border-ink focus:bg-surface"
+            className="block min-h-11 w-full rounded-control border border-field bg-surface py-2.5 pr-4 pl-10 text-base text-ink placeholder:text-subtle focus:border-ink"
           />
           {category && <input type="hidden" name="category" value={category} />}
         </form>

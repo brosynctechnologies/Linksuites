@@ -1,4 +1,12 @@
 @import "tailwindcss";
+@import "./suite.css";
+
+/* SchoolLink's colour in the LinkSuite frame (docs/design/linksuite.md): Blazer, white on it, Blazer for accent text. */
+:root {
+  --app: #6b1d33;
+  --app-ink: #ffffff;
+  --app-text: #6b1d33;
+}
 
 /*
  * SchoolLink design tokens (docs/design/schoollink.md).
@@ -22,6 +30,8 @@
   --color-surface: #ffffff;
   --color-rule: #c9d5e3;
   --color-rule-soft: #dde5ee;
+  /* Field: the border of inputs, 3.7:1 on Surface. Rule stays for the decorative lines between rows. */
+  --color-field: #7c8696;
   --color-margin: #d9828f;
   --color-muted: #4f5866;
   --color-faint: #7a8392;
@@ -33,8 +43,9 @@
   --color-brick: #b3261e;
   --color-brick-dark: #8f1d17;
   --color-brick-wash: #f9e7e5;
-  --color-whatsapp: #1da851;
-  --color-whatsapp-dark: #168a42;
+  /* White on it is 5.4:1. */
+  --color-whatsapp: #147a3b;
+  --color-whatsapp-dark: #106331;
 
   /* Neutral scale re-tuned toward Ink with a little blue, so any slate-* utility stays on-palette. */
   --color-slate-50: #f6f8fb;
@@ -115,9 +126,10 @@
     outline: 2px solid var(--focus-ring, #6b1d33);
     outline-offset: 2px;
   }
-  /* Focus ring that stays visible on the Blazer deep bar and rail. */
+  /* Focus ring that stays visible on the Blazer deep bar and rail. suite.css draws every ring from --ls-focus. */
   .on-blazer {
     --focus-ring: #f3c9d4;
+    --ls-focus: #f3c9d4;
   }
   svg {
     flex-shrink: 0;
