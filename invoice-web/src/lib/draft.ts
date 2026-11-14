@@ -5,12 +5,40 @@ import { DEFAULT_ACCENT, STORAGE_PREFIX } from "./config";
 import { addDays, todayISO } from "./dates";
 import { parseNumber } from "./invoice-math";
 import { toMinor } from "./money";
-import type { BusinessDto, ClientDto, InvoiceDto, PreviewRequest, SaveInvoiceRequest, TaxRateDto } from "./types";
+import { FREE_TEMPLATES } from "./templates";
+import { DOCUMENT_TITLES, FONT_STYLE_OPTIONS, HEADER_LINE_OPTIONS, secondaryColorValue, type LetterheadText } from "./letterhead";
+import type {
+  BusinessDto,
+  ClientDto,
+  DocumentTitle,
+  FontStyle,
+  HeaderLine,
+  InvoiceDto,
+  PreviewRequest,
+  SaveInvoiceRequest,
+  TaxRateDto,
+  UpdateBusinessRequest,
+} from "./types";
 import { isBlankLine, newLine, type EditorLine } from "@/components/line-items-editor";
+
+/** The generator's business block: contact details plus the free letterhead choices (no images). */
+export interface DraftBusiness extends LetterheadText {
+  name: string;
+  address: string;
+  email: string;
+  phone: string;
+  taxId: string;
+  bankDetails: string;
+  brandColor: string;
+  headerLine: HeaderLine;
+  fontStyle: FontStyle;
+  documentTitle: DocumentTitle;
+  showSignature: boolean;
+}
 
 /** The free generator's form state, auto-saved to localStorage. */
 export interface GeneratorDraft {
-  business: { name: string; address: string; email: string; phone: string; taxId: string; bankDetails: string; brandColor: string };
+  business: DraftBusiness;
   client: { name: string; company: string; email: string; phone: string; address: string };
   number: string;
   issueDate: string;
@@ -28,7 +56,25 @@ const KEY = `${STORAGE_PREFIX}draft`;
 export function emptyDraft(): GeneratorDraft {
   const today = todayISO();
   return {
-    business: { name: "", address: "", email: "", phone: "", taxId: "", bankDetails: "", brandColor: DEFAULT_ACCENT },
+    business: {
+      name: "",
+      address: "",
+      email: "",
+      phone: "",
+      taxId: "",
+      bankDetails: "",
+      brandColor: DEFAULT_ACCENT,
+      tagline: "",
+      registrationNumber: "",
+      headerLine: "address",
+      secondaryColor: "",
+      fontStyle: "modern",
+      documentTitle: "Invoice",
+      showSignature: false,
+      signatureName: "",
+      signatureRole: "",
+      footerText: "",
+    },
     client: { name: "", company: "", email: "", phone: "", address: "" },
     number: "INV-0001",
     issueDate: today,
@@ -42,16 +88,36 @@ export function emptyDraft(): GeneratorDraft {
   };
 }
 
+function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+}
+
+const text = (value: unknown) => (typeof value === "string" ? value : "");
+
 export function loadDraft(): GeneratorDraft | null {
   try {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return null;
     const d = JSON.parse(raw) as Partial<GeneratorDraft>;
     const base = emptyDraft();
+    const business = { ...base.business, ...d.business };
     return {
       ...base,
       ...d,
-      business: { ...base.business, ...d.business },
+      template: oneOf(d.template, FREE_TEMPLATES.map((t) => t.key), base.template),
+      business: {
+        ...business,
+        tagline: text(business.tagline),
+        registrationNumber: text(business.registrationNumber),
+        secondaryColor: text(business.secondaryColor),
+        signatureName: text(business.signatureName),
+        signatureRole: text(business.signatureRole),
+        footerText: text(business.footerText),
+        headerLine: oneOf(business.headerLine, HEADER_LINE_OPTIONS.map((o) => o.value), base.business.headerLine),
+        fontStyle: oneOf(business.fontStyle, FONT_STYLE_OPTIONS.map((o) => o.value), base.business.fontStyle),
+        documentTitle: oneOf(business.documentTitle, DOCUMENT_TITLES, base.business.documentTitle),
+        showSignature: business.showSignature === true,
+      },
       client: { ...base.client, ...d.client },
       lines: Array.isArray(d.lines) && d.lines.length ? d.lines.map((l) => newLine(l)) : base.lines,
     };
@@ -82,8 +148,27 @@ export function hasImportableDraft(d: GeneratorDraft | null): d is GeneratorDraf
 }
 
 export function toPreviewRequest(d: GeneratorDraft): PreviewRequest {
+  const b = d.business;
   return {
-    business: { ...d.business },
+    business: {
+      name: b.name,
+      address: b.address,
+      email: b.email,
+      phone: b.phone,
+      taxId: b.taxId,
+      bankDetails: b.bankDetails,
+      brandColor: b.brandColor,
+      tagline: b.tagline.trim(),
+      registrationNumber: b.registrationNumber.trim(),
+      headerLine: b.headerLine,
+      secondaryColor: secondaryColorValue(b.secondaryColor),
+      fontStyle: b.fontStyle,
+      documentTitle: b.documentTitle,
+      showSignature: b.showSignature,
+      signatureName: b.signatureName.trim(),
+      signatureRole: b.signatureRole.trim(),
+      footerText: b.footerText.trim(),
+    },
     client: { ...d.client },
     number: d.number,
     issueDate: d.issueDate,
@@ -116,7 +201,12 @@ export async function importDraft(d: GeneratorDraft, onStep?: (label: string) =>
   onStep?.("Saving your business details…");
   const business = await api<BusinessDto>("/api/business");
   const b = d.business;
-  const update = {
+  const keep = (saved: string | null, draft: string) => (blank(saved) ? draft.trim() : saved);
+  // The letterhead was never customised while the slogan and registration number are still empty
+  // and the line under the name is still the default (a deliberate "Nothing" is kept).
+  const fresh = blank(business.tagline) && blank(business.registrationNumber) && business.headerLine === "address";
+  // PUT /api/business keeps letterhead text sent as null and clears it on "", so every field is sent explicitly.
+  const update: UpdateBusinessRequest = {
     legalName: blank(business.legalName) ? b.name.trim() : business.legalName,
     address: blank(business.address) ? b.address : business.address,
     email: blank(business.email) ? b.email : business.email,
@@ -136,6 +226,20 @@ export async function importDraft(d: GeneratorDraft, onStep?: (label: string) =>
     remindersEnabled: business.remindersEnabled,
     reminderDaysBefore: business.reminderDaysBefore,
     reminderDaysAfter: business.reminderDaysAfter ?? [],
+    tagline: keep(business.tagline, b.tagline),
+    registrationNumber: keep(business.registrationNumber, b.registrationNumber),
+    headerLine: fresh ? b.headerLine : business.headerLine,
+    secondaryColor: business.secondaryColor ?? secondaryColorValue(b.secondaryColor),
+    logoSize: business.logoSize,
+    fontStyle: business.fontStyle === "modern" ? b.fontStyle : business.fontStyle,
+    documentTitle: business.documentTitle === "Invoice" ? b.documentTitle : business.documentTitle,
+    showTaxId: business.showTaxId,
+    showRegistrationNumber: business.showRegistrationNumber,
+    showBankDetails: business.showBankDetails,
+    showSignature: business.showSignature || b.showSignature,
+    signatureName: keep(business.signatureName, b.signatureName),
+    signatureRole: keep(business.signatureRole, b.signatureRole),
+    footerText: keep(business.footerText, b.footerText),
   };
   await api<BusinessDto>("/api/business", { method: "PUT", body: update });
 

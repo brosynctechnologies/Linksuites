@@ -156,11 +156,10 @@ public sealed class QuoteService(
 
     internal async Task<byte[]> RenderAsync(Quote quote, BusinessSettings business, DateOnly today, CancellationToken ct)
     {
-        var meta = new List<PdfRow>
+        var dates = new List<PdfRow>
         {
-            new("Quote date", InvoiceWorkspace.Date(quote.IssueDate)),
+            new("Issue date", InvoiceWorkspace.Date(quote.IssueDate)),
             new("Valid until", InvoiceWorkspace.Date(quote.ExpiryDate)),
-            new("Total", Money.Format(quote.TotalMinor, quote.Currency), Strong: true),
         };
         var stamp = quote.DisplayStatus(today) switch
         {
@@ -169,7 +168,8 @@ public sealed class QuoteService(
             QuoteStatus.Expired => "EXPIRED",
             _ => null,
         };
-        var model = InvoiceWorkspace.PdfModel("QUOTE", quote, quote.Items, business, meta, [], stamp, await ws.ShowBrandingAsync(ct));
+        var model = InvoiceWorkspace.PdfModel(DocumentPdfModel.Quote, quote, quote.Items, business, dates, stamp,
+            await ws.ShowBrandingAsync(ct), await ws.BrandImagesAsync(ct));
         return await pdf.RenderAsync(model, ct);
     }
 

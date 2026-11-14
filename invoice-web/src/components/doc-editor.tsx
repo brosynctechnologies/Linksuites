@@ -26,6 +26,7 @@ import type {
   TemplateDto,
 } from "@/lib/types";
 import { ClientPicker, type PickedClient } from "./client-picker";
+import { businessForPreview } from "./doc-view-parts";
 import { InvoicePreview, type PreviewDoc } from "./invoice-preview";
 import { LineItemsEditor, editorLinesFrom, isBlankLine, mathInput, newLine, previewLines, toLineRequests, type EditorLine } from "./line-items-editor";
 import { TemplatePicker } from "./template-picker";
@@ -168,15 +169,7 @@ function EditorForm({
       brandColor: business.brandColor,
       // Padded to 4 digits like the server (InvoiceWorkspace.NextNumberAsync, "D4"): INV-0007, not INV-7.
       number: existing?.number ?? `${prefix ?? ""}${next != null ? String(next).padStart(4, "0") : ""}`,
-      business: {
-        name: business.legalName,
-        logoUrl: business.logoUrl,
-        address: business.address,
-        email: business.email,
-        phone: business.phone,
-        taxId: business.taxId,
-        bankDetails: business.bankDetails,
-      },
+      business: businessForPreview(business),
       client: client ?? { name: "Choose a client" },
       issueDate,
       secondDate,
@@ -335,7 +328,13 @@ function EditorForm({
           </Card>
 
           <Card>
-            <TemplatePicker templates={templates} value={template} onChange={setTemplate} brandColor={business.brandColor} />
+            <TemplatePicker
+              templates={templates}
+              value={template}
+              onChange={setTemplate}
+              brandColor={business.brandColor}
+              secondaryColor={business.secondaryColor}
+            />
           </Card>
         </div>
 

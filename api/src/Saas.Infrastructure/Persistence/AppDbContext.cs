@@ -1071,6 +1071,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.HasIndex(x => x.TenantId).IsUnique();
             e.Property(x => x.Currency).HasMaxLength(3);
             e.Property(x => x.BrandColor).HasMaxLength(7);
+            e.Property(x => x.Tagline).HasMaxLength(100);
+            e.Property(x => x.RegistrationNumber).HasMaxLength(40);
+            e.Property(x => x.HeaderLine).HasMaxLength(20);
+            e.Property(x => x.SecondaryColor).HasMaxLength(7);
+            e.Property(x => x.LogoSize).HasMaxLength(10);
+            e.Property(x => x.FontStyle).HasMaxLength(10);
+            e.Property(x => x.DocumentTitle).HasMaxLength(40);
+            e.Property(x => x.SignatureName).HasMaxLength(80);
+            e.Property(x => x.SignatureRole).HasMaxLength(80);
+            e.Property(x => x.FooterText).HasMaxLength(160);
         });
         b.Entity<Client>().HasIndex(x => new { x.TenantId, x.Name });
         b.Entity<CatalogItem>().HasIndex(x => new { x.TenantId, x.Name });

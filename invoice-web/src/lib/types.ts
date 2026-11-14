@@ -71,8 +71,51 @@ export interface BusinessDto {
   reminderDaysBefore: number | null;
   reminderDaysAfter: number[];
   paystackConnected: boolean;
+  tagline: string | null;
+  registrationNumber: string | null;
+  headerLine: HeaderLine;
+  secondaryColor: string | null;
+  logoSize: LogoSize;
+  fontStyle: FontStyle;
+  documentTitle: DocumentTitle;
+  showTaxId: boolean;
+  showRegistrationNumber: boolean;
+  showBankDetails: boolean;
+  showSignature: boolean;
+  signatureName: string | null;
+  signatureRole: string | null;
+  /** Stored image URLs; the owner always sees them. They print only when `brandImagesAvailable`. */
+  signatureImageUrl: string | null;
+  stampImageUrl: string | null;
+  footerText: string | null;
+  /** The plan includes logo, signature and stamp images (upload and print). */
+  brandImagesAvailable: boolean;
 }
-export type UpdateBusinessRequest = Omit<BusinessDto, "logoUrl" | "country" | "paystackConnected">;
+export type HeaderLine = "tagline" | "address" | "registration" | "none";
+export type LogoSize = "small" | "medium" | "large";
+export type FontStyle = "modern" | "serif" | "sans";
+export type DocumentTitle = "Invoice" | "Tax invoice" | "Bill" | "Pro forma invoice" | "Statement of account";
+/** Letterhead settings in the update body. Omitted choices and switches keep their saved value; omitted text is cleared. */
+type LetterheadKeys =
+  | "tagline"
+  | "registrationNumber"
+  | "headerLine"
+  | "secondaryColor"
+  | "logoSize"
+  | "fontStyle"
+  | "documentTitle"
+  | "showTaxId"
+  | "showRegistrationNumber"
+  | "showBankDetails"
+  | "showSignature"
+  | "signatureName"
+  | "signatureRole"
+  | "footerText";
+export type UpdateBusinessRequest = Omit<
+  BusinessDto,
+  "logoUrl" | "country" | "paystackConnected" | "signatureImageUrl" | "stampImageUrl" | "brandImagesAvailable" | LetterheadKeys
+> &
+  Partial<Pick<BusinessDto, LetterheadKeys>>;
 
 // ---- Tax rates, clients, items ----
 export interface TaxRateDto {
@@ -352,6 +395,23 @@ export interface PublicBusiness {
   taxId: string | null;
   bankDetails: string | null;
   brandColor: string | null;
+  tagline: string | null;
+  registrationNumber: string | null;
+  headerLine: HeaderLine;
+  secondaryColor: string | null;
+  logoSize: LogoSize;
+  fontStyle: FontStyle;
+  documentTitle: DocumentTitle;
+  showTaxId: boolean;
+  showRegistrationNumber: boolean;
+  showBankDetails: boolean;
+  showSignature: boolean;
+  signatureName: string | null;
+  signatureRole: string | null;
+  /** Null unless the business's plan includes images (as are `logoUrl` and `stampImageUrl`). */
+  signatureImageUrl: string | null;
+  stampImageUrl: string | null;
+  footerText: string | null;
 }
 export interface PublicPayment {
   id: string;
@@ -416,6 +476,17 @@ export interface PreviewRequest {
     taxId: string;
     bankDetails: string;
     brandColor: string;
+    /** The free letterhead fields; the generator takes no images. */
+    tagline?: string;
+    registrationNumber?: string;
+    headerLine?: HeaderLine;
+    secondaryColor?: string | null;
+    fontStyle?: FontStyle;
+    documentTitle?: DocumentTitle;
+    showSignature?: boolean;
+    signatureName?: string;
+    signatureRole?: string;
+    footerText?: string;
   };
   client: { name: string; company: string; email: string; phone: string; address: string };
   number: string;

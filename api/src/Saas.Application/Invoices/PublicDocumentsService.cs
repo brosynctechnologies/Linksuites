@@ -224,22 +224,31 @@ public sealed class PublicDocumentsService(
                 TaxRatePercent = l.TaxRatePercent, TaxName = l.TaxRatePercent > 0 ? "Tax" : null, Position = i,
             }).ToList();
         InvoiceMath.Apply(invoice, lines);
+        var pb = r.Business;
         var business = new BusinessSettings
         {
-            LegalName = string.IsNullOrWhiteSpace(r.Business?.Name) ? "Your business" : r.Business.Name.Trim(),
-            Address = r.Business?.Address, Email = r.Business?.Email, Phone = r.Business?.Phone, TaxId = r.Business?.TaxId,
-            BankDetails = r.Business?.BankDetails, BrandColor = color,
+            LegalName = string.IsNullOrWhiteSpace(pb?.Name) ? "Your business" : pb.Name.Trim(),
+            Address = pb?.Address, Email = pb?.Email, Phone = pb?.Phone, TaxId = pb?.TaxId,
+            BankDetails = pb?.BankDetails, BrandColor = color,
+            // The free letterhead fields only; the generator never prints images.
+            Tagline = Text(pb?.Tagline), RegistrationNumber = Text(pb?.RegistrationNumber),
+            HeaderLine = pb?.HeaderLine ?? (string.IsNullOrWhiteSpace(pb?.Address) ? "none" : "address"),
+            SecondaryColor = Text(pb?.SecondaryColor)?.ToLowerInvariant(), FontStyle = pb?.FontStyle ?? "modern",
+            DocumentTitle = pb?.DocumentTitle ?? "Invoice", ShowSignature = pb?.ShowSignature ?? false,
+            SignatureName = Text(pb?.SignatureName), SignatureRole = Text(pb?.SignatureRole), FooterText = Text(pb?.FooterText),
         };
-        var meta = new List<PdfRow>
+        var dates = new List<PdfRow>
         {
-            new("Invoice date", InvoiceWorkspace.Date(invoice.IssueDate)),
+            new("Issue date", InvoiceWorkspace.Date(invoice.IssueDate)),
             new("Due date", InvoiceWorkspace.Date(invoice.DueDate)),
-            new("Amount due", Money.Format(invoice.TotalMinor, currency), Strong: true),
         };
-        return await pdf.RenderAsync(InvoiceWorkspace.PdfModel("INVOICE", invoice, lines, business, meta, [], null, showBranding: true), ct);
+        return await pdf.RenderAsync(InvoiceWorkspace.PdfModel(DocumentPdfModel.Invoice, invoice, lines, business, dates, null,
+            showBranding: true, brandImages: false), ct);
     }
 
     // Helpers
+
+    private static string? Text(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private async Task<bool> CanPayOnlineAsync(Invoice invoice, BusinessSettings business, CancellationToken ct) =>
         business.PaystackSecretKeyProtected is not null
@@ -272,7 +281,7 @@ public sealed class PublicDocumentsService(
         var business = await ws.BusinessAsync(ct);
         var today = await ws.TodayAsync(ct);
         var items = i.Items.OrderBy(l => l.Position).ToList();
-        return new PublicInvoiceDto(i.Number, i.DisplayStatus(today), InvoiceWorkspace.ToPublic(business),
+        return new PublicInvoiceDto(i.Number, i.DisplayStatus(today), InvoiceWorkspace.ToPublic(business, await ws.BrandImagesAsync(ct)),
             InvoiceWorkspace.ToDto(null, i.Client), i.IssueDate, i.DueDate, i.Currency, i.Template,
             items.Select(InvoiceWorkspace.ToDto).ToList(), i.SubtotalMinor, i.DiscountTotalMinor, i.TaxTotalMinor,
             InvoiceMath.Taxes(items), i.ShippingMinor, i.TotalMinor, i.AmountPaidMinor, i.BalanceMinor, i.Notes, i.Terms,
@@ -286,7 +295,7 @@ public sealed class PublicDocumentsService(
         var business = await ws.BusinessAsync(ct);
         var status = q.DisplayStatus(await ws.TodayAsync(ct));
         var items = q.Items.OrderBy(l => l.Position).ToList();
-        return new PublicQuoteDto(q.Number, status, InvoiceWorkspace.ToPublic(business), InvoiceWorkspace.ToDto(null, q.Client),
+        return new PublicQuoteDto(q.Number, status, InvoiceWorkspace.ToPublic(business, await ws.BrandImagesAsync(ct)), InvoiceWorkspace.ToDto(null, q.Client),
             q.IssueDate, q.ExpiryDate, q.Currency, q.Template, items.Select(InvoiceWorkspace.ToDto).ToList(), q.SubtotalMinor,
             q.DiscountTotalMinor, q.TaxTotalMinor, InvoiceMath.Taxes(items), q.ShippingMinor, q.TotalMinor, q.Notes, q.Terms,
             status == QuoteStatus.Sent, await ws.ShowBrandingAsync(ct));

@@ -28,6 +28,9 @@
     <InternalsVisibleTo Include="Saas.IntegrationTests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Invoices\Fonts\*.ttf" LogicalName="InvoiceFonts.%(Filename)%(Extension)" />  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

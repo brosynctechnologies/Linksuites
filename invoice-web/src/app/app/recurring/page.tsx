@@ -274,7 +274,13 @@ function RecurringForm({
       <Card className="space-y-3">
         <Textarea label="Notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
         <Textarea label="Terms" rows={2} value={terms} onChange={(e) => setTerms(e.target.value)} />
-        <TemplatePicker templates={templates} value={template} onChange={setTemplate} brandColor={business.brandColor} />
+        <TemplatePicker
+          templates={templates}
+          value={template}
+          onChange={setTemplate}
+          brandColor={business.brandColor}
+          secondaryColor={business.secondaryColor}
+        />
       </Card>
 
       {error && (typeof error === "string" ? <ErrorBox error={error} /> : <ApiErrorView error={error} />)}

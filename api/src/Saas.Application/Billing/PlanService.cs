@@ -43,6 +43,8 @@ public static class LimitKeys
     // Invoice Generator
     public const string InvoicesPerMonth = "invoices_per_month";
     public const string PremiumTemplates = "premium_templates";
+    /// <summary>Logo, signature and stamp images: uploading them, and printing them on documents.</summary>
+    public const string BrandImages = "brand_images";
     public const string Reminders = "reminders";
     public const string Recurring = "recurring";
     public const string PaymentLinks = "payment_links";

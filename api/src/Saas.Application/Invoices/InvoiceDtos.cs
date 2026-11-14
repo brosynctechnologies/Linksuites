@@ -8,15 +8,29 @@ public sealed record BusinessDto(
     string LegalName, string? LogoUrl, string? Address, string? Email, string? Phone, string? TaxId, string? BankDetails,
     string Currency, string Country, int PaymentTermsDays, string InvoicePrefix, long NextInvoiceNumber, string QuotePrefix,
     long NextQuoteNumber, string DefaultTemplate, string BrandColor, string? DefaultNotes, string? DefaultTerms,
-    bool RemindersEnabled, int? ReminderDaysBefore, IReadOnlyList<int> ReminderDaysAfter, bool PaystackConnected);
+    bool RemindersEnabled, int? ReminderDaysBefore, IReadOnlyList<int> ReminderDaysAfter, bool PaystackConnected,
+    string? Tagline, string? RegistrationNumber, string HeaderLine, string? SecondaryColor, string LogoSize, string FontStyle,
+    string DocumentTitle, bool ShowTaxId, bool ShowRegistrationNumber, bool ShowBankDetails, bool ShowSignature, string? SignatureName,
+    string? SignatureRole, string? SignatureImageUrl, string? StampImageUrl, string? FooterText, bool BrandImagesAvailable);
 
+/// <summary>
+/// The letterhead choices (<c>HeaderLine</c> to <c>ShowSignature</c>) keep their saved value when omitted; the letterhead text
+/// fields are cleared when null or blank, like the other text fields.
+/// </summary>
 public sealed record UpdateBusinessRequest(
     string LegalName, string? Address, string? Email, string? Phone, string? TaxId, string? BankDetails, string Currency,
     int PaymentTermsDays, string InvoicePrefix, long NextInvoiceNumber, string QuotePrefix, long NextQuoteNumber,
     string DefaultTemplate, string BrandColor, string? DefaultNotes, string? DefaultTerms, bool RemindersEnabled,
-    int? ReminderDaysBefore, List<int>? ReminderDaysAfter);
+    int? ReminderDaysBefore, List<int>? ReminderDaysAfter,
+    string? Tagline = null, string? RegistrationNumber = null, string? HeaderLine = null, string? SecondaryColor = null,
+    string? LogoSize = null, string? FontStyle = null, string? DocumentTitle = null, bool? ShowTaxId = null,
+    bool? ShowRegistrationNumber = null, bool? ShowBankDetails = null, bool? ShowSignature = null, string? SignatureName = null,
+    string? SignatureRole = null, string? FooterText = null);
 
 public sealed record PaystackKeyRequest(string SecretKey);
+
+/// <summary>The images a business can put on its documents (a Pro feature).</summary>
+public enum BrandImage { Logo, Signature, Stamp }
 
 public sealed record TaxRateDto(Guid Id, string Name, decimal RatePercent);
 public sealed record SaveTaxRateRequest(string Name, decimal RatePercent);
@@ -120,8 +134,12 @@ public sealed record RecurringDto(
 
 // Public pages
 
+/// <summary>Image URLs (logo, signature, stamp) are null unless the business's plan includes brand images.</summary>
 public sealed record PublicBusinessDto(
-    string Name, string? LogoUrl, string? Address, string? Email, string? Phone, string? TaxId, string? BankDetails, string BrandColor);
+    string Name, string? LogoUrl, string? Address, string? Email, string? Phone, string? TaxId, string? BankDetails, string BrandColor,
+    string? Tagline, string? RegistrationNumber, string HeaderLine, string? SecondaryColor, string LogoSize, string FontStyle,
+    string DocumentTitle, bool ShowTaxId, bool ShowRegistrationNumber, bool ShowBankDetails, bool ShowSignature, string? SignatureName,
+    string? SignatureRole, string? SignatureImageUrl, string? StampImageUrl, string? FooterText);
 public sealed record PublicPaymentDto(Guid Id, long AmountMinor, PaymentMethod Method, DateOnly PaidAt, string ReceiptNumber);
 
 public sealed record PublicInvoiceDto(
@@ -140,7 +158,12 @@ public sealed record PayRequest(string? Email);
 public sealed record VerifyRequest(string Reference);
 public sealed record PayResult(string AuthorizationUrl);
 
-public sealed record PreviewBusiness(string? Name, string? Address, string? Email, string? Phone, string? TaxId, string? BankDetails, string? BrandColor);
+/// <summary>The generator's business: the free letterhead fields only, never images (those are paid).</summary>
+public sealed record PreviewBusiness(
+    string? Name, string? Address, string? Email, string? Phone, string? TaxId, string? BankDetails, string? BrandColor,
+    string? Tagline = null, string? RegistrationNumber = null, string? HeaderLine = null, string? SecondaryColor = null,
+    string? FontStyle = null, string? DocumentTitle = null, bool? ShowSignature = null, string? SignatureName = null,
+    string? SignatureRole = null, string? FooterText = null);
 public sealed record PreviewClient(string? Name, string? Company, string? Email, string? Phone, string? Address);
 public sealed record PreviewLine(string? Description, decimal Quantity, long UnitPriceMinor, decimal DiscountPercent, decimal TaxRatePercent);
 public sealed record PreviewRequest(
@@ -172,7 +195,37 @@ public sealed class UpdateBusinessRequestValidator : AbstractValidator<UpdateBus
         RuleFor(x => x.ReminderDaysBefore).InclusiveBetween(1, 60);
         RuleFor(x => x.ReminderDaysAfter).Must(d => d is null || (d.Count <= 6 && d.All(n => n is >= 1 and <= 120)))
             .WithMessage("Use up to 6 reminders, each 1-120 days after the due date.");
+        RuleFor(x => x.Tagline).MaximumLength(Letterhead.TaglineMax);
+        RuleFor(x => x.RegistrationNumber).MaximumLength(Letterhead.RegistrationNumberMax);
+        RuleFor(x => x.HeaderLine).Must(v => v is null || Letterhead.HeaderLines.Contains(v)).WithMessage(Letterhead.HeaderLineMessage);
+        RuleFor(x => x.SecondaryColor).Must(Letterhead.IsColorOrBlank).WithMessage("Use a hex colour such as #0f766e.");
+        RuleFor(x => x.LogoSize).Must(v => v is null || Letterhead.LogoSizes.Contains(v)).WithMessage("Choose small, medium or large.");
+        RuleFor(x => x.FontStyle).Must(v => v is null || Letterhead.FontStyles.Contains(v)).WithMessage("Choose modern, serif or sans.");
+        RuleFor(x => x.DocumentTitle).Must(v => v is null || Letterhead.DocumentTitles.Contains(v)).WithMessage(Letterhead.DocumentTitleMessage);
+        RuleFor(x => x.SignatureName).MaximumLength(Letterhead.SignatureMax);
+        RuleFor(x => x.SignatureRole).MaximumLength(Letterhead.SignatureMax);
+        RuleFor(x => x.FooterText).MaximumLength(Letterhead.FooterMax);
     }
+}
+
+/// <summary>The letterhead choices a business (or the free generator) can make, with their limits.</summary>
+public static class Letterhead
+{
+    public const int TaglineMax = 100;
+    public const int RegistrationNumberMax = 40;
+    public const int SignatureMax = 80;
+    public const int FooterMax = 160;
+
+    public static readonly IReadOnlyList<string> HeaderLines = ["tagline", "address", "registration", "none"];
+    public static readonly IReadOnlyList<string> LogoSizes = ["small", "medium", "large"];
+    public static readonly IReadOnlyList<string> FontStyles = ["modern", "serif", "sans"];
+    public static readonly IReadOnlyList<string> DocumentTitles = ["Invoice", "Tax invoice", "Bill", "Pro forma invoice", "Statement of account"];
+
+    public const string HeaderLineMessage = "Choose tagline, address, registration or none.";
+    public const string DocumentTitleMessage = "Choose Invoice, Tax invoice, Bill, Pro forma invoice or Statement of account.";
+
+    public static bool IsColorOrBlank(string? value) =>
+        string.IsNullOrWhiteSpace(value) || System.Text.RegularExpressions.Regex.IsMatch(value.Trim(), "^#[0-9a-fA-F]{6}$");
 }
 
 public sealed class SaveTaxRateRequestValidator : AbstractValidator<SaveTaxRateRequest>
@@ -304,6 +357,19 @@ public sealed class PreviewRequestValidator : AbstractValidator<PreviewRequest>
         });
         RuleFor(x => x.Notes).MaximumLength(1000);
         RuleFor(x => x.Terms).MaximumLength(2000);
+        RuleFor(x => x.Business!.Tagline).MaximumLength(Letterhead.TaglineMax).When(x => x.Business is not null);
+        RuleFor(x => x.Business!.RegistrationNumber).MaximumLength(Letterhead.RegistrationNumberMax).When(x => x.Business is not null);
+        RuleFor(x => x.Business!.HeaderLine).Must(v => v is null || Letterhead.HeaderLines.Contains(v))
+            .WithMessage(Letterhead.HeaderLineMessage).When(x => x.Business is not null);
+        RuleFor(x => x.Business!.SecondaryColor).Must(Letterhead.IsColorOrBlank).WithMessage("Use a hex colour such as #0f766e.")
+            .When(x => x.Business is not null);
+        RuleFor(x => x.Business!.FontStyle).Must(v => v is null || Letterhead.FontStyles.Contains(v))
+            .WithMessage("Choose modern, serif or sans.").When(x => x.Business is not null);
+        RuleFor(x => x.Business!.DocumentTitle).Must(v => v is null || Letterhead.DocumentTitles.Contains(v))
+            .WithMessage(Letterhead.DocumentTitleMessage).When(x => x.Business is not null);
+        RuleFor(x => x.Business!.SignatureName).MaximumLength(Letterhead.SignatureMax).When(x => x.Business is not null);
+        RuleFor(x => x.Business!.SignatureRole).MaximumLength(Letterhead.SignatureMax).When(x => x.Business is not null);
+        RuleFor(x => x.Business!.FooterText).MaximumLength(Letterhead.FooterMax).When(x => x.Business is not null);
     }
 }
 
@@ -314,8 +380,13 @@ public static class InvoiceTemplates
         ("classic", "Classic", false),
         ("modern", "Modern", false),
         ("minimal", "Minimal", false),
-        ("bold", "Bold", true),
-        ("elegant", "Elegant", true),
+        ("bold", "Bold", false),
+        ("elegant", "Elegant", false),
+        ("executive", "Executive", true),
+        ("corporate", "Corporate", true),
+        ("ledger", "Ledger", true),
+        ("studio", "Studio", true),
+        ("prestige", "Prestige", true),
     ];
 
     public static bool Exists(string key) => All.Any(t => t.Key == key);

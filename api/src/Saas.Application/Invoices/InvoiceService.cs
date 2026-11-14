@@ -216,16 +216,11 @@ public sealed class InvoiceService(
 
     internal async Task<byte[]> RenderAsync(Invoice invoice, BusinessSettings business, DateOnly today, CancellationToken ct)
     {
-        var c = invoice.Currency;
-        var meta = new List<PdfRow>
+        var dates = new List<PdfRow>
         {
-            new("Invoice date", InvoiceWorkspace.Date(invoice.IssueDate)),
+            new("Issue date", InvoiceWorkspace.Date(invoice.IssueDate)),
             new("Due date", InvoiceWorkspace.Date(invoice.DueDate)),
-            new("Balance due", Money.Format(invoice.BalanceMinor, c), Strong: true),
         };
-        var extra = invoice.AmountPaidMinor > 0
-            ? new List<PdfRow> { new("Amount paid", "-" + Money.Format(invoice.AmountPaidMinor, c)), new("Balance due", Money.Format(invoice.BalanceMinor, c), true) }
-            : [];
         var stamp = invoice.DisplayStatus(today) switch
         {
             InvoiceStatus.Paid => "PAID",
@@ -233,31 +228,16 @@ public sealed class InvoiceService(
             InvoiceStatus.Overdue => "OVERDUE",
             _ => null,
         };
-        var model = InvoiceWorkspace.PdfModel("INVOICE", invoice, invoice.Items, business, meta, extra, stamp, await ws.ShowBrandingAsync(ct));
+        var model = InvoiceWorkspace.PdfModel(DocumentPdfModel.Invoice, invoice, invoice.Items, business, dates, stamp,
+            await ws.ShowBrandingAsync(ct), await ws.BrandImagesAsync(ct));
         return await pdf.RenderAsync(model, ct);
     }
 
     internal async Task<byte[]> RenderReceiptAsync(Invoice invoice, InvoicePayment payment, BusinessSettings business, CancellationToken ct)
     {
-        var c = invoice.Currency;
         var paidBefore = invoice.Payments.Where(p => p.CreatedAt < payment.CreatedAt).Sum(p => p.AmountMinor);
-        var model = new DocumentPdfModel(
-            "RECEIPT", payment.ReceiptNumber, invoice.Template, business.BrandColor, business.LogoUrl,
-            new PdfParty(business.LegalName, new[] { business.Address, business.Email, business.Phone }.OfType<string>().ToList()),
-            new PdfParty(invoice.Client.Name, new[] { invoice.Client.Company, invoice.Client.Email }.OfType<string>().ToList()),
-            [
-                new("Date paid", InvoiceWorkspace.Date(payment.PaidAt)),
-                new("Invoice", invoice.Number),
-                new("Method", payment.Method.ToString()),
-                .. payment.Reference is { } reference ? [new PdfRow("Reference", reference)] : Array.Empty<PdfRow>(),
-            ],
-            [new($"Payment for invoice {invoice.Number}", "1", Money.Format(payment.AmountMinor, c), null, null, Money.Format(payment.AmountMinor, c))],
-            [
-                new("Invoice total", Money.Format(invoice.TotalMinor, c)),
-                new("Amount paid", Money.Format(payment.AmountMinor, c), true),
-                new("Balance remaining", Money.Format(Math.Max(0, invoice.TotalMinor - paidBefore - payment.AmountMinor), c)),
-            ],
-            null, payment.Note, null, "PAID", await ws.ShowBrandingAsync(ct), InvoiceWorkspace.AppName);
+        var model = InvoiceWorkspace.ReceiptPdfModel(invoice, payment, paidBefore, business, await ws.ShowBrandingAsync(ct),
+            await ws.BrandImagesAsync(ct));
         return await pdf.RenderAsync(model, ct);
     }
 

@@ -5503,9 +5503,32 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("default_terms");
 
+                    b.Property<string>("DocumentTitle")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("document_title");
+
                     b.Property<string>("Email")
                         .HasColumnType("text")
                         .HasColumnName("email");
+
+                    b.Property<string>("FontStyle")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("font_style");
+
+                    b.Property<string>("FooterText")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("footer_text");
+
+                    b.Property<string>("HeaderLine")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("header_line");
 
                     b.Property<string>("InvoicePrefix")
                         .IsRequired()
@@ -5516,6 +5539,12 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("legal_name");
+
+                    b.Property<string>("LogoSize")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("logo_size");
 
                     b.Property<string>("LogoUrl")
                         .HasColumnType("text")
@@ -5550,6 +5579,11 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("quote_prefix");
 
+                    b.Property<string>("RegistrationNumber")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("registration_number");
+
                     b.PrimitiveCollection<List<int>>("ReminderDaysAfter")
                         .IsRequired()
                         .HasColumnType("integer[]")
@@ -5562,6 +5596,50 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.Property<bool>("RemindersEnabled")
                         .HasColumnType("boolean")
                         .HasColumnName("reminders_enabled");
+
+                    b.Property<string>("SecondaryColor")
+                        .HasMaxLength(7)
+                        .HasColumnType("character varying(7)")
+                        .HasColumnName("secondary_color");
+
+                    b.Property<bool>("ShowBankDetails")
+                        .HasColumnType("boolean")
+                        .HasColumnName("show_bank_details");
+
+                    b.Property<bool>("ShowRegistrationNumber")
+                        .HasColumnType("boolean")
+                        .HasColumnName("show_registration_number");
+
+                    b.Property<bool>("ShowSignature")
+                        .HasColumnType("boolean")
+                        .HasColumnName("show_signature");
+
+                    b.Property<bool>("ShowTaxId")
+                        .HasColumnType("boolean")
+                        .HasColumnName("show_tax_id");
+
+                    b.Property<string>("SignatureImageUrl")
+                        .HasColumnType("text")
+                        .HasColumnName("signature_image_url");
+
+                    b.Property<string>("SignatureName")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("signature_name");
+
+                    b.Property<string>("SignatureRole")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("signature_role");
+
+                    b.Property<string>("StampImageUrl")
+                        .HasColumnType("text")
+                        .HasColumnName("stamp_image_url");
+
+                    b.Property<string>("Tagline")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("tagline");
 
                     b.Property<string>("TaxId")
                         .HasColumnType("text")

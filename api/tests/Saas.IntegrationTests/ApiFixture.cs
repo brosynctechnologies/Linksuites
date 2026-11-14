@@ -47,10 +47,10 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Storage:LocalPath", Path.Combine(Path.GetTempPath(), "saas-it-uploads"));
         builder.UseSetting("Jobs:InvoicesEnabled", "false");
         builder.UseSetting("Jobs:BookingsEnabled", "false");
-        builder.UseSetting("RateLimits:AuthPerMinute", "1000");
-        builder.UseSetting("RateLimits:PublicWritesPerMinute", "1000");
+        builder.UseSetting("RateLimits:AuthPerMinute", "100000");
+        builder.UseSetting("RateLimits:PublicWritesPerMinute", "100000");
         builder.UseSetting("RateLimits:WebhooksPerMinute", "10000");
-        builder.UseSetting("RateLimits:OtpPer10Minutes", "1000");
+        builder.UseSetting("RateLimits:OtpPer10Minutes", "100000");
         builder.UseSetting("RateLimits:PreviewPerMinute", "1000");
         builder.UseSetting("RateLimits:AdminPerMinute", "1000"); // NextReleaseAuthTests lowers it for its own factory
         builder.UseSetting("Video:ProcessorEnabled", "false");

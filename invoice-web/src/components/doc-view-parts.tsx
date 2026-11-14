@@ -10,21 +10,67 @@ import { Button, ErrorBox, Input, Modal, Textarea } from "./ui";
 
 type AnyDoc = InvoiceDto | QuoteDto | PublicInvoiceDto | PublicQuoteDto;
 
+/**
+ * The letterhead for a preview. Public business DTOs already leave out images the plan doesn't include; the owner's
+ * settings always carry the stored URLs, so they are dropped here unless `brandImagesAvailable`.
+ */
 export function businessForPreview(b: BusinessDto | PublicBusiness | null | undefined): PreviewDoc["business"] & { brandColor?: string | null } {
   if (!b) return { name: "" };
   if ("legalName" in b) {
+    const images = b.brandImagesAvailable;
     return {
       name: b.legalName,
-      logoUrl: b.logoUrl,
+      logoUrl: images ? b.logoUrl : null,
       address: b.address,
       email: b.email,
       phone: b.phone,
       taxId: b.taxId,
       bankDetails: b.bankDetails,
       brandColor: b.brandColor,
+      tagline: b.tagline,
+      registrationNumber: b.registrationNumber,
+      headerLine: b.headerLine,
+      secondaryColor: b.secondaryColor,
+      logoSize: b.logoSize,
+      fontStyle: b.fontStyle,
+      documentTitle: b.documentTitle,
+      showTaxId: b.showTaxId,
+      showRegistrationNumber: b.showRegistrationNumber,
+      showBankDetails: b.showBankDetails,
+      showSignature: b.showSignature,
+      signatureName: b.signatureName,
+      signatureRole: b.signatureRole,
+      signatureImageUrl: images ? b.signatureImageUrl : null,
+      stampImageUrl: images ? b.stampImageUrl : null,
+      footerText: b.footerText,
     };
   }
-  return { ...b };
+  return {
+    name: b.name,
+    logoUrl: b.logoUrl,
+    address: b.address,
+    email: b.email,
+    phone: b.phone,
+    taxId: b.taxId,
+    bankDetails: b.bankDetails,
+    brandColor: b.brandColor,
+    tagline: b.tagline,
+    registrationNumber: b.registrationNumber,
+    headerLine: b.headerLine,
+    secondaryColor: b.secondaryColor,
+    logoSize: b.logoSize,
+    fontStyle: b.fontStyle,
+    documentTitle: b.documentTitle,
+    showTaxId: b.showTaxId,
+    showRegistrationNumber: b.showRegistrationNumber,
+    showBankDetails: b.showBankDetails,
+    showSignature: b.showSignature,
+    signatureName: b.signatureName,
+    signatureRole: b.signatureRole,
+    signatureImageUrl: b.signatureImageUrl,
+    stampImageUrl: b.stampImageUrl,
+    footerText: b.footerText,
+  };
 }
 
 const STAMPS: Record<string, StampKind> = {

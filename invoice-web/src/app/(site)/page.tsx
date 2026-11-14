@@ -92,7 +92,7 @@ const FAQ = [
   },
   {
     q: "Is it really free?",
-    a: "Yes. The free plan has no time limit and needs no card. It includes 10 invoices a month, unlimited quotes and clients, and 3 templates. Invoices on the free plan carry a small “Made with InvoiceLink” line.",
+    a: "Yes. The free plan has no time limit and needs no card. It includes 10 invoices a month, unlimited quotes and clients, and 5 templates. Invoices on the free plan carry a small “Made with InvoiceLink” line.",
   },
   {
     q: "How much do paid plans cost?",
@@ -116,7 +116,15 @@ const FAQ = [
 const SAMPLE: Omit<PreviewDoc, "template" | "brandColor"> = {
   kind: "invoice",
   number: "INV-0042",
-  business: { name: "Ada Designs Ltd", address: "12 Admiralty Way, Lekki, Lagos", email: "hello@adadesigns.ng" },
+  business: {
+    name: "Ada Designs Ltd",
+    tagline: "Brand identity and print design",
+    headerLine: "tagline",
+    address: "12 Admiralty Way, Lekki, Lagos",
+    email: "hello@adadesigns.ng",
+    phone: "0803 123 4567",
+    registrationNumber: "RC 1234567",
+  },
   client: { name: "Tunde Bakare", company: "Bakare Foods" },
   issueDate: "2026-10-01",
   secondDate: "2026-10-15",
@@ -138,6 +146,11 @@ const TEMPLATE_COLOURS: Record<string, string> = {
   minimal: "#1e2430",
   bold: "#c2410c",
   elegant: "#6d28d9",
+  executive: "#1e3a5f",
+  corporate: "#0b5394",
+  ledger: "#2f5d3a",
+  studio: "#db2777",
+  prestige: "#7c2d12",
 };
 
 export default function Landing() {
@@ -215,10 +228,11 @@ export default function Landing() {
 
         <Section
           id="templates"
-          title="Five invoice templates, in your colours"
+          title="Ten invoice templates, in your colours"
           intro={
             <>
-              Each one carries your logo and brand colour onto the PDF. Three come with the free plan; try them in the{" "}
+              Each one prints in your brand colours, with your logo, signature and stamp on Pro. Five come with the free plan and five more
+              with Pro; try the free five in the{" "}
               <Link href="/create" className={lsLink}>
                 free invoice generator
               </Link>
@@ -229,7 +243,7 @@ export default function Landing() {
           {/* On phones the strip scrolls sideways, so it takes focus and can be scrolled with the arrow keys. */}
           <div
             role="region"
-            aria-label="The five templates"
+            aria-label="The ten templates"
             tabIndex={0}
             className="-mx-4 mt-10 overflow-x-auto px-4 pt-2 pb-6 sm:-mx-6 sm:px-6 lg:mx-0 lg:overflow-visible lg:px-0"
           >

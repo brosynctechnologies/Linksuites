@@ -16,8 +16,16 @@ public static class InvoiceEndpoints
         business.MapGet("/", (InvoiceSetupService s, CancellationToken ct) => s.GetBusinessAsync(ct));
         business.MapPut("/", (UpdateBusinessRequest r, InvoiceSetupService s, CancellationToken ct) => s.UpdateBusinessAsync(r, ct))
             .Validate<UpdateBusinessRequest>().RequireAuthorization(Policies.Admin);
-        business.MapPost("/logo", (IFormFile file, InvoiceSetupService s, CancellationToken ct) => s.UploadLogoAsync(file.ToUpload(), ct))
-            .DisableAntiforgery().RequireAuthorization(Policies.Admin);
+        foreach (var (path, kind) in new[] { ("/logo", BrandImage.Logo), ("/signature", BrandImage.Signature), ("/stamp", BrandImage.Stamp) })
+        {
+            business.MapPost(path, (IFormFile file, InvoiceSetupService s, CancellationToken ct) => s.UploadImageAsync(kind, file.ToUpload(), ct))
+                .DisableAntiforgery().RequireAuthorization(Policies.Admin);
+            business.MapDelete(path, async (InvoiceSetupService s, CancellationToken ct) =>
+            {
+                await s.RemoveImageAsync(kind, ct);
+                return Results.NoContent();
+            }).RequireAuthorization(Policies.Admin);
+        }
         business.MapPut("/paystack", (PaystackKeyRequest r, InvoiceSetupService s, CancellationToken ct) => s.SetPaystackKeyAsync(r, ct))
             .RequireAuthorization(Policies.Owner);
         business.MapDelete("/paystack", (InvoiceSetupService s, CancellationToken ct) => s.RemovePaystackKeyAsync(ct))

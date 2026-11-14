@@ -30,6 +30,25 @@ public class BusinessSettings : TenantEntity
     public List<int> ReminderDaysAfter { get; set; } = [1, 7, 14];
     /// <summary>The business's own Paystack secret key, encrypted. Online payments go straight to them.</summary>
     public string? PaystackSecretKeyProtected { get; set; }
+
+    // Letterhead: how documents look. Images (logo, signature, stamp) print only while the plan includes brand images.
+    public string? Tagline { get; set; }
+    public string? RegistrationNumber { get; set; }
+    /// <summary>The line under the business name: tagline, address, registration or none.</summary>
+    public string HeaderLine { get; set; } = "address";
+    public string? SecondaryColor { get; set; }
+    public string LogoSize { get; set; } = "medium";
+    public string FontStyle { get; set; } = "modern";
+    public string DocumentTitle { get; set; } = "Invoice";
+    public bool ShowTaxId { get; set; } = true;
+    public bool ShowRegistrationNumber { get; set; } = true;
+    public bool ShowBankDetails { get; set; } = true;
+    public bool ShowSignature { get; set; }
+    public string? SignatureName { get; set; }
+    public string? SignatureRole { get; set; }
+    public string? SignatureImageUrl { get; set; }
+    public string? StampImageUrl { get; set; }
+    public string? FooterText { get; set; }
 }
 
 public class Client : TenantEntity

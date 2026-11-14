@@ -146,9 +146,9 @@ public static class DataSeeder
                 {
                     [LimitKeys.InvoicesPerMonth] = 10, [LimitKeys.PremiumTemplates] = 0, [LimitKeys.Reminders] = 0,
                     [LimitKeys.Recurring] = 0, [LimitKeys.PaymentLinks] = 0, [LimitKeys.RemoveBranding] = 0,
-                    [LimitKeys.Expenses] = 0, [LimitKeys.Reports] = 0, [LimitKeys.TeamSeats] = 1,
+                    [LimitKeys.Expenses] = 0, [LimitKeys.Reports] = 0, [LimitKeys.TeamSeats] = 1, [LimitKeys.BrandImages] = 0,
                 },
-                Features = ["10 invoices a month", "Unlimited quotes and clients", "3 templates", "PDF, email and WhatsApp sharing"],
+                Features = ["10 invoices a month", "Unlimited quotes and clients", "5 templates", "PDF, email and WhatsApp sharing"],
             },
             new Plan
             {
@@ -158,10 +158,10 @@ public static class DataSeeder
                 {
                     [LimitKeys.InvoicesPerMonth] = -1, [LimitKeys.PremiumTemplates] = 1, [LimitKeys.Reminders] = 1,
                     [LimitKeys.Recurring] = 1, [LimitKeys.PaymentLinks] = 1, [LimitKeys.RemoveBranding] = 1,
-                    [LimitKeys.Expenses] = 0, [LimitKeys.Reports] = 0, [LimitKeys.TeamSeats] = 1,
+                    [LimitKeys.Expenses] = 0, [LimitKeys.Reports] = 0, [LimitKeys.TeamSeats] = 1, [LimitKeys.BrandImages] = 1,
                 },
-                Features = ["Unlimited invoices", "All 5 templates", "Pay-now links on invoices", "Automatic payment reminders",
-                    "Recurring invoices", "Remove branding"],
+                Features = ["Unlimited invoices", "All 10 templates", "Pay-now links on invoices", "Automatic payment reminders",
+                    "Recurring invoices", "Remove branding", "Your logo, signature and stamp on documents"],
             },
             new Plan
             {
@@ -171,7 +171,7 @@ public static class DataSeeder
                 {
                     [LimitKeys.InvoicesPerMonth] = -1, [LimitKeys.PremiumTemplates] = 1, [LimitKeys.Reminders] = 1,
                     [LimitKeys.Recurring] = 1, [LimitKeys.PaymentLinks] = 1, [LimitKeys.RemoveBranding] = 1,
-                    [LimitKeys.Expenses] = 1, [LimitKeys.Reports] = 1, [LimitKeys.TeamSeats] = 10,
+                    [LimitKeys.Expenses] = 1, [LimitKeys.Reports] = 1, [LimitKeys.TeamSeats] = 10, [LimitKeys.BrandImages] = 1,
                 },
                 Features = ["Everything in Pro", "Expense tracking with receipts", "Profit & loss report",
                     "Team of up to 10, including your accountant"],

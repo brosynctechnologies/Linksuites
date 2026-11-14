@@ -1,19 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState, type FormEvent } from "react";
-import { api, asList, toApiError, upload, type ApiError } from "@/lib/api";
+import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { ApiError, api, asList, toApiError, upload } from "@/lib/api";
 import { patchAuth, useAuth } from "@/lib/auth";
 import { CURRENCIES, DEFAULT_ACCENT } from "@/lib/config";
-import { TEMPLATES, normalizeColor } from "@/lib/templates";
+import { addDays, todayISO } from "@/lib/dates";
+import { computeLine, computeTotals, type MathLineInput } from "@/lib/invoice-math";
+import {
+  DOCUMENT_TITLES,
+  FONT_STYLE_OPTIONS,
+  HEADER_LINE_OPTIONS,
+  LETTERHEAD_LIMITS,
+  LOGO_SIZE_OPTIONS,
+  letterheadErrors,
+  secondaryColorValue,
+  type LetterheadText,
+} from "@/lib/letterhead";
+import { TEMPLATES, normalizeColor, parseColor } from "@/lib/templates";
 import { useApi } from "@/lib/use-api";
 import { useCan } from "@/lib/permissions";
 import { formatRate, useExchangeRates } from "@/lib/fx";
 import { RatesAttribution } from "@/components/fx";
-import type { BillingDto, BusinessDto, TaxRateDto, TemplateDto, UpdateBusinessRequest } from "@/lib/types";
+import type { BillingDto, BusinessDto, DocumentTitle, FontStyle, HeaderLine, LogoSize, TaxRateDto, TemplateDto, UpdateBusinessRequest } from "@/lib/types";
 import { TemplatePicker } from "@/components/template-picker";
 import { AccountActivity } from "@/components/account-activity";
 import { ChangePassword } from "@/components/change-password";
+import { businessForPreview } from "@/components/doc-view-parts";
+import { useFocusFirstInvalid } from "@/components/form-focus";
+import { InvoicePreview, type PreviewDoc } from "@/components/invoice-preview";
+import { SecondAccentField } from "@/components/letterhead-fields";
 import {
   ApiErrorView,
   Badge,
@@ -30,8 +46,11 @@ import {
   StatusBadge,
   Textarea,
   Toggle,
+  cx,
+  labelClass,
+  linkClass,
 } from "@/components/ui";
-import { ImageIcon, TrashIcon } from "@/components/icons";
+import { ImageIcon, LockIcon, TrashIcon } from "@/components/icons";
 
 export default function SettingsPage() {
   const canView = useCan("settings.view");
@@ -62,7 +81,6 @@ export default function SettingsPage() {
       {!business.data && !business.error && <PageLoader />}
       {business.data && (
         <fieldset disabled={!canEdit} className="min-w-0 space-y-6">
-          <LogoCard business={business.data} onChange={business.setData} />
           <BusinessForm
             readOnly={!canEdit}
             business={business.data}
@@ -81,69 +99,181 @@ export default function SettingsPage() {
   );
 }
 
-function LogoCard({ business, onChange }: { business: BusinessDto; onChange: (b: BusinessDto) => void }) {
+const BRAND_IMAGES = [
+  {
+    kind: "logo",
+    field: "logoUrl",
+    label: "Logo",
+    noun: "logo",
+    hint: "JPEG, PNG or WebP, up to 5 MB. Shown at the top of every document.",
+  },
+  {
+    kind: "signature",
+    field: "signatureImageUrl",
+    label: "Signature",
+    noun: "signature",
+    hint: "A transparent PNG of your handwritten signature looks best. Printed on the signature line.",
+  },
+  {
+    kind: "stamp",
+    field: "stampImageUrl",
+    label: "Company stamp",
+    noun: "stamp",
+    hint: "Your stamp or seal, placed beside the signature. A transparent PNG looks best.",
+  },
+] as const;
+
+type BrandImage = (typeof BRAND_IMAGES)[number];
+
+/** Logo, signature and stamp uploads. Uploading needs Pro or Business; removing works on every plan. */
+function BrandImages({ business, onChange }: { business: BusinessDto; onChange: (b: BusinessDto) => void }) {
+  const available = business.brandImagesAvailable;
+  return (
+    <div className="space-y-3">
+      {!available && (
+        <p className="flex items-center gap-2 text-sm text-slate-600">
+          <LockIcon className="h-4 w-4 shrink-0 text-muted" aria-hidden="true" />
+          <Link href="/app/billing" className={linkClass}>
+            Add your logo, signature and stamp with Pro
+          </Link>
+        </p>
+      )}
+      <ul className="space-y-3">
+        {BRAND_IMAGES.map((spec) => (
+          <ImageSlot key={spec.kind} spec={spec} business={business} available={available} onChange={onChange} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ImageSlot({
+  spec,
+  business,
+  available,
+  onChange,
+}: {
+  spec: BrandImage;
+  business: BusinessDto;
+  available: boolean;
+  onChange: (b: BusinessDto) => void;
+}) {
   const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"upload" | "remove" | null>(null);
   const [error, setError] = useState<ApiError | string | null>(null);
+  const url = business[spec.field];
 
   async function onFile(file: File | undefined) {
     if (!file) return;
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) return setError("Use a JPEG, PNG or WebP image.");
-    if (file.size > 5 * 1024 * 1024) return setError("The logo must be 5 MB or smaller.");
-    setBusy(true);
+    if (file.size > 5 * 1024 * 1024) return setError("The image must be 5 MB or smaller.");
+    setBusy("upload");
     setError(null);
     try {
-      onChange(await upload<BusinessDto>("/api/business/logo", file));
+      onChange(await upload<BusinessDto>(`/api/business/${spec.kind}`, file));
     } catch (e) {
       setError(toApiError(e));
     } finally {
-      setBusy(false);
+      setBusy(null);
       if (input.current) input.current.value = "";
     }
   }
 
+  async function remove() {
+    if (!window.confirm(`Remove your ${spec.noun}? You can upload it again at any time.`)) return;
+    setBusy("remove");
+    setError(null);
+    try {
+      await api(`/api/business/${spec.kind}`, { method: "DELETE" });
+      onChange({ ...business, [spec.field]: null });
+    } catch (e) {
+      setError(toApiError(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
-    <Card>
-      <SectionTitle>Logo</SectionTitle>
-      <div className="flex items-center gap-4">
-        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-control border border-rule bg-slate-50">
-          {business.logoUrl ? (
-            <img src={business.logoUrl} alt="Business logo" className="max-h-full max-w-full object-contain" />
-          ) : (
-            <ImageIcon className="text-faint" width={28} height={28} />
-          )}
-        </div>
-        <div>
+    <li className="flex items-start gap-3">
+      <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-control border border-rule bg-slate-50">
+        {url ? (
+          <img src={url} alt={`Your ${spec.noun}`} className={cx("max-h-full max-w-full object-contain", !available && "opacity-50")} />
+        ) : available ? (
+          <ImageIcon className="text-faint" width={24} height={24} aria-hidden="true" />
+        ) : (
+          <LockIcon className="h-5 w-5 text-faint" aria-hidden="true" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-slate-800">{spec.label}</p>
+        {available && (
           <input
             ref={input}
-            id="logo-file"
             type="file"
             accept="image/jpeg,image/png,image/webp"
             className="sr-only"
+            tabIndex={-1}
+            aria-label={`Choose a ${spec.noun} image`}
             onChange={(e) => onFile(e.target.files?.[0])}
           />
-          <Button variant="secondary" loading={busy} onClick={() => input.current?.click()}>
-            {business.logoUrl ? "Change logo" : "Upload logo"}
-          </Button>
-          <p className="mt-1.5 text-xs text-muted">JPEG, PNG or WebP, up to 5 MB. Shown on invoices and quotes.</p>
+        )}
+        <div className="mt-1 flex flex-wrap gap-2">
+          {available ? (
+            <Button variant="secondary" className="min-h-8 px-3 py-1" loading={busy === "upload"} disabled={!!busy} onClick={() => input.current?.click()}>
+              {url ? `Change ${spec.noun}` : `Upload ${spec.noun}`}
+            </Button>
+          ) : (
+            <Button variant="secondary" className="min-h-8 px-3 py-1" disabled aria-describedby={`${spec.kind}-locked`}>
+              <LockIcon className="h-3.5 w-3.5" aria-hidden="true" /> Upload {spec.noun}
+            </Button>
+          )}
+          {url && (
+            <Button variant="ghost" className="min-h-8 px-2 py-1 text-overdue" loading={busy === "remove"} disabled={!!busy} onClick={remove}>
+              <TrashIcon className="h-4 w-4" aria-hidden="true" /> Remove
+            </Button>
+          )}
         </div>
+        <p id={`${spec.kind}-locked`} className="mt-1 text-xs text-muted">
+          {available ? spec.hint : url ? "Kept, but not shown on documents on the Free plan." : "Part of the Pro plan."}
+        </p>
+        {error && (
+          <div className="mt-2">{typeof error === "string" ? <ErrorBox error={error} /> : <ApiErrorView error={error} />}</div>
+        )}
       </div>
-      {error && (
-        <div className="mt-3">
-          <ErrorBox error={error} />
-        </div>
-      )}
-    </Card>
+    </li>
   );
 }
 
-type FormState = Omit<UpdateBusinessRequest, "paymentTermsDays" | "nextInvoiceNumber" | "nextQuoteNumber" | "reminderDaysBefore" | "reminderDaysAfter"> & {
-  paymentTermsDays: string;
-  nextInvoiceNumber: string;
-  nextQuoteNumber: string;
-  reminderDaysBefore: string;
-  reminderDaysAfter: string;
-};
+function DesignGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-semibold text-graphite">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+/** Sample lines for the design preview (minor units). */
+const SAMPLE_LINES: (MathLineInput & { description: string })[] = [
+  { description: "Brand identity design", quantity: 1, unitPriceMinor: 35_000_000, discountPercent: 0, ratePercent: 7.5, taxName: "VAT" },
+  { description: "Business cards, box of 100", quantity: 4, unitPriceMinor: 1_250_000, discountPercent: 0, ratePercent: 7.5, taxName: "VAT" },
+  { description: "Delivery within Lagos", quantity: 1, unitPriceMinor: 500_000, discountPercent: 0, ratePercent: 0 },
+];
+
+const SAMPLE_CLIENT = { name: "Ada Okafor", company: "Bright Foods Ltd", address: "14 Admiralty Way, Lekki, Lagos", email: "ada@brightfoods.ng" };
+
+type NumberKeys = "paymentTermsDays" | "nextInvoiceNumber" | "nextQuoteNumber" | "reminderDaysBefore" | "reminderDaysAfter";
+type ChoiceKeys = "headerLine" | "logoSize" | "fontStyle" | "documentTitle" | "showTaxId" | "showRegistrationNumber" | "showBankDetails" | "showSignature";
+
+type FormState = Omit<UpdateBusinessRequest, NumberKeys | ChoiceKeys | keyof LetterheadText> &
+  LetterheadText &
+  Pick<BusinessDto, ChoiceKeys> & {
+    paymentTermsDays: string;
+    nextInvoiceNumber: string;
+    nextQuoteNumber: string;
+    reminderDaysBefore: string;
+    reminderDaysAfter: string;
+  };
 
 function toForm(b: BusinessDto): FormState {
   return {
@@ -166,6 +296,20 @@ function toForm(b: BusinessDto): FormState {
     remindersEnabled: !!b.remindersEnabled,
     reminderDaysBefore: b.reminderDaysBefore === null || b.reminderDaysBefore === undefined ? "" : String(b.reminderDaysBefore),
     reminderDaysAfter: (b.reminderDaysAfter ?? []).join(", "),
+    tagline: b.tagline ?? "",
+    registrationNumber: b.registrationNumber ?? "",
+    headerLine: b.headerLine ?? "address",
+    secondaryColor: b.secondaryColor ?? "",
+    logoSize: b.logoSize ?? "medium",
+    fontStyle: b.fontStyle ?? "modern",
+    documentTitle: b.documentTitle ?? "Invoice",
+    showTaxId: b.showTaxId ?? true,
+    showRegistrationNumber: b.showRegistrationNumber ?? true,
+    showBankDetails: b.showBankDetails ?? true,
+    showSignature: b.showSignature ?? false,
+    signatureName: b.signatureName ?? "",
+    signatureRole: b.signatureRole ?? "",
+    footerText: b.footerText ?? "",
   };
 }
 
@@ -196,18 +340,83 @@ function BusinessForm({
   // Set once the API refuses a base-currency change (400: invoices or expenses already exist).
   const [currencyLock, setCurrencyLock] = useState<string | null>(null);
   const set = (k: keyof FormState) => (e: { target: { value: string } }) => setF((s) => ({ ...s, [k]: e.target.value }));
+  const setValue = <K extends keyof FormState>(k: K, v: FormState[K]) => setF((s) => ({ ...s, [k]: v }));
+  const root = useRef<HTMLDivElement>(null);
+  useFocusFirstInvalid(root, error);
+  const fieldError = (name: string) => (error && typeof error.error !== "string" ? error.error.field(name) : undefined);
+
+  const preview = useMemo<PreviewDoc>(() => {
+    const today = todayISO();
+    const totals = computeTotals(SAMPLE_LINES);
+    const next = Math.max(1, int(f.nextInvoiceNumber, 1));
+    return {
+      kind: "invoice",
+      template: f.defaultTemplate,
+      brandColor: f.brandColor,
+      number: `${f.invoicePrefix.trim()}${String(next).padStart(4, "0")}`,
+      business: {
+        ...businessForPreview(business),
+        name: f.legalName.trim() || business.legalName,
+        address: orNull(f.address),
+        email: orNull(f.email),
+        phone: orNull(f.phone),
+        taxId: orNull(f.taxId),
+        bankDetails: orNull(f.bankDetails),
+        tagline: orNull(f.tagline),
+        registrationNumber: orNull(f.registrationNumber),
+        headerLine: f.headerLine,
+        secondaryColor: parseColor(f.secondaryColor),
+        logoSize: f.logoSize,
+        fontStyle: f.fontStyle,
+        documentTitle: f.documentTitle,
+        showTaxId: f.showTaxId,
+        showRegistrationNumber: f.showRegistrationNumber,
+        showBankDetails: f.showBankDetails,
+        showSignature: f.showSignature,
+        signatureName: orNull(f.signatureName),
+        signatureRole: orNull(f.signatureRole),
+        footerText: orNull(f.footerText),
+      },
+      client: SAMPLE_CLIENT,
+      issueDate: today,
+      secondDate: addDays(today, int(f.paymentTermsDays, 14)),
+      currency: f.currency,
+      lines: SAMPLE_LINES.map((l) => ({
+        description: l.description,
+        quantity: l.quantity,
+        unitPriceMinor: l.unitPriceMinor,
+        discountPercent: l.discountPercent,
+        taxLabel: l.ratePercent ? `${l.taxName ?? "Tax"} ${l.ratePercent}%` : null,
+        lineTotalMinor: computeLine(l).lineTotal,
+      })),
+      subtotalMinor: totals.subtotalMinor,
+      discountTotalMinor: totals.discountTotalMinor,
+      taxes: totals.taxes,
+      shippingMinor: totals.shippingMinor,
+      totalMinor: totals.totalMinor,
+      amountPaidMinor: totals.amountPaidMinor,
+      balanceMinor: totals.balanceMinor,
+      notes: f.defaultNotes,
+      terms: f.defaultTerms,
+    };
+  }, [f, business]);
 
   async function save(section: string, e?: FormEvent) {
     e?.preventDefault();
     setError(null);
     setSaved(null);
-    if (!f.legalName.trim()) return setError({ section, error: "Business name is required." });
+    const invalid: Record<string, string[]> = {};
+    if (!f.legalName.trim()) invalid.legalName = ["Business name is required."];
     const after = f.reminderDaysAfter
       .split(/[,\s]+/)
       .map((s) => s.trim())
       .filter(Boolean)
       .map(Number);
-    if (after.some((n) => !Number.isInteger(n) || n < 0)) return setError({ section, error: "Reminder days must be whole numbers, e.g. 1, 7, 14." });
+    if (after.some((n) => !Number.isInteger(n) || n < 0)) invalid.reminderDaysAfter = ["Reminder days must be whole numbers, e.g. 1, 7, 14."];
+    Object.assign(invalid, letterheadErrors(f));
+    if (Object.keys(invalid).length > 0) {
+      return setError({ section, error: new ApiError(400, { detail: "Check the highlighted fields:", errors: invalid }) });
+    }
     const body: UpdateBusinessRequest = {
       legalName: f.legalName.trim(),
       address: orNull(f.address),
@@ -228,6 +437,21 @@ function BusinessForm({
       remindersEnabled: f.remindersEnabled,
       reminderDaysBefore: f.reminderDaysBefore.trim() === "" ? null : int(f.reminderDaysBefore),
       reminderDaysAfter: [...new Set(after)].sort((a, b) => a - b),
+      // PUT /api/business keeps letterhead text that is left out or null; "" clears it, so an emptied field sends "".
+      tagline: f.tagline.trim(),
+      registrationNumber: f.registrationNumber.trim(),
+      headerLine: f.headerLine,
+      secondaryColor: secondaryColorValue(f.secondaryColor) ?? "",
+      logoSize: f.logoSize,
+      fontStyle: f.fontStyle,
+      documentTitle: f.documentTitle,
+      showTaxId: f.showTaxId,
+      showRegistrationNumber: f.showRegistrationNumber,
+      showBankDetails: f.showBankDetails,
+      showSignature: f.showSignature,
+      signatureName: f.signatureName.trim(),
+      signatureRole: f.signatureRole.trim(),
+      footerText: f.footerText.trim(),
     };
     setBusy(section);
     try {
@@ -263,12 +487,12 @@ function BusinessForm({
   );
 
   return (
-    <>
-      <form onSubmit={(e) => save("profile", e)}>
+    <div ref={root} className="space-y-6">
+      <form onSubmit={(e) => save("profile", e)} noValidate>
         <Card>
           <SectionTitle>Business profile</SectionTitle>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Input label="Business / legal name" required value={f.legalName} onChange={set("legalName")} />
+            <Input label="Business / legal name" required value={f.legalName} onChange={set("legalName")} error={fieldError("legalName")} />
             <Input label="Email" type="email" value={f.email ?? ""} onChange={set("email")} hint="Shown on invoices; client replies go here." />
             <Input label="Phone" type="tel" value={f.phone ?? ""} onChange={set("phone")} />
             <Input label="Tax ID" value={f.taxId ?? ""} onChange={set("taxId")} />
@@ -287,6 +511,177 @@ function BusinessForm({
             </div>
           </div>
           {footer("profile")}
+        </Card>
+      </form>
+
+      <form onSubmit={(e) => save("design", e)} noValidate>
+        <Card>
+          <SectionTitle>Invoice design</SectionTitle>
+          <p className="-mt-1 mb-4 text-sm text-slate-600">
+            How your invoices, quotes and receipts look. Changes apply to every document, including ones already sent.
+          </p>
+          <TemplatePicker
+            label="Design"
+            templates={templates}
+            value={f.defaultTemplate}
+            onChange={(k) => setValue("defaultTemplate", k)}
+            brandColor={f.brandColor}
+            secondaryColor={f.secondaryColor}
+          />
+          <div className="mt-5 grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="min-w-0 md:order-2">
+              <div className="md:sticky md:top-4">
+                <p className="mb-2 text-xs text-muted">Preview with sample lines</p>
+                <InvoicePreview doc={preview} />
+              </div>
+            </div>
+
+            <div className="min-w-0 space-y-6">
+              <DesignGroup title="Colours">
+                <div className="space-y-1.5">
+                  <label htmlFor="brand-color" className={labelClass}>
+                    Brand colour
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      id="brand-color"
+                      type="color"
+                      value={normalizeColor(f.brandColor ?? DEFAULT_ACCENT)}
+                      onChange={set("brandColor")}
+                      className="h-10 w-14 cursor-pointer rounded-control border border-rule bg-paper p-1"
+                    />
+                    <span className="text-sm text-muted tabular-nums">{f.brandColor}</span>
+                  </div>
+                </div>
+                <SecondAccentField
+                  id="second-accent"
+                  brandColor={f.brandColor}
+                  value={f.secondaryColor}
+                  onChange={(v) => setValue("secondaryColor", v)}
+                  error={fieldError("secondaryColor")}
+                />
+              </DesignGroup>
+
+              <DesignGroup title="Logo, signature and stamp">
+                <BrandImages business={business} onChange={onSaved} />
+              </DesignGroup>
+
+              <DesignGroup title="Letterhead">
+                <Select
+                  label="Logo size"
+                  value={f.logoSize}
+                  onChange={(e) => setValue("logoSize", e.target.value as LogoSize)}
+                  hint={business.brandImagesAvailable ? undefined : "Used when your logo is shown, on Pro."}
+                >
+                  {LOGO_SIZE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+                <Select label="Font style" value={f.fontStyle} onChange={(e) => setValue("fontStyle", e.target.value as FontStyle)}>
+                  {FONT_STYLE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+                <Select
+                  label="Document title"
+                  value={f.documentTitle}
+                  onChange={(e) => setValue("documentTitle", e.target.value as DocumentTitle)}
+                  hint="Used on invoices. Quotes and receipts keep their own titles."
+                >
+                  {DOCUMENT_TITLES.map((t) => (
+                    <option key={t}>{t}</option>
+                  ))}
+                </Select>
+                <Select
+                  label="Line under your name"
+                  value={f.headerLine}
+                  onChange={(e) => setValue("headerLine", e.target.value as HeaderLine)}
+                >
+                  {HEADER_LINE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+                <Input
+                  label="Slogan or what you do"
+                  value={f.tagline}
+                  onChange={set("tagline")}
+                  maxLength={LETTERHEAD_LIMITS.tagline}
+                  placeholder="Bespoke tailoring for men and women"
+                  error={fieldError("tagline")}
+                />
+                <Input
+                  label="Registration number"
+                  value={f.registrationNumber}
+                  onChange={set("registrationNumber")}
+                  maxLength={LETTERHEAD_LIMITS.registrationNumber}
+                  placeholder="RC 1234567"
+                  hint="Printed as “Reg. no. RC 1234567”."
+                  error={fieldError("registrationNumber")}
+                />
+              </DesignGroup>
+
+              <DesignGroup title="Show on documents">
+                <Toggle checked={f.showTaxId} onChange={(v) => setValue("showTaxId", v)} label="Tax ID" description="From your business profile." />
+                <Toggle
+                  checked={f.showRegistrationNumber}
+                  onChange={(v) => setValue("showRegistrationNumber", v)}
+                  label="Registration number"
+                  description="In the contact details, unless it is the line under your name."
+                />
+                <Toggle
+                  checked={f.showBankDetails}
+                  onChange={(v) => setValue("showBankDetails", v)}
+                  label="Bank details"
+                  description="On invoices, so clients can pay by transfer."
+                />
+                <Toggle
+                  checked={f.showSignature}
+                  onChange={(v) => setValue("showSignature", v)}
+                  label="Signature line"
+                  description="An “Authorised signature” line at the end of the document."
+                />
+              </DesignGroup>
+
+              <DesignGroup title="Signature line">
+                <Input
+                  label="Name"
+                  value={f.signatureName}
+                  onChange={set("signatureName")}
+                  maxLength={LETTERHEAD_LIMITS.signatureName}
+                  placeholder="Ada Okafor"
+                  error={fieldError("signatureName")}
+                />
+                <Input
+                  label="Role"
+                  value={f.signatureRole}
+                  onChange={set("signatureRole")}
+                  maxLength={LETTERHEAD_LIMITS.signatureRole}
+                  placeholder="Director"
+                  hint={f.showSignature ? undefined : "Printed when the signature line is switched on."}
+                  error={fieldError("signatureRole")}
+                />
+              </DesignGroup>
+
+              <DesignGroup title="Footer">
+                <Input
+                  label="Footer line"
+                  value={f.footerText}
+                  onChange={set("footerText")}
+                  maxLength={LETTERHEAD_LIMITS.footerText}
+                  placeholder="Thank you for your business."
+                  hint="Printed at the bottom of every page."
+                  error={fieldError("footerText")}
+                />
+              </DesignGroup>
+            </div>
+          </div>
+          {footer("design")}
         </Card>
       </form>
 
@@ -310,30 +705,6 @@ function BusinessForm({
             <Input label="Next invoice no." inputMode="numeric" value={f.nextInvoiceNumber} onChange={set("nextInvoiceNumber")} />
             <Input label="Quote prefix" value={f.quotePrefix} onChange={set("quotePrefix")} placeholder="QT-" />
             <Input label="Next quote no." inputMode="numeric" value={f.nextQuoteNumber} onChange={set("nextQuoteNumber")} />
-            <div className="col-span-2 flex items-end gap-3">
-              <div>
-                <label htmlFor="brand-color" className="block text-sm font-medium text-slate-700">
-                  Brand colour
-                </label>
-                <input
-                  id="brand-color"
-                  type="color"
-                  value={f.brandColor ?? DEFAULT_ACCENT}
-                  onChange={set("brandColor")}
-                  className="mt-1.5 h-10 w-16 cursor-pointer rounded-control border border-rule bg-paper p-1"
-                />
-              </div>
-              <span className="pb-2.5 text-sm text-muted tabular-nums">{f.brandColor}</span>
-            </div>
-          </div>
-          <div className="mt-4">
-            <TemplatePicker
-              label="Default template"
-              templates={templates}
-              value={f.defaultTemplate}
-              onChange={(k) => setF((s) => ({ ...s, defaultTemplate: k }))}
-              brandColor={f.brandColor}
-            />
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <Textarea label="Default notes" rows={3} value={f.defaultNotes ?? ""} onChange={set("defaultNotes")} placeholder="Thank you for your business!" />
@@ -380,13 +751,14 @@ function BusinessForm({
                 disabled={isPro === false || !f.remindersEnabled}
                 placeholder="1, 7, 14"
                 hint="Comma-separated, e.g. 1, 7, 14"
+                error={fieldError("reminderDaysAfter")}
               />
             </div>
           </div>
           {isPro !== false && footer("reminders")}
         </Card>
       </form>
-    </>
+    </div>
   );
 }
 

@@ -41,14 +41,18 @@ public sealed class InvoicesUsage(IAppDbContext db, InvoiceWorkspace workspace) 
 public sealed class InvoiceSetupService(
     IAppDbContext db, InvoiceWorkspace workspace, IFileStorage storage, ISecretProtector secrets, PlanService plans, MerchantKeyRules keyRules)
 {
-    public async Task<BusinessDto> GetBusinessAsync(CancellationToken ct) => ToDto(await workspace.BusinessAsync(ct), await workspace.CountryAsync(ct));
+    public const string BrandImagesMessage = "Your logo, signature and stamp are part of the Pro plan. Upgrade to add them.";
+
+    public async Task<BusinessDto> GetBusinessAsync(CancellationToken ct) => await DtoAsync(await workspace.BusinessAsync(ct), ct);
 
     public async Task<BusinessDto> UpdateBusinessAsync(UpdateBusinessRequest r, CancellationToken ct)
     {
         var b = await workspace.BusinessAsync(ct);
         if (r.RemindersEnabled && !b.RemindersEnabled && !await plans.HasFeatureAsync(LimitKeys.Reminders, ct))
             throw new PlanLimitException("Automatic reminders are part of the Pro plan. Upgrade to turn them on.");
-        if (InvoiceTemplates.IsPremium(r.DefaultTemplate) && !await plans.HasFeatureAsync(LimitKeys.PremiumTemplates, ct))
+        // Only a change of default design is checked, so a premium default kept after a downgrade doesn't block other settings.
+        if (r.DefaultTemplate != b.DefaultTemplate && InvoiceTemplates.IsPremium(r.DefaultTemplate)
+            && !await plans.HasFeatureAsync(LimitKeys.PremiumTemplates, ct))
             throw new PlanLimitException("Premium templates are part of the Pro plan. Upgrade to use them.");
 
         // The business currency is the base for reports; saved base amounts would be wrong after a change.
@@ -82,20 +86,54 @@ public sealed class InvoiceSetupService(
         b.RemindersEnabled = r.RemindersEnabled;
         b.ReminderDaysBefore = r.ReminderDaysBefore;
         b.ReminderDaysAfter = (r.ReminderDaysAfter ?? []).Distinct().Order().ToList();
+
+        // Letterhead text: null or absent keeps the stored value (a client that predates these fields can't wipe them); "" clears.
+        b.Tagline = KeepOrClean(r.Tagline, b.Tagline);
+        b.RegistrationNumber = KeepOrClean(r.RegistrationNumber, b.RegistrationNumber);
+        b.SecondaryColor = KeepOrClean(r.SecondaryColor, b.SecondaryColor)?.ToLowerInvariant();
+        b.SignatureName = KeepOrClean(r.SignatureName, b.SignatureName);
+        b.SignatureRole = KeepOrClean(r.SignatureRole, b.SignatureRole);
+        b.FooterText = KeepOrClean(r.FooterText, b.FooterText);
+        b.HeaderLine = r.HeaderLine ?? b.HeaderLine;
+        b.LogoSize = r.LogoSize ?? b.LogoSize;
+        b.FontStyle = r.FontStyle ?? b.FontStyle;
+        b.DocumentTitle = r.DocumentTitle ?? b.DocumentTitle;
+        b.ShowTaxId = r.ShowTaxId ?? b.ShowTaxId;
+        b.ShowRegistrationNumber = r.ShowRegistrationNumber ?? b.ShowRegistrationNumber;
+        b.ShowBankDetails = r.ShowBankDetails ?? b.ShowBankDetails;
+        b.ShowSignature = r.ShowSignature ?? b.ShowSignature;
         await db.SaveChangesAsync(ct);
-        return ToDto(b, await workspace.CountryAsync(ct));
+        return await DtoAsync(b, ct);
     }
 
-    public async Task<BusinessDto> UploadLogoAsync(Upload upload, CancellationToken ct)
+    /// <summary>Logo, signature or stamp. Uploading needs a plan with brand images; removing works on every plan.</summary>
+    public async Task<BusinessDto> UploadImageAsync(BrandImage kind, Upload upload, CancellationToken ct)
     {
+        if (!await plans.HasFeatureAsync(LimitKeys.BrandImages, ct)) throw new PlanLimitException(BrandImagesMessage);
         var b = await workspace.BusinessAsync(ct);
         var (buffer, ext, mime) = await ImageUploads.ReadAsync(upload, ct);
         await using var _ = buffer;
-        var key = $"{b.TenantId}/business/logo-{Guid.CreateVersion7():N}{ext}";
-        b.LogoUrl = await storage.SaveAsync(key, buffer, mime, ct);
-        db.Files.Add(new StoredFile { Key = key, Url = b.LogoUrl, MimeType = mime, SizeBytes = buffer.Length, Purpose = "business-logo" });
+        ImageUploads.EnsureDimensions(buffer); // every PDF decodes these, so their pixel size is bounded
+        var name = Name(kind);
+        var key = $"{b.TenantId}/business/{name}-{Guid.CreateVersion7():N}{ext}";
+        var url = await storage.SaveAsync(key, buffer, mime, ct);
+        var previous = await StoredImageAsync(kind, Url(b, kind), ct);
+        SetUrl(b, kind, url);
+        db.Files.Add(new StoredFile { Key = key, Url = url, MimeType = mime, SizeBytes = buffer.Length, Purpose = $"business-{name}" });
+        if (previous is not null) db.Files.Remove(previous);
         await db.SaveChangesAsync(ct);
-        return ToDto(b, await workspace.CountryAsync(ct));
+        if (previous is not null) await storage.DeleteAsync(previous.Key, ct);
+        return await DtoAsync(b, ct);
+    }
+
+    public async Task RemoveImageAsync(BrandImage kind, CancellationToken ct)
+    {
+        var b = await workspace.BusinessAsync(ct);
+        var previous = await StoredImageAsync(kind, Url(b, kind), ct);
+        SetUrl(b, kind, null);
+        if (previous is not null) db.Files.Remove(previous);
+        await db.SaveChangesAsync(ct);
+        if (previous is not null) await storage.DeleteAsync(previous.Key, ct);
     }
 
     public async Task<BusinessDto> SetPaystackKeyAsync(PaystackKeyRequest r, CancellationToken ct)
@@ -104,7 +142,7 @@ public sealed class InvoiceSetupService(
         var b = await workspace.BusinessAsync(ct);
         b.PaystackSecretKeyProtected = secrets.Protect(key);
         await db.SaveChangesAsync(ct);
-        return ToDto(b, await workspace.CountryAsync(ct));
+        return await DtoAsync(b, ct);
     }
 
     public async Task<BusinessDto> RemovePaystackKeyAsync(CancellationToken ct)
@@ -112,8 +150,35 @@ public sealed class InvoiceSetupService(
         var b = await workspace.BusinessAsync(ct);
         b.PaystackSecretKeyProtected = null;
         await db.SaveChangesAsync(ct);
-        return ToDto(b, await workspace.CountryAsync(ct));
+        return await DtoAsync(b, ct);
     }
+
+    private static string Name(BrandImage kind) => kind switch
+    {
+        BrandImage.Logo => "logo",
+        BrandImage.Signature => "signature",
+        _ => "stamp",
+    };
+
+    private static string? Url(BusinessSettings b, BrandImage kind) => kind switch
+    {
+        BrandImage.Logo => b.LogoUrl,
+        BrandImage.Signature => b.SignatureImageUrl,
+        _ => b.StampImageUrl,
+    };
+
+    private static void SetUrl(BusinessSettings b, BrandImage kind, string? url)
+    {
+        switch (kind)
+        {
+            case BrandImage.Logo: b.LogoUrl = url; break;
+            case BrandImage.Signature: b.SignatureImageUrl = url; break;
+            default: b.StampImageUrl = url; break;
+        }
+    }
+
+    private async Task<StoredFile?> StoredImageAsync(BrandImage kind, string? url, CancellationToken ct) =>
+        url is null ? null : await db.Files.FirstOrDefaultAsync(f => f.Url == url && f.Purpose == $"business-{Name(kind)}", ct);
 
     // Tax rates
 
@@ -273,11 +338,17 @@ public sealed class InvoiceSetupService(
             r.Client.Address, r.Client.TaxId, r.Client.Notes, r.InvoiceCount, outstanding.GetValueOrDefault(r.Client.Id))).ToList();
     }
 
-    private static BusinessDto ToDto(BusinessSettings b, string country) => new(
-        b.LegalName, b.LogoUrl, b.Address, b.Email, b.Phone, b.TaxId, b.BankDetails, b.Currency, country, b.PaymentTermsDays,
-        b.InvoicePrefix, b.NextInvoiceNumber, b.QuotePrefix, b.NextQuoteNumber, b.DefaultTemplate, b.BrandColor,
+    /// <summary>The owner always sees the stored image URLs, with whether the plan prints them.</summary>
+    private async Task<BusinessDto> DtoAsync(BusinessSettings b, CancellationToken ct) => new(
+        b.LegalName, b.LogoUrl, b.Address, b.Email, b.Phone, b.TaxId, b.BankDetails, b.Currency, await workspace.CountryAsync(ct),
+        b.PaymentTermsDays, b.InvoicePrefix, b.NextInvoiceNumber, b.QuotePrefix, b.NextQuoteNumber, b.DefaultTemplate, b.BrandColor,
         b.DefaultNotes, b.DefaultTerms, b.RemindersEnabled, b.ReminderDaysBefore, b.ReminderDaysAfter,
-        b.PaystackSecretKeyProtected is not null);
+        b.PaystackSecretKeyProtected is not null, b.Tagline, b.RegistrationNumber, b.HeaderLine, b.SecondaryColor, b.LogoSize,
+        b.FontStyle, b.DocumentTitle, b.ShowTaxId, b.ShowRegistrationNumber, b.ShowBankDetails, b.ShowSignature, b.SignatureName,
+        b.SignatureRole, b.SignatureImageUrl, b.StampImageUrl, b.FooterText, await plans.HasFeatureAsync(LimitKeys.BrandImages, ct));
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>A letterhead text field on save: null or absent keeps the stored value; an empty string clears it.</summary>
+    private static string? KeepOrClean(string? value, string? stored) => value is null ? stored : Clean(value);
 }

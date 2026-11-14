@@ -1,20 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { apiBlob, saveBlob, toApiError, type ApiError } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ApiError, apiBlob, saveBlob, toApiError } from "@/lib/api";
 import { useHydrated } from "@/lib/auth";
 import { CURRENCIES } from "@/lib/config";
 import { addDays } from "@/lib/dates";
-import { clearDraft, emptyDraft, loadDraft, saveDraft, toPreviewRequest, type GeneratorDraft } from "@/lib/draft";
+import { clearDraft, emptyDraft, loadDraft, saveDraft, toPreviewRequest, type DraftBusiness, type GeneratorDraft } from "@/lib/draft";
 import { computeTotals } from "@/lib/invoice-math";
+import { DOCUMENT_TITLES, FONT_STYLE_OPTIONS, HEADER_LINE_OPTIONS, LETTERHEAD_LIMITS, letterheadErrors } from "@/lib/letterhead";
 import { toMinor } from "@/lib/money";
-import { FREE_TEMPLATES } from "@/lib/templates";
-import { DownloadIcon } from "./icons";
+import { FREE_TEMPLATES, normalizeColor } from "@/lib/templates";
+import type { DocumentTitle, FontStyle, HeaderLine } from "@/lib/types";
+import { useFocusFirstInvalid } from "./form-focus";
+import { DownloadIcon, ImageIcon } from "./icons";
 import { InvoicePreview, type PreviewDoc } from "./invoice-preview";
+import { SecondAccentField } from "./letterhead-fields";
 import { LineItemsEditor, mathInput, previewLines, isBlankLine } from "./line-items-editor";
 import { TemplatePicker } from "./template-picker";
-import { Button, Card, ErrorBox, Input, PageLoader, Segmented, Select, Textarea, buttonClass, cx } from "./ui";
+import { Button, Card, ErrorBox, Input, PageLoader, Segmented, Select, Textarea, Toggle, buttonClass, cx, labelClass, linkClass } from "./ui";
 
 /**
  * The free, no-signup invoice generator. Renders after hydration because the draft lives in localStorage.
@@ -38,6 +42,8 @@ function GeneratorForm({ intro }: { intro?: ReactNode }) {
   const [d, setD] = useState<GeneratorDraft>(() => loadDraft() ?? emptyDraft());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | string | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
+  useFocusFirstInvalid(formRef, error);
 
   useEffect(() => {
     const t = setTimeout(() => saveDraft(d), 300);
@@ -45,8 +51,10 @@ function GeneratorForm({ intro }: { intro?: ReactNode }) {
   }, [d]);
 
   const set = <K extends keyof GeneratorDraft>(k: K, v: GeneratorDraft[K]) => setD((s) => ({ ...s, [k]: v }));
-  const setBiz = (k: keyof GeneratorDraft["business"]) => (e: { target: { value: string } }) =>
+  const setBizValue = <K extends keyof DraftBusiness>(k: K, v: DraftBusiness[K]) => setD((s) => ({ ...s, business: { ...s.business, [k]: v } }));
+  const setBiz = (k: keyof DraftBusiness) => (e: { target: { value: string } }) =>
     setD((s) => ({ ...s, business: { ...s.business, [k]: e.target.value } }));
+  const fieldError = (name: keyof DraftBusiness) => (error instanceof ApiError ? error.field(`business.${name}`) : undefined);
   const setClient = (k: keyof GeneratorDraft["client"]) => (e: { target: { value: string } }) =>
     setD((s) => ({ ...s, client: { ...s.client, [k]: e.target.value } }));
 
@@ -83,12 +91,19 @@ function GeneratorForm({ intro }: { intro?: ReactNode }) {
     if (!d.business.name.trim()) return setError("Add your business name first.");
     if (!d.client.name.trim()) return setError("Add your client's name first.");
     if (!d.lines.some((l) => !isBlankLine(l))) return setError("Add at least one line item.");
+    const invalid = letterheadErrors(d.business, "business.");
+    if (Object.keys(invalid).length > 0) {
+      setView("edit");
+      return setError(new ApiError(400, { detail: "Check the highlighted fields:", errors: invalid }));
+    }
     setBusy(true);
     try {
       const blob = await apiBlob("/api/public/invoice-preview/pdf", { method: "POST", body: toPreviewRequest(d), auth: false, accept: "application/pdf" });
       saveBlob(blob, `${(d.number || "invoice").replace(/[^\w.-]+/g, "_")}.pdf`);
     } catch (e) {
-      setError(toApiError(e));
+      const err = toApiError(e);
+      if (err.errors && Object.keys(err.errors).some((k) => k.toLowerCase().startsWith("business."))) setView("edit");
+      setError(err);
     } finally {
       setBusy(false);
     }
@@ -104,7 +119,7 @@ function GeneratorForm({ intro }: { intro?: ReactNode }) {
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.08fr)] lg:gap-10">
-      <div className="min-w-0 space-y-4">
+      <div ref={formRef} className="min-w-0 space-y-4">
         {intro}
         <Segmented
           className="max-w-xs lg:hidden"
@@ -119,8 +134,32 @@ function GeneratorForm({ intro }: { intro?: ReactNode }) {
         <div className={cx("space-y-4", view !== "edit" && "hidden lg:block")}>
           <Card>
             <h3 className={sectionTitle}>From (your business)</h3>
+            <div className="mb-4 flex items-center gap-3 rounded-control border border-dashed border-rule bg-desk px-3 py-2.5">
+              <ImageIcon className="shrink-0 text-faint" width={22} height={22} aria-hidden="true" />
+              <p className="text-sm text-slate-600">
+                <Link href="/signup" className={linkClass}>
+                  Add your logo, signature and stamp with InvoiceLink Pro
+                </Link>
+              </p>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <Input label="Business name" value={d.business.name} onChange={setBiz("name")} autoComplete="organization" />
+              <Input
+                label="Slogan or what you do (optional)"
+                value={d.business.tagline}
+                onChange={setBiz("tagline")}
+                maxLength={LETTERHEAD_LIMITS.tagline}
+                placeholder="Bespoke tailoring for men and women"
+                error={fieldError("tagline")}
+              />
+              <Input
+                label="Registration number (optional)"
+                value={d.business.registrationNumber}
+                onChange={setBiz("registrationNumber")}
+                maxLength={LETTERHEAD_LIMITS.registrationNumber}
+                placeholder="RC 1234567"
+                error={fieldError("registrationNumber")}
+              />
               <Input label="Email" type="email" value={d.business.email} onChange={setBiz("email")} autoComplete="email" />
               <Input label="Phone" type="tel" value={d.business.phone} onChange={setBiz("phone")} autoComplete="tel" />
               <Input label="Tax ID (optional)" value={d.business.taxId} onChange={setBiz("taxId")} />
@@ -188,20 +227,101 @@ function GeneratorForm({ intro }: { intro?: ReactNode }) {
           </Card>
 
           <Card className="space-y-4">
-            <TemplatePicker templates={FREE_TEMPLATES} value={d.template} onChange={(k) => set("template", k)} brandColor={d.business.brandColor} />
-            <div className="flex items-center gap-3">
-              <label htmlFor="gen-color" className="text-sm font-medium text-slate-700">
-                Brand colour
-              </label>
-              <input
-                id="gen-color"
-                type="color"
-                value={d.business.brandColor}
-                onChange={setBiz("brandColor")}
-                className="h-10 w-14 cursor-pointer rounded-control border border-field bg-paper p-1"
+            <h3 className="font-semibold text-graphite">Letterhead and design</h3>
+            <TemplatePicker
+              label="Design"
+              templates={FREE_TEMPLATES}
+              value={d.template}
+              onChange={(k) => set("template", k)}
+              brandColor={d.business.brandColor}
+              secondaryColor={d.business.secondaryColor}
+            />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label htmlFor="gen-color" className={labelClass}>
+                  Brand colour
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    id="gen-color"
+                    type="color"
+                    value={normalizeColor(d.business.brandColor)}
+                    onChange={setBiz("brandColor")}
+                    className="h-10 w-14 cursor-pointer rounded-control border border-field bg-paper p-1"
+                  />
+                  <span className="text-sm text-muted tabular-nums">{d.business.brandColor}</span>
+                </div>
+              </div>
+              <SecondAccentField
+                id="gen-second"
+                brandColor={d.business.brandColor}
+                value={d.business.secondaryColor}
+                onChange={(v) => setBizValue("secondaryColor", v)}
+                error={fieldError("secondaryColor")}
               />
-              <span className="text-sm text-muted tabular-nums">{d.business.brandColor}</span>
+              <Select
+                label="Line under your name"
+                value={d.business.headerLine}
+                onChange={(e) => setBizValue("headerLine", e.target.value as HeaderLine)}
+              >
+                {HEADER_LINE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+              <Select label="Font style" value={d.business.fontStyle} onChange={(e) => setBizValue("fontStyle", e.target.value as FontStyle)}>
+                {FONT_STYLE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                label="Document title"
+                value={d.business.documentTitle}
+                onChange={(e) => setBizValue("documentTitle", e.target.value as DocumentTitle)}
+              >
+                {DOCUMENT_TITLES.map((t) => (
+                  <option key={t}>{t}</option>
+                ))}
+              </Select>
             </div>
+            <Toggle
+              checked={d.business.showSignature}
+              onChange={(v) => setBizValue("showSignature", v)}
+              label="Signature line"
+              description="An “Authorised signature” line to sign by hand after printing."
+            />
+            {d.business.showSignature && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input
+                  label="Name (optional)"
+                  value={d.business.signatureName}
+                  onChange={setBiz("signatureName")}
+                  maxLength={LETTERHEAD_LIMITS.signatureName}
+                  placeholder="Ada Okafor"
+                  error={fieldError("signatureName")}
+                />
+                <Input
+                  label="Role (optional)"
+                  value={d.business.signatureRole}
+                  onChange={setBiz("signatureRole")}
+                  maxLength={LETTERHEAD_LIMITS.signatureRole}
+                  placeholder="Director"
+                  error={fieldError("signatureRole")}
+                />
+              </div>
+            )}
+            <Input
+              label="Footer line (optional)"
+              value={d.business.footerText}
+              onChange={setBiz("footerText")}
+              maxLength={LETTERHEAD_LIMITS.footerText}
+              placeholder="Thank you for your business."
+              hint="Printed at the bottom of every page."
+              error={fieldError("footerText")}
+            />
           </Card>
         </div>
       </div>

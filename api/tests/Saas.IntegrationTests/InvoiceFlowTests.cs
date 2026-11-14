@@ -102,7 +102,7 @@ public sealed class InvoiceFlowTests(ApiFixture api)
         var (owner, _) = await api.SignupInvoicesAsync("Free");
         var client = await CreateClientAsync(owner, "C", null, null);
 
-        var premium = await owner.PostAsJsonAsync("/api/invoices", Invoice(client, null, template: "bold"), Ct);
+        var premium = await owner.PostAsJsonAsync("/api/invoices", Invoice(client, null, template: "executive"), Ct);
         Assert.Equal(HttpStatusCode.PaymentRequired, premium.StatusCode);
 
         for (var i = 0; i < 10; i++) (await owner.PostAsJsonAsync("/api/invoices", Invoice(client, null), Ct)).EnsureSuccessStatusCode();
@@ -228,7 +228,7 @@ public sealed class InvoiceFlowTests(ApiFixture api)
             business = new { name = "Freelancer" },
             client = new { name = "Someone" },
             currency = "NGN",
-            template = "elegant", // premium: falls back to a free template
+            template = "prestige", // premium: falls back to a free template
             items = new[] { new { description = "Work", quantity = 3, unitPriceMinor = 1_000_000, discountPercent = 0, taxRatePercent = 7.5 } },
         }, Ct);
         await AssertPdf(response);
