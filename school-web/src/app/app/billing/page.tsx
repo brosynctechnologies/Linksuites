@@ -1,57 +1,38 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { CheckIcon } from "@/components/icons";
+import { PlanPaymentNotice } from "@/components/plan-payment-notice";
 import { ApiErrorView, Badge, Button, Card, ErrorBox, Notice, PageHeader, PageLoader, UsageMeter, cx } from "@/components/ui";
 import { api, toApiError, type ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatStampDay, naira } from "@/lib/format";
 import { can } from "@/lib/roles";
+import { usePlanPaymentReturn } from "@/lib/plan-payment";
+import { PendingTransferNotice, PlanTransferPanel } from "@/components/plan-transfer";
 import { useApi } from "@/lib/use-api";
 import type { BillingDto, PlanDto } from "@/lib/types";
 
 /** The API's usage labels, in the school's words. */
 const USAGE_LABELS: Record<string, string> = { students: "Students", team_seats: "Staff logins" };
 
-/** Back from Paystack: look again every 10 seconds for a minute, then leave it to the "Check again" button. */
-const CHECK_EVERY_MS = 10_000;
-const AUTO_CHECKS = 6;
-
 function intervalWord(interval: string) {
   return interval.toLowerCase().replace(/ly$/, "");
 }
 
-/** What changes when Paystack's confirmation lands: the plan, or the end of the paid term. */
-function planSignature(data: BillingDto) {
-  return `${data.currentPlan.code}|${data.subscription?.currentPeriodEnd ?? ""}`;
-}
-
 export default function BillingPage() {
-  const { data, error, loading, reload } = useApi<BillingDto>("/api/billing");
+  const { data, error, reload } = useApi<BillingDto>("/api/billing");
   const auth = useAuth();
   const isProprietor = can(auth?.tenant?.role, "billing.manage");
   // A support view can look at the plan but not buy one.
   const readOnly = !!auth?.support;
-  const reference = useSearchParams().get("ref");
-  const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<ApiError | null>(null);
+  // While online payment is off, a plan is paid by bank transfer: the plan whose transfer details are open.
+  const [transferPlan, setTransferPlan] = useState<PlanDto | null>(null);
 
-  // The plan as the page first found it after Paystack sent the proprietor back.
-  const [before, setBefore] = useState<string | null>(null);
-  if (reference && data && before === null) setBefore(planSignature(data));
-  const confirmed = !!reference && !!data && before !== null && planSignature(data) !== before;
-  const [checks, setChecks] = useState(0);
-
-  useEffect(() => {
-    if (!reference || confirmed || checks >= AUTO_CHECKS) return;
-    const timer = window.setTimeout(() => {
-      setChecks((n) => n + 1);
-      reload();
-    }, CHECK_EVERY_MS);
-    return () => window.clearTimeout(timer);
-  }, [reference, confirmed, checks, reload]);
+  // Back from the secure checkout with ?ref=: confirm the payment with the provider, and show the new plan once it is active.
+  const payment = usePlanPaymentReturn(reload);
 
   async function pay(plan: PlanDto) {
     setBusy(plan.code);
@@ -75,6 +56,10 @@ export default function BillingPage() {
   }
 
   const { currentPlan, subscription } = data;
+  // Bank transfer is offered only while online payment is off (the API sends the details only then).
+  const bank = data.paymentsEnabled ? null : (data.bankTransfer ?? null);
+  // One transfer at a time: while one is being checked, no plan offers another (the notice above says what is pending).
+  const offerTransfer = !(bank && data.pendingTransfer);
   const usage = Array.isArray(data.usage?.items) ? data.usage.items : [];
   // Free, Standard, Premium: cheapest first, whatever order the API returns.
   const plans = [...(data.plans ?? [])].sort((a, b) => a.priceMinor - b.priceMinor);
@@ -93,35 +78,7 @@ export default function BillingPage() {
     <div className="space-y-5">
       <PageHeader title="Plan and billing" back="/app/more" subtitle="Your school's plan, what it holds and what each plan costs a term." />
 
-      {reference && (
-        <Notice tone={confirmed ? "success" : "info"}>
-          {confirmed ? (
-            <p>Paystack has confirmed your payment. Your school is on {currentPlan.name}.</p>
-          ) : (
-            <>
-              <p>Payment received. Your plan updates as soon as Paystack confirms it, usually within a minute.</p>
-              {checks >= AUTO_CHECKS && (
-                <p className="mt-1">
-                  If your plan below hasn&apos;t changed yet, check again in a few minutes. Your payment reference is{" "}
-                  <span className="tnum font-bold">{reference}</span>.
-                </p>
-              )}
-            </>
-          )}
-          <div className="mt-2.5 flex flex-wrap gap-2">
-            {!confirmed && (
-              <Button variant="secondary" loading={loading} onClick={reload}>
-                Check again
-              </Button>
-            )}
-            {confirmed && (
-              <Button variant="secondary" onClick={() => router.replace("/app/billing")}>
-                Done
-              </Button>
-            )}
-          </div>
-        </Notice>
-      )}
+      <PlanPaymentNotice payment={payment} />
 
       <Card className="grid gap-5 md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] md:gap-8">
         <div>
@@ -146,7 +103,19 @@ export default function BillingPage() {
         )}
       </Card>
 
-      {!data.paymentsEnabled && <Notice tone="warning">Upgrades are unavailable until online payments are set up. Try again later.</Notice>}
+      {data.pendingTransfer && <PendingTransferNotice pending={data.pendingTransfer} canCancel={canPay} onCancelled={reload} />}
+      {!data.paymentsEnabled && !bank && <Notice tone="warning">Upgrades are unavailable until online payments are set up. Try again later.</Notice>}
+      {transferPlan && bank && offerTransfer && (
+        <PlanTransferPanel
+          plan={transferPlan}
+          bank={bank}
+          onClaimed={() => {
+            setTransferPlan(null);
+            reload();
+          }}
+          onClose={() => setTransferPlan(null)}
+        />
+      )}
       {!isProprietor && <Notice tone="info">Only the proprietor can change the plan.</Notice>}
       {checkoutError && <ErrorBox error={checkoutError} />}
 
@@ -182,26 +151,26 @@ export default function BillingPage() {
                   ))}
                 </ul>
                 <div className="md:self-center md:justify-self-end">
-                  {current && canRenew && (
+                  {current && canRenew && offerTransfer && (
                     <Button
                       variant={nextUp ? "secondary" : "primary"}
                       className="w-full md:w-auto"
                       loading={busy === plan.code}
-                      disabled={!data.paymentsEnabled || !!busy}
-                      onClick={() => pay(plan)}
+                      disabled={!(data.paymentsEnabled || bank) || !!busy}
+                      onClick={() => (bank ? setTransferPlan(plan) : pay(plan))}
                     >
-                      Pay for another term
+                      {bank ? "Pay by bank transfer" : "Pay for another term"}
                     </Button>
                   )}
-                  {!current && canPay && isUpgrade(plan) && (
+                  {!current && canPay && isUpgrade(plan) && offerTransfer && (
                     <Button
                       variant={plan.code === nextUp ? "primary" : "secondary"}
                       className="w-full md:w-auto"
                       loading={busy === plan.code}
-                      disabled={!data.paymentsEnabled || !!busy}
-                      onClick={() => pay(plan)}
+                      disabled={!(data.paymentsEnabled || bank) || !!busy}
+                      onClick={() => (bank ? setTransferPlan(plan) : pay(plan))}
                     >
-                      Upgrade to {plan.name}
+                      {bank ? "Pay by bank transfer" : `Upgrade to ${plan.name}`}
                     </Button>
                   )}
                 </div>
@@ -213,7 +182,7 @@ export default function BillingPage() {
 
       <p className="max-w-prose text-sm text-muted">
         A paid term runs four months from the day you pay. Paying for the same plan again while a term is running adds four months to
-        it; moving to a higher plan starts a new four-month term that day. Payments go through Paystack.
+        it; moving to a higher plan starts a new four-month term that day.
       </p>
     </div>
   );

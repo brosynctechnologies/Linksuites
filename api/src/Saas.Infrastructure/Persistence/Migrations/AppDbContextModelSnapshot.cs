@@ -3860,6 +3860,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("purpose");
 
+                    b.Property<DateTimeOffset?>("RecheckedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("rechecked_at");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -4007,6 +4011,50 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_platform_admins_user_id");
 
                     b.ToTable("platform_admins", (string)null);
+                });
+
+            modelBuilder.Entity("Saas.Domain.Core.PlatformPaymentSettings", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BankAccountName")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("bank_account_name");
+
+                    b.Property<string>("BankAccountNumber")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("bank_account_number");
+
+                    b.Property<string>("BankName")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("bank_name");
+
+                    b.Property<bool>("OnlinePaymentsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("online_payments_enabled");
+
+                    b.Property<string>("PlanProvider")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("plan_provider");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by_user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_platform_payment_settings");
+
+                    b.ToTable("platform_payment_settings", (string)null);
                 });
 
             modelBuilder.Entity("Saas.Domain.Core.RefreshToken", b =>

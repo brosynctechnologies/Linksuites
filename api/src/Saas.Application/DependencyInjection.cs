@@ -24,6 +24,9 @@ public static class DependencyInjection
         services.AddScoped<NotificationQueue>();
         services.AddScoped<InAppNotifications>();
         services.AddScoped<BillingService>();
+        services.AddScoped<PlanPaymentJobs>();
+        services.AddSingleton<PaymentSettingsCache>();
+        services.AddScoped<PaymentSettings>();
 
         // WhatsApp Order System
         services.AddScoped<IProductProvisioner, OrdersProvisioner>();
@@ -219,6 +222,8 @@ public static class DependencyInjection
         services.AddScoped<Platform.PlatformUserService>();
         services.AddScoped<Platform.PlatformPlansService>();
         services.AddScoped<Platform.PlatformMoneyService>();
+        services.AddScoped<Platform.PlatformPaymentSettingsService>();
+        services.AddScoped<Platform.PlatformTransfersService>();
         services.AddScoped<Platform.PlatformOverviewService>();
         services.AddScoped<Platform.PlatformAuditService>();
         services.AddScoped<Platform.PlatformAdminsService>();

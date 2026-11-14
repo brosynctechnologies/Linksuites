@@ -16,6 +16,7 @@ import { useUrlFilters } from "@/lib/use-filters";
 
 const PAGE_SIZE = 50;
 const KEYS = ["product", "status", "from", "to"] as const;
+const PROVIDER_LABEL: Record<string, string> = { paystack: "Paystack", opay: "OPay", transfer: "Bank transfer" };
 
 export default function PaymentsPage() {
   return (
@@ -84,7 +85,7 @@ function Payments() {
         {data && data.items.length > 0 && (
           <>
             <TableScroll label="Payments">
-              <table className="data-table min-w-[1120px]" aria-busy={loading || undefined}>
+              <table className="data-table min-w-[1200px]" aria-busy={loading || undefined}>
                 <thead>
                   <tr>
                     <th>Created</th>
@@ -93,6 +94,7 @@ function Payments() {
                     <th>Business</th>
                     <th>Status</th>
                     <th>Reference</th>
+                    <th>Provider</th>
                     <th>Paid</th>
                     <th className="num">Amount</th>
                     <th className="num">Refunded</th>
@@ -114,6 +116,7 @@ function Payments() {
                         <StatusBadge status={p.status} />
                       </td>
                       <td>{p.reference ? <Mono>{p.reference}</Mono> : "—"}</td>
+                      <td>{PROVIDER_LABEL[p.provider] ?? p.provider}</td>
                       <td className="tnum">{stamp(p.paidAt)}</td>
                       <td className="num">{money(p.amountMinor, p.currency)}</td>
                       <td className="num">{p.refundedMinor > 0 ? money(-p.refundedMinor, p.currency) : "—"}</td>

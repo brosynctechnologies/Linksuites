@@ -1,3 +1,5 @@
+import type { BankTransfer, PendingTransfer } from "@/lib/plan-payment";
+
 // Types mirroring docs/INVOICES_API.md, docs/INVOICES_PHASE2_API.md (and shared parts of docs/API.md).
 // Money fields ending in `Minor` are integers in minor units. Dates without time are "YYYY-MM-DD".
 
@@ -522,6 +524,10 @@ export interface BillingDto {
   plans: PlanDto[];
   usage: { items?: UsageItem[] } & Record<string, unknown>;
   paymentsEnabled: boolean;
+  /** The company account to pay a plan into by bank transfer: only while online payment is off. */
+  bankTransfer?: BankTransfer | null;
+  /** A bank transfer this business said it sent, waiting for confirmation. */
+  pendingTransfer?: PendingTransfer | null;
 }
 
 // ---- Account activity ----

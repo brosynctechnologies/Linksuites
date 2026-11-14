@@ -7,7 +7,7 @@ using Saas.Domain.Courses;
 namespace Saas.Application.Courses;
 
 /// <summary>A signed-in learner: buying, the lesson player, progress, quizzes, Q&amp;A, notes, reviews and certificates.</summary>
-public sealed class LearnService(IAppDbContext db, CourseCore core, IPaymentGateway gateway, ICurrentUser user, AppUrls urls)
+public sealed class LearnService(IAppDbContext db, CourseCore core, IPaymentGateway gateway, PaymentSettings payments, ICurrentUser user, AppUrls urls)
 {
     private static readonly TimeSpan QuizGrace = TimeSpan.FromSeconds(60);
 
@@ -41,7 +41,8 @@ public sealed class LearnService(IAppDbContext db, CourseCore core, IPaymentGate
             return new CheckoutResultDto(true, null, null, course.PriceMinor, discount, 0);
         }
 
-        if (!gateway.IsConfigured) throw new ServiceUnavailableException("Online payments aren't set up yet. Please try again later.");
+        // Online payment switched off in the admin console reads exactly like a gateway with no key: nothing reaches the gateway.
+        if (!gateway.IsConfigured || !await payments.OnlinePaymentsEnabledAsync(ct)) throw new ServiceUnavailableException("Online payments aren't set up yet. Please try again later.");
         // A sale only counts as a marketplace sale if the course is actually in the marketplace.
         var channel = r.Channel == SaleChannel.Academy || course.MarketplaceStatus != MarketplaceStatus.Approved ? SaleChannel.Academy : SaleChannel.Marketplace;
         var order = new CourseOrder

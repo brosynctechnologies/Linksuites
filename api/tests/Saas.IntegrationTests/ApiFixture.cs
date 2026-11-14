@@ -28,7 +28,38 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
     {
         await _db.StartAsync();
         _ = Server; // boots the host, which migrates and seeds
+        // The migration starts with online payment off (bank transfer only); the suite runs with it on, and the tests for the off
+        // state switch it off themselves and back on when they finish.
+        await ResetPaymentSettingsAsync();
     }
+
+    public const string InitialBankName = "OPay";
+    public const string InitialAccountNumber = "9067382888";
+    public const string InitialAccountName = "Brosync Technologies";
+
+    /// <summary>
+    /// Writes the platform payment settings row straight to the database (provider null = <c>Billing:PlanProvider</c> of each host) and
+    /// drops the cached copy on this host and every host made from it, so the next request reads it.
+    /// </summary>
+    public async Task SetPaymentSettingsAsync(bool online, string? provider = null, string? bankName = InitialBankName,
+        string? accountNumber = InitialAccountNumber, string? accountName = InitialAccountName)
+    {
+        await WithDbAsync(db => db.PlatformPaymentSettings.ExecuteUpdateAsync(s => s
+            .SetProperty(x => x.OnlinePaymentsEnabled, online)
+            .SetProperty(x => x.PlanProvider, provider)
+            .SetProperty(x => x.BankName, bankName)
+            .SetProperty(x => x.BankAccountNumber, accountNumber)
+            .SetProperty(x => x.BankAccountName, accountName)));
+        foreach (var host in Factories.Prepend(this))
+        {
+            try { host.Services.GetRequiredService<PaymentSettingsCache>().Invalidate(); }
+            // A test's own host that it already disposed, or one that was made to fail at startup: it serves nothing to invalidate.
+            catch (Exception) when (!ReferenceEquals(host, this)) { }
+        }
+    }
+
+    /// <summary>Back to the suite's default: online payment on, provider from config, the initial bank details.</summary>
+    public Task ResetPaymentSettingsAsync() => SetPaymentSettingsAsync(true);
 
     public new async ValueTask DisposeAsync()
     {
@@ -43,6 +74,11 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Jwt:SigningKey", "integration-test-signing-key-0123456789abcdef");
         builder.UseSetting("Database:MigrateOnStartup", "true");
         builder.UseSetting("Paystack:SecretKey", PaystackSecret);
+        builder.UseSetting("Opay:MerchantId", FakeOpay.MerchantId);
+        builder.UseSetting("Opay:PublicKey", FakeOpay.PublicKey);
+        builder.UseSetting("Opay:SecretKey", FakeOpay.SecretKey);
+        builder.UseSetting("Opay:BaseUrl", FakeOpay.BaseUrl);
+        builder.UseSetting("Jobs:BillingEnabled", "false"); // tests run PlanPaymentJobs by hand
         builder.UseSetting("Notifications:DispatcherEnabled", "false");
         builder.UseSetting("Storage:LocalPath", Path.Combine(Path.GetTempPath(), "saas-it-uploads"));
         builder.UseSetting("Jobs:InvoicesEnabled", "false");
@@ -66,7 +102,44 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
             services.AddScoped<IMerchantPayments>(_ => Merchant);
             services.AddSingleton<IExchangeRateProvider, FakeRates>();
             services.AddScoped<IPaymentGateway>(_ => Gateway);
+            // Plan billing with Paystack goes to the same fake; registered last, so it wins over the real Paystack plan gateway.
+            services.AddScoped<IPlanPaymentGateway>(_ => Gateway);
+            // OPay is faked at the HTTP level, so the real client's signing, headers and parsing are exercised.
+            services.AddHttpClient<Saas.Infrastructure.Payments.OpayClient>()
+                .ConfigurePrimaryHttpMessageHandler(() => Opay).SetHandlerLifetime(Timeout.InfiniteTimeSpan);
         });
+    }
+
+    /// <summary>Stands in for OPay's cashier API (create and status), shared by every host of this fixture.</summary>
+    public FakeOpay Opay { get; } = new();
+
+    private WebApplicationFactory<Program>? opayHost;
+
+    /// <summary>The same API and database, with <c>Billing:PlanProvider</c> set to opay.</summary>
+    public WebApplicationFactory<Program> OpayHost => opayHost ??= WithWebHostBuilder(b => b.UseSetting("Billing:PlanProvider", "opay"));
+
+    private WebApplicationFactory<Program>? unconfiguredHost;
+
+    /// <summary>OPay chosen for plans, but its secret key missing.</summary>
+    public WebApplicationFactory<Program> UnconfiguredOpayHost => unconfiguredHost ??= WithWebHostBuilder(b =>
+    {
+        b.UseSetting("Billing:PlanProvider", "opay");
+        b.UseSetting("Opay:SecretKey", "");
+    });
+
+    /// <summary>
+    /// Lets the next callback or return check ask the provider again, as if the per-payment status cooldown had passed
+    /// (clears <c>RecheckedAt</c>).
+    /// </summary>
+    public Task ExpireStatusCooldownAsync(string reference) => WithDbAsync(db => db.Payments.IgnoreQueryFilters()
+        .Where(p => p.ProviderRef == reference).ExecuteUpdateAsync(s => s.SetProperty(p => p.RecheckedAt, (DateTimeOffset?)null)));
+
+    /// <summary>A client on <paramref name="host"/> signed in as <paramref name="signedIn"/> (the same token works on every host).</summary>
+    public static HttpClient On(WebApplicationFactory<Program> host, HttpClient signedIn)
+    {
+        var client = host.CreateClient();
+        client.DefaultRequestHeaders.Authorization = signedIn.DefaultRequestHeaders.Authorization;
+        return client;
     }
 
     public const string AdminEmail = "admin@platform.test";
@@ -247,9 +320,29 @@ public sealed class FakeRates : IExchangeRateProvider
         new Dictionary<string, decimal> { ["USD"] = 1m, ["NGN"] = 1600m, ["GBP"] = 0.8m, ["GHS"] = 16m }));
 }
 
-/// <summary>Stands in for the platform's own Paystack account.</summary>
-public sealed class FakePlatformGateway : IPaymentGateway
+/// <summary>Stands in for the platform's own Paystack account (courses, boosts, stays, and plans when Paystack is the plan provider).</summary>
+public sealed class FakePlatformGateway : IPlanPaymentGateway
 {
+    /// <summary>References Paystack knows but reports unpaid, with Paystack's status (abandoned, failed...).</summary>
+    public Dictionary<string, string> Unpaid { get; } = [];
+
+    /// <summary>How many plan status lookups each reference got.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, int> StatusCalls { get; } = new();
+
+    /// <summary>When set, each status lookup is counted, then waits here before answering, so tests can hold two confirms together.</summary>
+    public SemaphoreSlim? StatusGate { get; set; }
+
+    public async Task<ProviderChargeStatus> GetStatusAsync(string reference, CancellationToken ct)
+    {
+        StatusCalls.AddOrUpdate(reference, 1, (_, n) => n + 1);
+        if (StatusGate is { } gate) await gate.WaitAsync(ct);
+        if (Charges.TryGetValue(reference, out var charge))
+            return new ProviderChargeStatus(ProviderChargeState.Success, charge.AmountMinor, charge.Currency);
+        if (Unpaid.TryGetValue(reference, out var status))
+            return new ProviderChargeStatus(status == "failed" ? ProviderChargeState.Failed : ProviderChargeState.Pending, 0, null);
+        return ProviderChargeStatus.NotFound;
+    }
+
     public string Name => "paystack";
     public bool IsConfigured => true;
     public List<PaymentInit> Initialized { get; } = [];
@@ -272,4 +365,107 @@ public sealed class FakePlatformGateway : IPaymentGateway
         if (RefundDelay > TimeSpan.Zero) await Task.Delay(RefundDelay, ct);
         lock (Refunds) Refunds.Add((reference, amountMinor));
     }
+}
+
+/// <summary>
+/// Stands in for OPay's cashier API at the HTTP level. Create requires <c>Bearer {PublicKey}</c> and the MerchantId header; status
+/// requires <c>Bearer {HMAC-SHA512(exact body bytes, SecretKey) hex}</c>, like OPay. Orders start INITIAL until a test pays them.
+/// </summary>
+public sealed class FakeOpay : HttpMessageHandler
+{
+    public const string MerchantId = "256600000000001";
+    public const string PublicKey = "OPAYPUB_integration_public";
+    public const string SecretKey = "OPAYPRV_integration_secret";
+    public const string BaseUrl = "https://sandboxapi.opay.test";
+
+    public sealed record Order(string Reference, long Total, string Currency, string Country, string ReturnUrl, string CallbackUrl, string CancelUrl);
+
+    public System.Collections.Concurrent.ConcurrentDictionary<string, Order> Created { get; } = new();
+    /// <summary>What a status call answers per reference: OPay's status and the amount it reports.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, (string Status, long Total, string Currency)> Statuses { get; } = new();
+    public System.Collections.Concurrent.ConcurrentDictionary<string, int> StatusCalls { get; } = new();
+    /// <summary>Requests refused for a wrong key, merchant id or signature. Tests expect none.</summary>
+    public int Rejected;
+    public (string Body, string Authorization)? LastStatusRequest { get; private set; }
+
+    /// <summary>When set, each status call is counted, then waits here before answering, so tests can hold two confirms together.</summary>
+    public SemaphoreSlim? StatusGate { get; set; }
+
+    /// <summary>Status calls for these references answer 50003 ("service not available, try again").</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, bool> UnavailableFor { get; } = new();
+
+    /// <summary>OPay reports the order paid, for the amount and currency it was created with.</summary>
+    public void Pay(string reference)
+    {
+        var order = Created[reference];
+        Statuses[reference] = ("SUCCESS", order.Total, order.Currency);
+    }
+
+    public void Report(string reference, string status, long? total = null, string? currency = null)
+    {
+        var order = Created[reference];
+        Statuses[reference] = (status, total ?? order.Total, currency ?? order.Currency);
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var path = request.RequestUri!.AbsolutePath;
+        var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
+        var auth = request.Headers.Authorization;
+        var merchant = request.Headers.TryGetValues("MerchantId", out var values) ? values.FirstOrDefault() : null;
+        if (!request.RequestUri.ToString().StartsWith(BaseUrl, StringComparison.Ordinal) || merchant != MerchantId || auth?.Scheme != "Bearer")
+            return Refuse();
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+
+        if (path == "/api/v1/international/cashier/create")
+        {
+            if (auth.Parameter != PublicKey) return Refuse();
+            var reference = root.GetProperty("reference").GetString()!;
+            var amount = root.GetProperty("amount");
+            Created[reference] = new Order(reference, amount.GetProperty("total").GetInt64(), amount.GetProperty("currency").GetString()!,
+                root.GetProperty("country").GetString()!, root.GetProperty("returnUrl").GetString()!, root.GetProperty("callbackUrl").GetString()!,
+                root.GetProperty("cancelUrl").GetString()!);
+            Statuses.TryAdd(reference, ("INITIAL", Created[reference].Total, Created[reference].Currency));
+            return Answer(new
+            {
+                code = "00000", message = "SUCCESSFUL",
+                data = new { reference, orderNo = $"2411{reference.Length}", cashierUrl = $"{BaseUrl}/cashier/{reference}", status = "INITIAL" },
+            });
+        }
+        if (path == "/api/v1/international/cashier/status")
+        {
+            // Like the real OPay (checked against the sandbox, 14 Nov 2026): the signature is over the fields in alphabetical order,
+            // so a body sent as {"reference":..,"country":..} signed as sent is refused with 02000.
+            var canonical = System.Text.Json.JsonSerializer.Serialize(
+                new SortedDictionary<string, JsonElement>(root.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone()), StringComparer.Ordinal));
+            var expected = Convert.ToHexString(System.Security.Cryptography.HMACSHA512.HashData(
+                System.Text.Encoding.UTF8.GetBytes(SecretKey), System.Text.Encoding.UTF8.GetBytes(canonical)));
+            if (!string.Equals(auth.Parameter, expected, StringComparison.OrdinalIgnoreCase)) return Refuse();
+            LastStatusRequest = (body, auth.Parameter!);
+            var reference = root.GetProperty("reference").GetString()!;
+            StatusCalls.AddOrUpdate(reference, 1, (_, n) => n + 1);
+            if (StatusGate is { } gate) await gate.WaitAsync(ct);
+            if (UnavailableFor.ContainsKey(reference))
+                return Answer(new { code = "50003", message = "service not available, please try again" });
+            // OPay's codes (query status doc): 02006 order not found, 02000 authentication failed.
+            if (!Statuses.TryGetValue(reference, out var status))
+                return Answer(new { code = "02006", message = "order not found" });
+            return Answer(new
+            {
+                code = "00000", message = "SUCCESSFUL",
+                data = new { reference, orderNo = "24110001", status = status.Status, amount = new { total = status.Total, currency = status.Currency } },
+            });
+        }
+        return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+    }
+
+    private HttpResponseMessage Refuse()
+    {
+        Interlocked.Increment(ref Rejected);
+        return Answer(new { code = "02000", message = "authentication failed" });
+    }
+
+    private static HttpResponseMessage Answer(object body) =>
+        new(System.Net.HttpStatusCode.OK) { Content = JsonContent.Create(body) };
 }

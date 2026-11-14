@@ -188,7 +188,7 @@ Users routes are Support only, so they show emails and phones and search by them
 ### Money (Finance)
 | Method | Path | Returns |
 |---|---|---|
-| GET | `/api/platform/payments?product=&status=&from=&to=&page=&pageSize=` | `Paged<{ id, kind: Subscription\|Course\|Stay\|Boost, product, businessId, businessName, amountMinor, currency, status, reference, createdAt, paidAt }>` |
+| GET | `/api/platform/payments?product=&status=&from=&to=&page=&pageSize=` | `Paged<{ id, kind: Subscription\|Course\|Stay\|Boost, product, businessId, businessName, amountMinor, currency, status, reference, createdAt, paidAt, provider: paystack\|opay\|transfer }>` |
 | GET | `/api/platform/payments.csv?product=&status=&from=&to=` | CSV file (fetch with the token, save as a blob) |
 
 Payments come from one SQL `UNION ALL` of four sources: course orders (amount > 0), paid stays, paid boosts and subscription payments
@@ -196,7 +196,59 @@ Payments come from one SQL `UNION ALL` of four sources: course orders (amount > 
 complete; there is no per-source cap. `pageSize` is 1-100 (default 50); `status` matches case-insensitively; `from`/`to` filter on
 `createdAt`. The CSV has columns `date,kind,product,business,amount,currency,status,reference` and covers the whole filtered range.
 Every text cell is quoted, and a cell starting with `=`, `+`, `-`, `@`, tab or carriage return gets a leading `'`, so a spreadsheet
-opens it as text rather than running it as a formula.
+opens it as text rather than running it as a formula. `provider` is the plan payment's own provider (`paystack`, `opay`, or `transfer` for a bank transfer an admin confirms); course
+sales, stays and boosts always show `paystack`. A subscription payment's `status` can also be `Abandoned` (never confirmed within 24 hours).
+
+#### Plan billing provider (Paystack or OPay)
+
+Config: `Billing:PlanProvider` (`paystack` by default, or `opay`; env `BILLING_PROVIDER`), and `Opay:MerchantId`, `Opay:PublicKey`,
+`Opay:SecretKey`, `Opay:BaseUrl` (sandbox `https://sandboxapi.opaycheckout.com` by default; live `https://api.opaycheckout.com`,
+**required in production**; env `OPAY_MERCHANT_ID`, `OPAY_PUBLIC_KEY`, `OPAY_SECRET_KEY`, `OPAY_BASE_URL`). In Production a sandbox (or
+empty) `Opay:BaseUrl` counts as not configured, with a startup warning, unless `Opay:AllowSandboxInProduction` is true. An unknown
+`Billing:PlanProvider` stops the api at startup. To switch plans to OPay: set BILLING_PROVIDER=opay and the OPAY_* values, then restart
+the api. Only new plan checkouts move; course sales, short-lets and boosts stay on Paystack.
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/api/billing/checkout` `{ planCode }` | unchanged: `{ authorizationUrl }` (Paystack, or OPay's cashier URL). 503 with a clear sentence when the chosen provider isn't configured; `GET /api/billing` then has `paymentsEnabled: false`. |
+| POST | `/api/billing/verify` `{ reference }` | signed-in, own business's payment only (404 otherwise). Asks the provider that took the payment and confirms on SUCCESS with a matching amount and currency. → `{ status: Paid\|Pending\|Failed, plan }`. Rate limited per user. |
+| POST | `/api/webhooks/opay` | anonymous, webhook rate limit. Reads only the reference, then asks OPay for the status; the body's status and signature are never trusted. 200 (unknown references are logged); a body over 64 KB is 413. |
+
+A plan activates only after the provider confirms the payment (callback, return check, or the background re-check, which asks about
+each Pending plan payment about every 10 minutes and marks it `Abandoned` after 24 hours; a later confirmation still applies). A
+mismatched amount or currency marks the payment `Failed` and leaves the plan alone. Confirmation is applied once: in a transaction under
+a per-business lock, the payment is claimed with a conditional update, and only the call that claimed it changes the subscription. The
+callback and the return check ask the provider about one payment at most every 30 seconds (otherwise they answer from what is stored).
+The re-check only looks at plan payments created in the last 48 hours. OPay answering `50003` (try again) or an authentication or
+merchant error (`02000`, `02002`, `02007`, logged as an error) keeps the payment Pending. `Opay:AllowLocalFixture` (Development only, set in
+appsettings.Development.json) answers OPay in-process for localhost click-throughs.
+
+#### Payment settings and bank transfer for plans
+
+The online payment switch, the plan provider and the company bank account live in one database row (`platform_payment_settings`),
+edited in the admin console (Money → Payment settings). The migration created it with online payment **off**, no provider (so
+`Billing:PlanProvider` from config applies until an admin picks one) and the account OPay, 9067382888, Brosync Technologies. Provider
+keys stay in server config and never appear in the database or the console. Every payment path reads the row through one cache
+(10 seconds per API process; a save on a process clears its copy at once).
+
+While online payment is **off**: new plan checkouts answer 503 ("pay by bank transfer instead"), course purchases, short-let bookings and
+boost purchases answer 503 exactly as when Paystack has no key (nothing reaches the gateway), and `GET /api/billing` has
+`paymentsEnabled: false`. Webhooks, return checks, the plan re-check and refunds of payments already taken work whatever the switch says.
+Each business's own Paystack key for its own customers is not affected.
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/billing` | signed-in member | adds `bankTransfer: { bankName, accountNumber, accountName, reference } \| null` (only while online payment is off and all three details are set; `reference` is what the business writes in the transfer note, the same until it makes a claim) and `pendingTransfer: { reference, planCode, planName, amountMinor, currency, createdAt } \| null`. |
+| POST | `/api/billing/transfer` `{ planCode, reference }` | business owner (as checkout); rate limited to 5 per business per hour (`RateLimits:TransferClaimsPerHour`) | "I've sent the transfer": a Pending plan payment with `provider: transfer`, the plan's own amount and the `LS-XXXXXX` reference shown in `bankTransfer.reference` (an HMAC of the business and its claim count, keyed with `Billing:TransferReferenceKey`, else derived from `Jwt:SigningKey`, so it can't be guessed). `reference` is the one the page showed: a different one is 409 "Refresh the page; the reference changed". One per business: a new claim marks the pending one `Abandoned`. 409 while online payment is on or the bank details are missing; 400 for a free plan; 404 for an unknown or hidden plan. Emails every active super and finance admin (`plan.transfer_claimed`), at most once per business per hour (later claims are only listed in the console). → `pendingTransfer`. |
+| DELETE | `/api/billing/transfer` | business owner | withdraws the pending claim (`Abandoned`). 204, also when nothing is pending. |
+| GET | `/api/platform/payment-settings` | Finance | `{ onlinePaymentsEnabled, planProvider, bankName, bankAccountNumber, bankAccountName, providers: { paystack, opay }, updatedAt, updatedByName }`; `providers` says whose keys are set on this server. |
+| PUT | `/api/platform/payment-settings` | **SuperAdmin** | body `{ onlinePaymentsEnabled, planProvider, bankName, bankAccountNumber, bankAccountName }` → as GET. 400 when: the account number isn't 10 digits; a name is empty or too long (bank 60, account name 100; trimmed); the provider isn't `paystack` or `opay`; online payment is on with a provider whose keys aren't set. Audit `payment_settings.update` with before and after. Takes effect at once. |
+| GET | `/api/platform/transfers?status=Pending\|Succeeded\|Failed\|Abandoned` | Finance | pending first, then newest, up to 200: `[{ id, reference, status, businessId, businessName, product, planCode, planName, amountMinor, currency, claimedByName, claimedByEmail, createdAt, decidedAt, rejectReason }]` (`claimedByEmail` masked unless the admin may see contact details). |
+| POST | `/api/platform/transfers/{id}/confirm` (optional body `{ anyway: true, note }`) | Finance | runs the same confirm path as a provider payment (per-business lock, conditional claim, stored amount): the plan starts or extends as a paid period with `provider: transfer`, the payment is `Succeeded`. Without `anyway`, a claim that is no longer Pending is left alone and reported as it is. With `anyway` and a note of 10-300 characters, a withdrawn (`Abandoned`) or rejected (`Failed`) claim is confirmed too, for money that arrived after all (audit `transfer.confirm_anyway` with the note and the earlier status). Audit `transfer.confirm`; the business gets `plan.transfer_confirmed` (the claimant while still an active member, else the owner). → the row. |
+| POST | `/api/platform/transfers/{id}/reject` `{ reason }` | Finance | reason 10-300 characters. Pending → `Failed`, plan unchanged. Audit `transfer.reject`; the business gets `plan.transfer_rejected` with the reason. → the row. |
+
+`POST /api/billing/verify` and the background re-check never ask a provider about a `transfer` payment (verify answers from what is
+stored), and a provider webhook naming a transfer reference is ignored: only an admin confirms a transfer.
 
 | Method | Path | Returns |
 |---|---|---|

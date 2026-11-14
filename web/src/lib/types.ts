@@ -1,3 +1,5 @@
+import type { BankTransfer, PendingTransfer } from "@/lib/plan-payment";
+
 // Types mirroring docs/API.md. Money fields ending in `Minor` are integers in minor units.
 
 export type OrderStatus = "New" | "Confirmed" | "Paid" | "Delivered" | "Cancelled";
@@ -235,6 +237,10 @@ export interface BillingDto {
   plans: PlanDto[];
   usage: { products: number; maxProducts: number };
   paymentsEnabled: boolean;
+  /** The company account to pay a plan into by bank transfer: only while online payment is off. */
+  bankTransfer?: BankTransfer | null;
+  /** A bank transfer this business said it sent, waiting for confirmation. */
+  pendingTransfer?: PendingTransfer | null;
 }
 
 // ---- Account activity ----

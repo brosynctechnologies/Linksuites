@@ -104,6 +104,19 @@ public static class PlatformEndpoints
             Results.File(System.Text.Encoding.UTF8.GetBytes(await s.CsvAsync(product, status, from, to, ct)), "text/csv", "payments.csv"))
             .RequireAuthorization(Policies.PlatformFinance);
 
+        // The online payment switch, plan provider and company bank details. Finance reads them; only a super admin changes where money goes.
+        platform.MapGet("/payment-settings", (PlatformPaymentSettingsService s, CancellationToken ct) => s.GetAsync(ct))
+            .RequireAuthorization(Policies.PlatformFinance);
+        platform.MapPut("/payment-settings", (SavePaymentSettingsRequest r, PlatformPaymentSettingsService s, CancellationToken ct) => s.UpdateAsync(r, ct))
+            .RequireAuthorization(Policies.PlatformSuper);
+
+        // Plan payments by bank transfer: checked against the company account, then confirmed or rejected.
+        var transfers = platform.MapGroup("/transfers").RequireAuthorization(Policies.PlatformFinance);
+        transfers.MapGet("/", (string? status, PlatformTransfersService s, CancellationToken ct) => s.ListAsync(status, ct));
+        // Body optional: { anyway: true, note } also confirms a withdrawn or rejected claim (money that arrived after all).
+        transfers.MapPost("/{id:guid}/confirm", (Guid id, ConfirmTransferRequest? r, PlatformTransfersService s, CancellationToken ct) => s.ConfirmAsync(id, r, ct));
+        transfers.MapPost("/{id:guid}/reject", (Guid id, ReasonRequest r, PlatformTransfersService s, CancellationToken ct) => s.RejectAsync(id, r, ct));
+
         platform.MapGet("/audit", (Guid? tenantId, Guid? actorId, string? entityType, string? action, string? product, DateTimeOffset? from, DateTimeOffset? to,
             int? page, int? pageSize, PlatformAuditService s, CancellationToken ct) =>
             s.QueryAsync(tenantId, actorId, entityType, action, from, to, page ?? 1, pageSize ?? 50, ct, product)).RequireAuthorization(Policies.PlatformSupport);

@@ -8,13 +8,23 @@ import { useApi } from "@/lib/use-api";
 import type { BillingDto, PlanDto } from "@/lib/types";
 import { ApiErrorView, Badge, Button, ErrorBox, Notice, PageHeader, PageLoader, Panel, cx, formatDate } from "@/components/ui";
 import { CheckIcon } from "@/components/icons";
+import { PlanPaymentNotice } from "@/components/plan-payment-notice";
+import { usePlanPaymentReturn } from "@/lib/plan-payment";
+import { PendingTransferNotice, PlanTransferPanel } from "@/components/plan-transfer";
 
 export default function BillingPage() {
   const { data, error, reload } = useApi<BillingDto>("/api/billing");
   const [busy, setBusy] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<ApiError | null>(null);
+  // While online payment is off, a plan is paid by bank transfer: the plan whose transfer details are open.
+  const [transferPlan, setTransferPlan] = useState<PlanDto | null>(null);
   // Support views can look at the plan but not buy one.
-  const readOnly = !!useAuth()?.support;
+  const auth = useAuth();
+  const readOnly = !!auth?.support;
+  // Buying a plan (and withdrawing a transfer claim) is for the business owner, as the API requires.
+  const isOwner = auth?.tenant?.role === "Owner";
+  // Back from the secure checkout with ?ref=: confirm the payment, and show the new plan once it is active.
+  const payment = usePlanPaymentReturn(reload);
 
   async function upgrade(plan: PlanDto) {
     setBusy(plan.code);
@@ -38,12 +48,17 @@ export default function BillingPage() {
   }
 
   const { usage, currentPlan } = data;
+  // Bank transfer is offered only while online payment is off (the API sends the details only then).
+  const bank = data.paymentsEnabled ? null : (data.bankTransfer ?? null);
+  // One transfer at a time: while one is being checked, no plan offers another (the notice above says what is pending).
+  const offerTransfer = !(bank && data.pendingTransfer);
   const unlimited = usage.maxProducts === -1;
   const pct = unlimited || usage.maxProducts <= 0 ? 0 : Math.min(100, Math.round((usage.products / usage.maxProducts) * 100));
 
   return (
     <div className="space-y-6">
       <PageHeader title="Plan & billing" back="/dashboard/more" />
+      <PlanPaymentNotice payment={payment} />
 
       <Panel>
         <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
@@ -78,7 +93,19 @@ export default function BillingPage() {
         </div>
       </Panel>
 
-      {!data.paymentsEnabled && <Notice tone="warning">Online payments aren&apos;t set up yet, so upgrades are unavailable for now.</Notice>}
+      {data.pendingTransfer && <PendingTransferNotice pending={data.pendingTransfer} canCancel={isOwner && !readOnly} onCancelled={reload} />}
+      {!data.paymentsEnabled && !bank && <Notice tone="warning">Online payments aren&apos;t set up yet, so upgrades are unavailable for now.</Notice>}
+      {transferPlan && bank && offerTransfer && (
+        <PlanTransferPanel
+          plan={transferPlan}
+          bank={bank}
+          onClaimed={() => {
+            setTransferPlan(null);
+            reload();
+          }}
+          onClose={() => setTransferPlan(null)}
+        />
+      )}
       {checkoutError && <ErrorBox error={checkoutError} />}
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -110,14 +137,14 @@ export default function BillingPage() {
                   </li>
                 ))}
               </ul>
-              {!current && plan.priceMinor > 0 && (
+              {!current && plan.priceMinor > 0 && offerTransfer && (
                 <Button
                   className="mt-5 w-full"
                   loading={busy === plan.code}
-                  disabled={!data.paymentsEnabled || !!busy || readOnly}
-                  onClick={() => upgrade(plan)}
+                  disabled={!(data.paymentsEnabled || bank) || !!busy || readOnly || !isOwner}
+                  onClick={() => (bank ? setTransferPlan(plan) : upgrade(plan))}
                 >
-                  Upgrade to {plan.name}
+                  {bank ? "Pay by bank transfer" : `Upgrade to ${plan.name}`}
                 </Button>
               )}
             </section>

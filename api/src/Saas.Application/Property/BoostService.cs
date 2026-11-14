@@ -14,7 +14,7 @@ public sealed record BoostDto(Guid Id, Guid ListingId, string ListingTitle, stri
     DateTimeOffset? PaidAt, DateTimeOffset? EndsAt, DateTimeOffset CreatedAt);
 
 /// <summary>Paid placement: featured for 7 or 30 days, or top of search for 7 days. Paid to the platform's Paystack.</summary>
-public sealed class BoostService(IAppDbContext db, ICurrentUser user, PropertyCore core, IPaymentGateway gateway, ILogger<BoostService> logger)
+public sealed class BoostService(IAppDbContext db, ICurrentUser user, PropertyCore core, IPaymentGateway gateway, PaymentSettings payments, ILogger<BoostService> logger)
 {
     public static readonly IReadOnlyList<BoostOptionDto> Options =
     [
@@ -28,7 +28,8 @@ public sealed class BoostService(IAppDbContext db, ICurrentUser user, PropertyCo
         var option = Options.FirstOrDefault(o => o.Code == r.Code) ?? throw BadRequestException.Field("code", "Choose a boost.");
         var listing = await db.Listings.FirstOrDefaultAsync(l => l.Id == listingId, ct) ?? throw new NotFoundException("Listing");
         if (listing.Status != ListingStatus.Active) throw new ConflictException("Only live listings can be boosted.");
-        if (!gateway.IsConfigured) throw new ServiceUnavailableException("Online payments aren't set up yet. Please try again later.");
+        // Online payment switched off in the admin console reads exactly like a gateway with no key: nothing reaches the gateway.
+        if (!gateway.IsConfigured || !await payments.OnlinePaymentsEnabledAsync(ct)) throw new ServiceUnavailableException("Online payments aren't set up yet. Please try again later.");
         var me = user.UserId ?? throw new ForbiddenException();
         var boost = new Boost
         {

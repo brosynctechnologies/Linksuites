@@ -38,7 +38,7 @@ public sealed record PropertyEarningsDto(string Currency, long AvailableMinor, l
 /// Short-let bookings for guests. Dates are held for 15 minutes while the guest pays the platform; a PostgreSQL exclusion
 /// constraint makes sure two guests can never hold or confirm overlapping nights.
 /// </summary>
-public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCore core, IPaymentGateway gateway, IDbErrors errors,
+public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCore core, IPaymentGateway gateway, PaymentSettings payments, IDbErrors errors,
     NotificationQueue notifications, LocationTree locations, ILogger<StayService> logger)
 {
     public const int MaxNights = 90;
@@ -75,7 +75,8 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
         if (await db.Memberships.IgnoreQueryFilters().AnyAsync(m => m.TenantId == listing.TenantId && m.UserId == me, ct))
             throw new ForbiddenException("You can't book your own listing.");
         await CheckAsync(listing, r, ct);
-        if (!gateway.IsConfigured) throw new ServiceUnavailableException("Online payments aren't set up yet. Please try again later.");
+        // Online payment switched off in the admin console reads exactly like a gateway with no key: nothing reaches the gateway.
+        if (!gateway.IsConfigured || !await payments.OnlinePaymentsEnabledAsync(ct)) throw new ServiceUnavailableException("Online payments aren't set up yet. Please try again later.");
 
         // Unpaid holds that have run out no longer block the dates, and nor does this guest's own earlier hold on these nights (they
         // went back from Paystack and pressed "Reserve and pay" again): it is released, and the new hold replaces it. If the old

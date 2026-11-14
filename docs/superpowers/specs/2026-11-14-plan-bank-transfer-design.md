@@ -1,0 +1,33 @@
+# Plan payments by bank transfer, and an admin payments switch: design
+
+Approved by the owner on 14 November 2026. Builds on `2026-11-14-opay-plan-billing-design.md` (uncommitted OPay work in the same tree).
+
+## Owner's decisions
+
+- Online payment is **off for now**. While it is off, businesses pay for **plan upgrades only** by bank transfer to the company account. Course sales, short-let stays and listing boosts are simply unavailable while online payment is off (as they are today when Paystack has no key).
+- Initial bank details: bank **OPay**, account number **9067382888**, account name **Brosync Technologies**. All three are editable in the admin console.
+- Activation: the business taps "I've sent the transfer"; a platform admin checks the OPay app and confirms (or rejects) in the admin console. Confirming starts the plan as a **paid** period and records the payment.
+- The admin console controls: online payment on/off, the plan provider (Paystack or OPay), and the bank details. API keys stay in server config (never in the database or the admin UI). A provider whose keys are not configured cannot be chosen, and online payment cannot be switched on while the chosen provider is not configured.
+
+## Design
+
+1. **Platform payment settings (database, singleton row).** `OnlinePaymentsEnabled` (bool), `PlanProvider` (`paystack` | `opay`), `BankName`, `BankAccountNumber`, `BankAccountName`, `UpdatedAt`, `UpdatedByUserId`. The migration inserts the row with online payments **off**, provider from nothing (`paystack`), and the initial bank details above. Settings are read through one service (cached briefly, invalidated on save) that every payment path uses; `Billing:PlanProvider` config becomes only the fallback default when the row has no provider.
+2. **The switch gates every use of the platform gateway.** When off: plan checkout answers 409/503 with a clear sentence; course purchase, stay booking payment and boost checkout behave exactly as "payments not configured" does today (they must not reach Paystack). `paymentsEnabled` in `GET /api/billing` (and any equivalent flag the course, stay and boost flows expose) is false. Webhooks, the return check, the background re-check and refunds of payments **already taken** keep working whatever the switch says (money already moved must still be confirmed or refunded). Each business's own Paystack key for its own customers is not affected.
+3. **Bank transfer for plans.** `GET /api/billing` adds `bankTransfer: { bankName, accountNumber, accountName } | null` (present only while online payment is off and all three details are set) and `pendingTransfer: { reference, planCode, planName, amountMinor, currency, createdAt } | null`.
+   - `POST /api/billing/transfer { planCode }` (signed-in owner/admin of the business, same permission as checkout): creates a `Payment` with `Provider = "transfer"`, `Status = Pending`, `Purpose = subscription`, amount and currency from the plan on the server, and a short human reference `LS-` + 6 uppercase letters/digits (no ambiguous characters, unique). One pending transfer per business: a new claim replaces (cancels) the previous pending one. Refused while online payment is on, or when bank details are missing, or for free/hidden plans (same rules as checkout).
+   - `DELETE /api/billing/transfer` cancels the business's own pending claim (status Abandoned).
+   - The background re-check and `POST /api/billing/verify` never ask a provider about `transfer` payments; verify returns the stored state.
+   - Platform admins get an email when a claim is made (business, product, plan, amount, reference), using the existing notification/email path; the business gets an email when it is confirmed or rejected. Use existing branded email helpers.
+4. **Admin confirm/reject.** Platform-admin endpoints: list transfer claims (pending first, with business name, product, plan, amount, reference, claimed by, date); `POST .../{id}/confirm` runs the **same** confirm path as provider payments (`ConfirmPaymentAsync`-equivalent with the per-tenant lock and conditional claim, so a double click gives one subscription), with the stored amount; `POST .../{id}/reject { reason }` marks it Failed. Both are audit-logged. Confirming a claim that is no longer Pending is a no-op that reports its state.
+5. **Admin settings endpoints.** `GET/PUT` platform payment settings; the GET also returns which providers are configured on the server (`paystack: bool, opay: bool`). PUT validates: account number 10 digits; names non-empty and trimmed, length-capped; provider must be configured to be selected while online payment is on; switching on requires the provider configured. Audit-logged with before/after (no secrets involved).
+6. **Admin console (admin-web).** Under Money: a "Payment settings" page (switch, provider choice showing which are configured, bank details form) and a "Bank transfers" list with Confirm / Reject (reason). The existing payments list shows provider `transfer` as "Bank transfer".
+7. **Seven billing pages.** When `paymentsEnabled` is false and `bankTransfer` is set, the upgrade button reads "Pay by bank transfer" and opens a panel with the amount, bank, account number (with a copy button), account name, the reference to put in the transfer note, and "I've sent the transfer". After claiming, the page shows "We're checking your transfer of ₦X (reference LS-…). Your plan starts once it's confirmed." with "Cancel". When neither online payment nor bank details are available, the existing "online payment isn't available" state stays. Remove the footer line "Online payments go through Paystack" (web, invoice, booking, course, property) or make it provider-neutral.
+8. **Docs.** `docs/PLATFORM_API.md` (new endpoints), `docs/deploy-vps-handoff.md` (the switch now lives in admin; env is the default only), `deploy/.env.vps.example` comment.
+
+## Tests (TDD)
+
+- Switch off: plan checkout refused; course purchase / stay payment / boost checkout don't call the gateway; `paymentsEnabled` false; webhook and verify for an existing Paystack payment still confirm it.
+- Transfer claim: creates one pending transfer payment with server amount; second claim replaces the first; refused while online is on, without bank details, for a free plan, for another business's members without permission.
+- Admin confirm: plan active as a paid period, payment Succeeded; double confirm (concurrent) gives one subscription; reject marks Failed and leaves the plan; non-admin gets 403.
+- Settings: validation rules above; switching on with an unconfigured provider refused; changes take effect immediately (no restart).
+- Re-check job skips transfer payments.

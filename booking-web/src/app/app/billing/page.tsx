@@ -10,6 +10,9 @@ import { useCan } from "@/lib/permissions";
 import type { BillingDto, PlanDto } from "@/lib/types";
 import { ApiErrorView, Button, Card, ErrorBox, Notice, PageHeader, PageLoader, StatusBadge, UsageMeter, cx } from "@/components/ui";
 import { CheckIcon } from "@/components/icons";
+import { PlanPaymentNotice } from "@/components/plan-payment-notice";
+import { usePlanPaymentReturn } from "@/lib/plan-payment";
+import { PendingTransferNotice, PlanTransferPanel } from "@/components/plan-transfer";
 
 function intervalLabel(interval: string) {
   const i = interval.toLowerCase();
@@ -25,7 +28,11 @@ export default function BillingPage() {
   // Support views can look at the plan but not buy one.
   const readOnly = !!useAuth()?.support;
   const [busy, setBusy] = useState<string | null>(null);
+  // Back from the secure checkout with ?ref=: confirm the payment, and show the new plan once it is active.
+  const payment = usePlanPaymentReturn(reload);
   const [checkoutError, setCheckoutError] = useState<ApiError | null>(null);
+  // While online payment is off, a plan is paid by bank transfer: the plan whose transfer details are open.
+  const [transferPlan, setTransferPlan] = useState<PlanDto | null>(null);
 
   async function upgrade(plan: PlanDto) {
     setBusy(plan.code);
@@ -49,6 +56,10 @@ export default function BillingPage() {
   }
 
   const { currentPlan } = data;
+  // Bank transfer is offered only while online payment is off (the API sends the details only then).
+  const bank = data.paymentsEnabled ? null : (data.bankTransfer ?? null);
+  // One transfer at a time: while one is being checked, no plan offers another (the notice above says what is pending).
+  const offerTransfer = !(bank && data.pendingTransfer);
   const usage = Array.isArray(data.usage?.items) ? data.usage.items : [];
   // Free → Pro → Business, cheapest first, whatever order the API returns.
   const plans = [...(data.plans ?? [])].sort((a, b) => a.priceMinor - b.priceMinor);
@@ -61,6 +72,7 @@ export default function BillingPage() {
   return (
     <div className="space-y-4">
       <PageHeader title="Plan & billing" back="/app/more" />
+      <PlanPaymentNotice payment={payment} />
 
       <Card className="grid gap-5 md:grid-cols-[minmax(0,14rem)_minmax(0,1fr)] md:gap-8">
         <div>
@@ -83,7 +95,19 @@ export default function BillingPage() {
         )}
       </Card>
 
-      {!data.paymentsEnabled && <Notice tone="warning">Upgrades are unavailable until online payments are set up. Try again later.</Notice>}
+      {data.pendingTransfer && <PendingTransferNotice pending={data.pendingTransfer} canCancel={canManage && !readOnly} onCancelled={reload} />}
+      {!data.paymentsEnabled && !bank && <Notice tone="warning">Upgrades are unavailable until online payments are set up. Try again later.</Notice>}
+      {transferPlan && bank && offerTransfer && (
+        <PlanTransferPanel
+          plan={transferPlan}
+          bank={bank}
+          onClaimed={() => {
+            setTransferPlan(null);
+            reload();
+          }}
+          onClose={() => setTransferPlan(null)}
+        />
+      )}
       {checkoutError && <ErrorBox error={checkoutError} />}
       {!canManage && <Notice tone="info">Only the business owner can change the plan.</Notice>}
 
@@ -119,14 +143,14 @@ export default function BillingPage() {
                   </li>
                 ))}
               </ul>
-              {!current && canManage && isUpgrade(plan) && (
+              {!current && canManage && isUpgrade(plan) && offerTransfer && (
                 <Button
                   className="mt-6 w-full"
                   loading={busy === plan.code}
-                  disabled={!data.paymentsEnabled || !!busy || readOnly}
-                  onClick={() => upgrade(plan)}
+                  disabled={!(data.paymentsEnabled || bank) || !!busy || readOnly}
+                  onClick={() => (bank ? setTransferPlan(plan) : upgrade(plan))}
                 >
-                  Upgrade to {plan.name}
+                  {bank ? "Pay by bank transfer" : `Upgrade to ${plan.name}`}
                 </Button>
               )}
             </section>

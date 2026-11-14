@@ -108,14 +108,14 @@ public sealed partial class PlatformPlansService(IAppDbContext db, PlatformAudit
 /// <see cref="CollectedMinor"/> the one "collected" rule for every source: money actually received, less refunds (0 while unpaid).
 /// </summary>
 public sealed record PaymentRowDto(Guid Id, string Kind, string Product, Guid BusinessId, string BusinessName, long AmountMinor, long RefundedMinor,
-    long CollectedMinor, string Currency, string Status, string Reference, DateTimeOffset CreatedAt, DateTimeOffset? PaidAt);
+    long CollectedMinor, string Currency, string Status, string Reference, DateTimeOffset CreatedAt, DateTimeOffset? PaidAt, string Provider);
 
 /// <summary>Every payment through the platform: plan subscriptions, course sales, short-let stays and boosts, with refunds.</summary>
 public sealed class PlatformMoneyService(IAppDbContext db)
 {
     /// <summary>One row per payment, all sources in one UNION ALL so the database filters, sorts and pages the whole set.</summary>
     private sealed record Row(Guid Id, string Kind, string Product, Guid BusinessId, string BusinessName, long AmountMinor, long RefundedMinor,
-        long CollectedMinor, string Currency, string Status, string Reference, DateTimeOffset CreatedAt, DateTimeOffset? PaidAt);
+        long CollectedMinor, string Currency, string Status, string Reference, DateTimeOffset CreatedAt, DateTimeOffset? PaidAt, string Provider);
 
     // Static SQL: every filter is applied by LINQ on top, as parameters. Collected = received - refunded, per source:
     //  - course orders: received once paid (Paid or Refunded); a refund returns the whole order.
@@ -123,27 +123,29 @@ public sealed class PlatformMoneyService(IAppDbContext db)
     //    in full but still received the money); refund_minor is what went back.
     //  - boosts: received once paid; boosts aren't refunded.
     //  - subscriptions: received when Succeeded or Refunded; a refund returns the whole payment.
+    // Provider: plan payments record theirs (paystack or opay); course sales, stays and boosts all go through the platform Paystack account.
     private IQueryable<Row> Rows() => db.SqlQuery<Row>($"""
         SELECT o.id, 'Course' AS kind, 'courses' AS product, o.tenant_id AS business_id, COALESCE(t.name, '') AS business_name,
                o.total_minor AS amount_minor,
                CASE WHEN o.status = 'Refunded' THEN o.total_minor ELSE 0::bigint END AS refunded_minor,
                CASE WHEN o.status = 'Paid' THEN o.total_minor ELSE 0::bigint END AS collected_minor,
-               o.currency, o.status, COALESCE(o.reference, '') AS reference, o.created_at, o.paid_at
+               o.currency, o.status, COALESCE(o.reference, '') AS reference, o.created_at, o.paid_at, 'paystack' AS provider
         FROM course_orders o LEFT JOIN tenants t ON t.id = o.tenant_id WHERE o.total_minor > 0
         UNION ALL
         SELECT s.id, 'Stay', 'property', s.tenant_id, COALESCE(t.name, ''), s.total_minor, s.refund_minor, GREATEST(s.total_minor - s.refund_minor, 0),
-               s.currency, s.status, COALESCE(s.reference, ''), s.created_at, s.paid_at
+               s.currency, s.status, COALESCE(s.reference, ''), s.created_at, s.paid_at, 'paystack'
         FROM stays s LEFT JOIN tenants t ON t.id = s.tenant_id WHERE s.paid_at IS NOT NULL OR s.refund_minor > 0
         UNION ALL
         SELECT b.id, 'Boost', 'property', b.tenant_id, COALESCE(t.name, ''), b.amount_minor, 0::bigint, b.amount_minor,
-               b.currency, b.status, COALESCE(b.reference, ''), b.created_at, b.paid_at
+               b.currency, b.status, COALESCE(b.reference, ''), b.created_at, b.paid_at, 'paystack'
         FROM boosts b LEFT JOIN tenants t ON t.id = b.tenant_id WHERE b.paid_at IS NOT NULL
         UNION ALL
         SELECT p.id, 'Subscription', COALESCE(t.product, ''), p.tenant_id, COALESCE(t.name, ''), p.amount_minor,
                CASE WHEN p.status = 'Refunded' THEN p.amount_minor ELSE 0::bigint END,
                CASE WHEN p.status = 'Succeeded' THEN p.amount_minor ELSE 0::bigint END,
                p.currency, p.status, COALESCE(p.provider_ref, ''), p.created_at,
-               CASE WHEN p.status IN ('Succeeded', 'Refunded') THEN COALESCE(p.paid_at, p.updated_at, p.created_at) END
+               CASE WHEN p.status IN ('Succeeded', 'Refunded') THEN COALESCE(p.paid_at, p.updated_at, p.created_at) END,
+               p.provider
         FROM payments p LEFT JOIN tenants t ON t.id = p.tenant_id
         """);
 
@@ -158,7 +160,7 @@ public sealed class PlatformMoneyService(IAppDbContext db)
     }
 
     private static PaymentRowDto Dto(Row r) => new(r.Id, r.Kind, r.Product, r.BusinessId, r.BusinessName, r.AmountMinor, r.RefundedMinor, r.CollectedMinor,
-        r.Currency, r.Status, r.Reference, r.CreatedAt, r.PaidAt);
+        r.Currency, r.Status, r.Reference, r.CreatedAt, r.PaidAt, r.Provider);
 
     public async Task<Paged<PaymentRowDto>> PaymentsAsync(string? product, string? status, DateTimeOffset? from, DateTimeOffset? to, int page, int pageSize, CancellationToken ct)
     {

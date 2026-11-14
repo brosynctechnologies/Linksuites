@@ -86,6 +86,41 @@ public static class CoreEndpoints
         billing.MapGet("/", (BillingService s, CancellationToken ct) => s.GetAsync(ct));
         billing.MapPost("/checkout", (CheckoutRequest r, BillingService s, CancellationToken ct) => s.CheckoutAsync(r, ct))
             .RequireAuthorization(Policies.Owner);
+        // The return check every billing page calls on ?ref=: any signed-in member, for their own business's payment only.
+        // Rate limited per signed-in user (the per-user policy the admin routes use); the web page sends about 11 in 30 seconds.
+        billing.MapPost("/verify", (VerifyPaymentRequest r, BillingService s, CancellationToken ct) => s.VerifyAsync(r, ct))
+            .RequireRateLimiting(RateLimits.Admin);
+        // Bank transfer for plans while online payment is off: "I've sent the transfer" and its cancel; a platform admin confirms it.
+        billing.MapPost("/transfer", (TransferRequest r, BillingService s, CancellationToken ct) => s.ClaimTransferAsync(r, ct))
+            .RequireAuthorization(Policies.Owner).RequireRateLimiting(RateLimits.TransferClaim);
+        billing.MapDelete("/transfer", async (BillingService s, CancellationToken ct) =>
+        {
+            await s.CancelTransferAsync(ct);
+            return Results.NoContent();
+        }).RequireAuthorization(Policies.Owner);
+
+        // OPay's callback for plan payments. Only the reference is read: OPay is then asked for the status, so the body's status and
+        // signature are never trusted. Always 200 (unknown or unreadable bodies are logged), so OPay doesn't retry what can't succeed.
+        app.MapPost("/api/webhooks/opay", async (HttpRequest request, BillingService billingService, ILogger<BillingService> logger, CancellationToken ct) =>
+        {
+            // An anonymous body is read at most 64 KB; OPay's callbacks are under 2 KB.
+            if (request.ContentLength > OpayCallbackMaxChars) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            using var reader = new StreamReader(request.Body);
+            var buffer = new char[OpayCallbackMaxChars + 1];
+            var read = 0;
+            int n;
+            while (read < buffer.Length && (n = await reader.ReadAsync(buffer.AsMemory(read), ct)) > 0) read += n;
+            if (read > OpayCallbackMaxChars) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            var body = new string(buffer, 0, read);
+            var reference = OpayCallbackReference(body);
+            if (reference is null)
+            {
+                logger.LogWarning("Ignored an OPay callback without a readable reference");
+                return Results.Ok();
+            }
+            await billingService.ConfirmFromProviderAsync(reference, ct);
+            return Results.Ok();
+        }).AllowAnonymous().RequireRateLimiting(RateLimits.Webhook).WithTags("Webhooks").ExcludeFromDescription();
 
         app.MapPost("/api/webhooks/paystack", async (HttpRequest request, PaystackGateway paystack, BillingService billingService,
             ILogger<PaystackGateway> logger, CancellationToken ct) =>
@@ -126,6 +161,27 @@ public static class CoreEndpoints
             return ok ? Results.Ok() : Results.Unauthorized();
         }).WithTags("Webhooks").ExcludeFromDescription();
     }
+
+    /// <summary>The largest OPay callback body read (64 KB); bigger ones are answered 413 without asking OPay.</summary>
+    public const int OpayCallbackMaxChars = 64 * 1024;
+
+    /// <summary><c>payload.reference</c> from an OPay callback (or a top-level <c>reference</c>); null when the body can't be read.</summary>
+    public static string? OpayCallbackReference(string body)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            var holder = root.TryGetProperty("payload", out var payload) && payload.ValueKind == System.Text.Json.JsonValueKind.Object ? payload : root;
+            var reference = holder.TryGetProperty("reference", out var r) && r.ValueKind == System.Text.Json.JsonValueKind.String ? r.GetString()?.Trim() : null;
+            return string.IsNullOrEmpty(reference) || reference.Length > 100 ? null : reference;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
 }
 
 public static class RateLimits
@@ -136,6 +192,8 @@ public static class RateLimits
     /// <summary>Payment provider webhooks: per IP but high, because one provider sends every business's webhooks from a few IPs.</summary>
     public const string Webhook = "webhook";
     public const string Preview = "preview";
+    /// <summary>Bank transfer claims for plans: a few per business per hour (RateLimits:TransferClaimsPerHour, default 5).</summary>
+    public const string TransferClaim = "transfer-claim";
     public const string Admin = "admin";
 }
 

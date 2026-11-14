@@ -210,9 +210,22 @@ public sealed class PaystackClient : IMerchantPayments
     }
 }
 
-/// <summary>Plan subscriptions paid to us, with our own key from configuration.</summary>
-public sealed class PaystackGateway(PaystackClient client, IOptions<PaystackOptions> options) : IPaymentGateway
+/// <summary>
+/// The platform's own Paystack account, with our key from configuration: course sales, boosts and stays (as <see cref="IPaymentGateway"/>),
+/// and plan payments when Paystack is the plan provider or took the payment (as <see cref="IPlanPaymentGateway"/>).
+/// </summary>
+public sealed class PaystackGateway(PaystackClient client, IOptions<PaystackOptions> options) : IPlanPaymentGateway
 {
+    public async Task<ProviderChargeStatus> GetStatusAsync(string reference, CancellationToken ct)
+    {
+        if (!IsConfigured) throw new HttpRequestException("Paystack is not configured.");
+        var lookup = await client.LookupAsync(options.Value.SecretKey!, reference, ct);
+        if (lookup.Charge is { } charge) return new ProviderChargeStatus(ProviderChargeState.Success, charge.AmountMinor, charge.Currency);
+        if (!lookup.KnownUnpaid) return ProviderChargeStatus.NotFound;
+        // "abandoned" on Paystack only means the payer hasn't finished yet; failed and reversed are final.
+        return lookup.UnpaidStatus is "failed" or "reversed" ? new ProviderChargeStatus(ProviderChargeState.Failed, 0, null) : ProviderChargeStatus.Pending;
+    }
+
     public string Name => "paystack";
     public bool IsConfigured => !string.IsNullOrWhiteSpace(options.Value.SecretKey);
 

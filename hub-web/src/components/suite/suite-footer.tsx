@@ -75,7 +75,7 @@ export function SuiteFooter({ app, links, note }: { app?: Product; links: NavLin
         </nav>
       </div>
       <div className="border-t border-white/10">
-        <p className="ls-container ls-small py-5">© LinkSuite. Online payments go through Paystack.</p>
+        <p className="ls-container ls-small py-5">© LinkSuite.</p>
       </div>
     </footer>
   );

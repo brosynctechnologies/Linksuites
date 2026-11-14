@@ -80,6 +80,12 @@ services:
       Email__SmtpUsername: ${SMTP_USERNAME:-}
       Email__SmtpPassword: ${SMTP_PASSWORD:-}
       Paystack__SecretKey: ${PAYSTACK_SECRET_KEY:-}
+      Billing__PlanProvider: ${BILLING_PROVIDER:-paystack}
+      Opay__MerchantId: ${OPAY_MERCHANT_ID:-}
+      Opay__PublicKey: ${OPAY_PUBLIC_KEY:-}
+      Opay__SecretKey: ${OPAY_SECRET_KEY:-}
+      Opay__BaseUrl: ${OPAY_BASE_URL:-}
+      Opay__AllowSandboxInProduction: ${OPAY_ALLOW_SANDBOX_IN_PRODUCTION:-false}
       Platform__AdminEmails__0: ${PLATFORM_ADMIN_EMAIL:?set PLATFORM_ADMIN_EMAIL in .env}
       Storage__Provider: ${STORAGE_PROVIDER:-Local}
       Storage__R2AccountId: ${R2_ACCOUNT_ID:-}

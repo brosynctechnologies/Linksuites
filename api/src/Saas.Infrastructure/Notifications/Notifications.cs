@@ -119,6 +119,20 @@ public static class EmailTemplates
                 "If you didn't just sign in, change your password now and tell another super admin."),
             "admin.added" => ($"You're now a {P("role")} admin on {appName}",
                 $"Hi {P("name")},\n\nYou've been given the {P("role")} role in the admin panel. Sign in with your usual password and the code we email you: {P("link")}"),
+            "plan.transfer_claimed" => ($"Bank transfer to check: {P("business")}, {P("amount")}",
+                $"{P("claimedBy")} at {P("business")} ({P("productName")}) says they've sent {P("amount")} by bank transfer for the {P("plan")} plan.\n\n" +
+                $"Reference in the transfer note: {P("reference")}\n\n" +
+                $"Check the company account for this transfer, then confirm or reject it in the admin console: {P("link")}"),
+            "plan.transfer_confirmed" => ($"Your {P("plan")} plan is active",
+                $"Hi {P("name")},\n\nWe received your bank transfer of {P("amount")} (reference {P("reference")}). " +
+                $"{P("business")} is now on the {P("plan")} plan{(P("until").Length > 0 ? $" until {P("until")}" : "")}.\n\nSee your plan: {P("link")}"),
+            "plan.transfer_rejected" => ("We couldn't confirm your bank transfer",
+                $"Hi {P("name")},\n\nWe couldn't confirm your bank transfer of {P("amount")} for the {P("plan")} plan (reference {P("reference")}), " +
+                $"so your plan hasn't changed.\n\nReason: {P("reason")}\n\n" +
+                (P("contact").Length > 0
+                    ? $"If you did send the money, email {P("contact")} with your transfer receipt and the reference above. "
+                    : "If you did send the money, contact LinkSuite support with your transfer receipt and the reference above. ") +
+                $"You can also try again from your billing page: {P("link")}"),
             "business.suspended" => ($"{P("business")} has been suspended on {appName}",
                 $"We've suspended {P("business")}. Its public pages are hidden and its team can't sign in for now.\n\n" +
                 $"Reason: {P("reason")}\n\nReply to this email to talk to support. Payments already made are safe."),

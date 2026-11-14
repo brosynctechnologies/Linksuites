@@ -68,6 +68,15 @@ public static class Codes
             for (var i = 0; i < span.Length; i++) span[i] = Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)];
         });
 
+    /// <summary>A code of <paramref name="length"/> characters from the same alphabet, taken from the first bytes of <paramref name="bytes"/>.</summary>
+    public static string FromBytes(ReadOnlySpan<byte> bytes, int length)
+    {
+        if (bytes.Length < length) throw new ArgumentException("Not enough bytes for the code.", nameof(bytes));
+        Span<char> chars = stackalloc char[length];
+        for (var i = 0; i < length; i++) chars[i] = Alphabet[bytes[i] % Alphabet.Length];
+        return new string(chars);
+    }
+
     public static string Sha256(string value) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 }

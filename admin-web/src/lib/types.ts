@@ -183,6 +183,8 @@ export interface PaymentRow {
   reference: string | null;
   createdAt: string;
   paidAt: string | null;
+  /** Who took the payment: a plan payment's own provider; course sales, stays and boosts are always Paystack. */
+  provider: "paystack" | "opay" | (string & {});
 }
 
 export type PayoutStatus = "Requested" | "Paid" | "Rejected";
@@ -347,4 +349,50 @@ export interface AdminLocationDto {
   lat: number | null;
   lng: number | null;
   position: number;
+}
+
+// Payment settings and bank transfers for plans
+
+export type PlanProvider = "paystack" | "opay";
+
+/** GET/PUT /api/platform/payment-settings. Provider keys stay in server config; `providers` says which are set. */
+export interface PaymentSettingsDto {
+  onlinePaymentsEnabled: boolean;
+  planProvider: PlanProvider;
+  bankName: string | null;
+  bankAccountNumber: string | null;
+  bankAccountName: string | null;
+  providers: { paystack: boolean; opay: boolean };
+  updatedAt: string | null;
+  updatedByName: string | null;
+}
+
+export interface SavePaymentSettingsRequest {
+  onlinePaymentsEnabled: boolean;
+  planProvider: PlanProvider;
+  bankName: string;
+  bankAccountNumber: string;
+  bankAccountName: string;
+}
+
+export type TransferStatus = "Pending" | "Succeeded" | "Failed" | "Abandoned";
+
+/** A business's "I've sent the transfer" for a plan (GET /api/platform/transfers). */
+export interface TransferClaimRow {
+  id: string;
+  reference: string;
+  status: TransferStatus;
+  businessId: string;
+  businessName: string;
+  product: string;
+  planCode: string;
+  planName: string;
+  amountMinor: number;
+  currency: string;
+  claimedByName: string | null;
+  /** Masked unless the admin may see contact details. */
+  claimedByEmail: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+  rejectReason: string | null;
 }

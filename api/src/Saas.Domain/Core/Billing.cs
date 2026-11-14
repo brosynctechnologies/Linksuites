@@ -68,6 +68,30 @@ public class Payment : TenantEntity
     public required string Purpose { get; set; }
     public Dictionary<string, string> Metadata { get; set; } = [];
     public DateTimeOffset? PaidAt { get; set; }
+    /// <summary>When the plan-payment re-check last asked the provider about this payment (throttles it to every 10 minutes).</summary>
+    public DateTimeOffset? RecheckedAt { get; set; }
 }
 
-public enum PaymentStatus { Pending, Succeeded, Failed, Refunded }
+/// <summary>
+/// The platform's payment settings: one row (<see cref="SingletonId"/>), edited in the admin console. Whether new payments may go
+/// through the platform's online provider at all, which provider plan checkouts use (null: <c>Billing:PlanProvider</c> from config),
+/// and the company account businesses pay plans into by bank transfer while online payment is off. Provider keys stay in config.
+/// </summary>
+public class PlatformPaymentSettings
+{
+    public const int SingletonId = 1;
+    public int Id { get; set; } = SingletonId;
+    public bool OnlinePaymentsEnabled { get; set; }
+    public string? PlanProvider { get; set; }
+    public string? BankName { get; set; }
+    public string? BankAccountNumber { get; set; }
+    public string? BankAccountName { get; set; }
+    public DateTimeOffset? UpdatedAt { get; set; }
+    public Guid? UpdatedByUserId { get; set; }
+}
+
+/// <summary>
+/// Abandoned: a plan checkout the provider never confirmed within 24 hours, so the re-check stopped asking. It is soft: a later
+/// confirmation (callback or return check) is still applied. Stored as text, so adding it needs no data change.
+/// </summary>
+public enum PaymentStatus { Pending, Succeeded, Failed, Refunded, Abandoned }

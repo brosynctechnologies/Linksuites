@@ -289,7 +289,7 @@ export function Notice({ children, tone = "info" }: { children: ReactNode; tone?
   };
   const Icon = tone === "success" ? CheckIcon : tone === "warning" ? AlertIcon : InfoIcon;
   return (
-    <div role={tone === "success" ? "status" : undefined} className={cx("flex gap-3 rounded-control p-3.5 text-sm", tones[tone])}>
+    <div role="status" className={cx("flex gap-3 rounded-control p-3.5 text-sm", tones[tone])}>
       <Icon className="mt-0.5 shrink-0" width={18} height={18} />
       <div className="min-w-0">{children}</div>
     </div>

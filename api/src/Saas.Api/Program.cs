@@ -89,6 +89,10 @@ builder.Services.AddRateLimiter(o =>
         _ => new FixedWindowRateLimiterOptions { PermitLimit = builder.Configuration.GetValue("RateLimits:AdminPerMinute", 300), Window = TimeSpan.FromMinutes(1) }));
     o.AddPolicy(RateLimits.PublicWrite, c => RateLimitPartition.GetFixedWindowLimiter(Ip(c),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = publicWritesPerMinute, Window = TimeSpan.FromMinutes(1) }));
+    // "I've sent the transfer": per business (else per user), so a script can't flood the claims list or the admins' inboxes.
+    o.AddPolicy(RateLimits.TransferClaim, c => RateLimitPartition.GetFixedWindowLimiter(
+        $"transfer:{c.User.FindFirst(Saas.Infrastructure.Auth.AppClaims.Tenant)?.Value ?? c.User.FindFirst("sub")?.Value ?? Ip(c)}",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = builder.Configuration.GetValue("RateLimits:TransferClaimsPerHour", 5), Window = TimeSpan.FromHours(1) }));
     // Paystack sends every school's webhooks from a few IPs, so this limit only stops floods.
     o.AddPolicy(RateLimits.Webhook, c => RateLimitPartition.GetFixedWindowLimiter(Ip(c),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = webhooksPerMinute, Window = TimeSpan.FromMinutes(1) }));
@@ -145,8 +149,9 @@ if (!string.Equals(storage.Provider, "R2", StringComparison.OrdinalIgnoreCase))
 }
 
 app.UseCors();
-app.UseRateLimiter();
 app.UseAuthentication();
+// After authentication, so the per-user and per-business policies (Admin, TransferClaim) see who is signed in; the others are per IP.
+app.UseRateLimiter();
 app.UseMiddleware<SessionMiddleware>();
 app.UseMiddleware<ReadOnlyTokenMiddleware>();
 app.UseMiddleware<TenantMiddleware>();

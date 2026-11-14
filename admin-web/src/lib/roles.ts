@@ -11,6 +11,7 @@ export type Area =
   | "users" // includes unlock, sign-in code, password reset, sign out everywhere
   | "moderation"
   | "money"
+  | "payment.settings" // change the online payment switch, plan provider and company bank details
   | "audit"
   | "admins"
   | "account";
@@ -25,6 +26,7 @@ export const AREA_ROLES: Record<Area, PlatformRole[] | "any"> = {
   users: ["Support"],
   moderation: ["Moderator"],
   money: ["Finance"],
+  "payment.settings": ["SuperAdmin"],
   audit: ["Support"],
   admins: ["SuperAdmin"],
   account: "any",

@@ -41,6 +41,7 @@ public interface IAppDbContext
     DbSet<Plan> Plans { get; }
     DbSet<Subscription> Subscriptions { get; }
     DbSet<Payment> Payments { get; }
+    DbSet<PlatformPaymentSettings> PlatformPaymentSettings { get; }
     DbSet<StoredFile> Files { get; }
     DbSet<Notification> Notifications { get; }
     DbSet<UserNotification> UserNotifications { get; }

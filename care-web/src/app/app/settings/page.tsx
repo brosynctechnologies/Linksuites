@@ -7,8 +7,11 @@ import { patchAuth, useAuth } from "@/lib/auth";
 import { useCare } from "@/lib/care-me";
 import { formatDay, koboInput, money, naira, toKobo } from "@/lib/format";
 import { useAction } from "@/lib/mutate";
+import { usePlanPaymentReturn } from "@/lib/plan-payment";
+import { PlanPaymentNotice } from "@/components/plan-payment-notice";
+import { PendingTransferNotice, PlanTransferPanel } from "@/components/plan-transfer";
 import { qs, useApi } from "@/lib/use-api";
-import type { BillingDto, CarePaystackSettingsDto, CareSetupDto, ClinicDto, PriceItemDto, SaveClinicProfileRequest } from "@/lib/types";
+import type { BillingDto, CarePaystackSettingsDto, CareSetupDto, ClinicDto, PlanDto, PriceItemDto, SaveClinicProfileRequest } from "@/lib/types";
 import {
   ApiErrorView,
   Badge,
@@ -208,10 +211,19 @@ function PlanCard() {
   const { access } = useCare();
   const billing = useApi<BillingDto>("/api/billing");
   const checkout = useAction();
+  // Back from the secure checkout with ?ref= (the API returns CareLink payers here): confirm it, then show the new plan.
+  const payment = usePlanPaymentReturn(billing.reload);
+  // While online payment is off, a plan is paid by bank transfer: the plan whose transfer details are open.
+  const [transferPlan, setTransferPlan] = useState<PlanDto | null>(null);
   if (billing.error) return <ApiErrorView error={billing.error} onRetry={billing.reload} />;
   if (!billing.data) return null;
-  const { currentPlan, plans, usage, subscription } = billing.data;
+  const { currentPlan, plans, usage, subscription, paymentsEnabled } = billing.data;
   const upgrades = plans.filter((p) => p.priceMinor > currentPlan.priceMinor);
+  // Bank transfer is offered only while online payment is off (the API sends the details only then).
+  const bank = paymentsEnabled ? null : (billing.data.bankTransfer ?? null);
+  const canPay = access.isDirector && !access.readOnly;
+  // One transfer at a time: while one is being checked, no plan offers another (the notice says what is pending).
+  const offerTransfer = !(bank && billing.data.pendingTransfer);
 
   async function upgrade(code: string) {
     const res = await checkout.run(() => api<{ authorizationUrl: string }>("/api/billing/checkout", { method: "POST", body: { planCode: code } }));
@@ -221,6 +233,9 @@ function PlanCard() {
   return (
     <Card>
       <SectionTitle id="plan" action={<Badge tone="pass">{currentPlan.name}</Badge>}>Plan</SectionTitle>
+      <div className="mb-4 empty:hidden">
+        <PlanPaymentNotice payment={payment} />
+      </div>
       <p className="-mt-1 mb-4 text-sm text-slate-700">
         {currentPlan.priceMinor === 0 ? "Free" : `${naira(currentPlan.priceMinor)} a month`}
         {subscription?.currentPeriodEnd ? `, paid to ${formatDay(subscription.currentPeriodEnd.slice(0, 10))}` : ""}
@@ -233,14 +248,43 @@ function PlanCard() {
           ))}
         </div>
       )}
-      {upgrades.length > 0 && access.isDirector && !access.readOnly && (
+      {upgrades.length > 0 && canPay && offerTransfer && (
         <div className="mt-5 flex flex-wrap gap-2">
           {upgrades.map((p) => (
-            <Button key={p.code} variant={p.code === "clinic" ? "primary" : "secondary"} loading={checkout.busy} onClick={() => upgrade(p.code)}>
-              Upgrade to {p.name}, {naira(p.priceMinor)} a month
+            <Button
+              key={p.code}
+              variant={p.code === "clinic" ? "primary" : "secondary"}
+              loading={checkout.busy}
+              disabled={!(paymentsEnabled || bank)}
+              onClick={() => (bank ? setTransferPlan(p) : upgrade(p.code))}
+            >
+              {bank ? `Pay for ${p.name} by bank transfer, ${naira(p.priceMinor)} a month` : `Upgrade to ${p.name}, ${naira(p.priceMinor)} a month`}
             </Button>
           ))}
         </div>
+      )}
+      {billing.data.pendingTransfer && (
+        <div className="mt-4">
+          <PendingTransferNotice pending={billing.data.pendingTransfer} canCancel={canPay} onCancelled={billing.reload} />
+        </div>
+      )}
+      {transferPlan && bank && offerTransfer && (
+        <div className="mt-4">
+          <PlanTransferPanel
+            plan={transferPlan}
+            bank={bank}
+            onClaimed={() => {
+              setTransferPlan(null);
+              billing.reload();
+            }}
+            onClose={() => setTransferPlan(null)}
+          />
+        </div>
+      )}
+      {upgrades.length > 0 && canPay && !paymentsEnabled && !bank && (
+        <Notice tone="warning" className="mt-3">
+          Upgrades are unavailable until online payments are set up. Try again later.
+        </Notice>
       )}
       {upgrades.length > 0 && !access.isDirector && <p className="mt-4 text-sm text-muted">The medical director can upgrade the plan.</p>}
       <div className="mt-3">

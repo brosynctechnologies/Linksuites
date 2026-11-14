@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { api, toApiError, type ApiError } from "@/lib/api";
 import { formatDay } from "@/lib/format";
 import { formatMoney } from "@/lib/money";
@@ -11,6 +10,9 @@ import { useCan } from "@/lib/permissions";
 import type { BillingDto, PlanDto } from "@/lib/types";
 import { ApiErrorView, Button, Card, Notice, PageHeader, PageLoader, StatusBadge, UsageMeter, cx } from "@/components/ui";
 import { CheckIcon } from "@/components/icons";
+import { PlanPaymentNotice } from "@/components/plan-payment-notice";
+import { usePlanPaymentReturn } from "@/lib/plan-payment";
+import { PendingTransferNotice, PlanTransferPanel } from "@/components/plan-transfer";
 
 
 function intervalLabel(interval: string) {
@@ -28,8 +30,10 @@ export default function BillingPage() {
   const readOnly = !!useAuth()?.support;
   const [busy, setBusy] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<ApiError | null>(null);
-  // Paystack sends the payer back here with ?ref=; the plan itself changes when the payment webhook arrives.
-  const returnedFromPayment = !!useSearchParams().get("ref");
+  // While online payment is off, a plan is paid by bank transfer: the plan whose transfer details are open.
+  const [transferPlan, setTransferPlan] = useState<PlanDto | null>(null);
+  // Back from the secure checkout with ?ref=: confirm the payment, and show the new plan once it is active.
+  const payment = usePlanPaymentReturn(reload);
 
   async function upgrade(plan: PlanDto) {
     setBusy(plan.code);
@@ -53,6 +57,10 @@ export default function BillingPage() {
   }
 
   const { currentPlan } = data;
+  // Bank transfer is offered only while online payment is off (the API sends the details only then).
+  const bank = data.paymentsEnabled ? null : (data.bankTransfer ?? null);
+  // One transfer at a time: while one is being checked, no plan offers another (the notice above says what is pending).
+  const offerTransfer = !(bank && data.pendingTransfer);
   const usage = Array.isArray(data.usage?.items) ? data.usage.items : [];
   // Free → Pro → Business, cheapest first, whatever order the API returns.
   const plans = [...(data.plans ?? [])].sort((a, b) => a.priceMinor - b.priceMinor);
@@ -89,10 +97,20 @@ export default function BillingPage() {
         )}
       </Card>
 
-      {returnedFromPayment && (
-        <Notice tone="info">Payment received. Your plan updates as soon as Paystack confirms it, usually within a minute. Refresh this page if it hasn&apos;t changed yet.</Notice>
+      <PlanPaymentNotice payment={payment} />
+      {data.pendingTransfer && <PendingTransferNotice pending={data.pendingTransfer} canCancel={canManage && !readOnly} onCancelled={reload} />}
+      {!data.paymentsEnabled && !bank && <Notice tone="warning">Upgrades are unavailable until online payments are set up. Try again later.</Notice>}
+      {transferPlan && bank && offerTransfer && (
+        <PlanTransferPanel
+          plan={transferPlan}
+          bank={bank}
+          onClaimed={() => {
+            setTransferPlan(null);
+            reload();
+          }}
+          onClose={() => setTransferPlan(null)}
+        />
       )}
-      {!data.paymentsEnabled && <Notice tone="warning">Upgrades are unavailable until online payments are set up. Try again later.</Notice>}
       {checkoutError && <ApiErrorView error={checkoutError} />}
       {!canManage && <Notice tone="info">Only the agency owner can change the plan.</Notice>}
 
@@ -128,14 +146,14 @@ export default function BillingPage() {
                   </li>
                 ))}
               </ul>
-              {canManage && ((!current && isUpgrade(plan)) || (current && canExtend)) && (
+              {canManage && offerTransfer && ((!current && isUpgrade(plan)) || (current && canExtend)) && (
                 <Button
                   className="mt-6 w-full"
                   loading={busy === plan.code}
-                  disabled={!data.paymentsEnabled || !!busy || readOnly}
-                  onClick={() => upgrade(plan)}
+                  disabled={!(data.paymentsEnabled || bank) || !!busy || readOnly}
+                  onClick={() => (bank ? setTransferPlan(plan) : upgrade(plan))}
                 >
-                  {current ? `Extend ${plan.name}` : `Upgrade to ${plan.name}`}
+                  {bank ? "Pay by bank transfer" : current ? `Extend ${plan.name}` : `Upgrade to ${plan.name}`}
                 </Button>
               )}
             </section>

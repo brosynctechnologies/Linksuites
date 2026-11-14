@@ -81,7 +81,25 @@ public static class DependencyInjection
         services.AddSingleton(sp => new Saas.Application.Billing.MerchantKeyRules(sp.GetRequiredService<IOptions<PaystackOptions>>().Value.AllowLocalFixtureKeys));
         services.AddScoped<IMerchantPayments>(sp => sp.GetRequiredService<PaystackClient>());
         services.AddScoped<PaystackGateway>();
-        services.AddScoped<IPaymentGateway>(sp => sp.GetRequiredService<PaystackGateway>());
+        services.AddScoped<IPaymentGateway>(sp => sp.GetRequiredService<PaystackGateway>()); // courses, boosts, stays: unchanged
+
+        // Plan billing: Paystack or OPay, chosen by Billing:PlanProvider for new checkouts; each payment is verified with its own provider.
+        services.Configure<OpayOptions>(config.GetSection(OpayOptions.Section));
+        services.AddHttpClient<OpayClient>(c => c.Timeout = TimeSpan.FromSeconds(20));
+        services.AddScoped<OpayGateway>();
+        services.AddScoped<IPlanPaymentGateway>(sp => sp.GetRequiredService<PaystackGateway>());
+        services.AddScoped<IPlanPaymentGateway>(sp => sp.GetRequiredService<OpayGateway>());
+        var billing = config.GetSection(BillingOptions.Section).Get<BillingOptions>() ?? new BillingOptions();
+        var planProvider = string.IsNullOrWhiteSpace(billing.PlanProvider) ? BillingOptions.Paystack : billing.PlanProvider.Trim().ToLowerInvariant();
+        if (planProvider is not (BillingOptions.Paystack or BillingOptions.Opay))
+            throw new InvalidOperationException(
+                $"Billing:PlanProvider (BILLING_PROVIDER) is \"{billing.PlanProvider}\". Set it to \"{BillingOptions.Paystack}\" or \"{BillingOptions.Opay}\".");
+        if (string.IsNullOrWhiteSpace(billing.TransferReferenceKey)) billing.TransferReferenceKey = "transfer-reference:" + config["Jwt:SigningKey"];
+        services.AddSingleton(billing);
+        services.AddScoped<PlanGateways>();
+        services.AddHostedService<OpayStartupCheck>();
+        if (config.GetValue("Jobs:BillingEnabled", true))
+            services.AddHostedService<Billing.PlanPaymentJobsHostedService>();
 
         // Invoice Generator
         services.AddDataProtection().SetApplicationName("saas").PersistKeysToDbContext<AppDbContext>();
