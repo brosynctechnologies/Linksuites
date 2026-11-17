@@ -13,7 +13,7 @@ Build plan: *Six SaaS Product Build Plans* (12 Oct 2026). Products share one mul
 | 6 | Property Listing Website (MVP + phase 2) | **Done**: agencies, agents and landlords; listings for rent, sale and short-let with a true move-in cost breakdown; photo resizing, watermarking and duplicate-photo detection across agencies; search with filters, map and area pages; enquiries, WhatsApp/call tracking, viewing bookings; saved searches with instant and daily alerts; agent verification, moderation, reports, reviews; listing expiry with one-click renew; short-let bookings paid to the platform with commission, refunds and host payouts; paid boosts |
 | 7 | Platform admin console | **Done**: admin roles (Super admin, Moderator, Finance, Support) with emailed-code sign-in; businesses and users across every product; suspension; read-only support view-as shown to the customer; plans, comps, payments, payouts; overview, audit log, job health |
 | 8 | School Management System | **Done**: academic setup, students, offline attendance, scores and published results, report cards, fees to the school's own Paystack, announcements and messages, in-app notifications, parent and student portals, Excel and CSV import (templates, preview, all-or-nothing confirm) for students, staff, classes, subjects, scores, ratings, remarks, attendance, timetables, exam sittings, questions, Play lists, fees, payments and expenses |
-| 9 | CareLink (clinics and small hospitals) | **Built, final review pending**: patient registration with duplicate checks and imports, appointments with doctor hours and slots, check-in queue, triage with vital-sign flags, consultations with ICD-10 diagnoses, prescriptions and tests with allergy checks and private result files, a logged record guard with emergency access, wards, beds, admissions with deposits, ward rounds, nursing notes, fluid and medication charts, discharge summaries, bills with bed-day charges, desk and online payments to the clinic's own Paystack, receipts and reports; a patient portal for patients and parents across clinics (signed record, who opened it, bills and Pay now, appointments, contact details, notices) |
+| 9 | CareLink (clinics and small hospitals) | **Built and live**: patient registration with duplicate checks and imports, appointments with doctor hours and slots, check-in queue, triage with vital-sign flags, consultations with ICD-10 diagnoses, prescriptions and tests with allergy checks and private result files, a logged record guard with emergency access, wards, beds, admissions with deposits, ward rounds, nursing notes, fluid and medication charts, discharge summaries, bills with bed-day charges, desk and online payments to the clinic's own Paystack, receipts and reports; a patient portal for patients and parents across clinics (signed record, who opened it, bills and Pay now, appointments, contact details, notices) |
 
 ## Layout
 
@@ -115,7 +115,7 @@ Set these with user secrets or environment variables (`Section__Key`), never in 
 | `Video:FfmpegPath`, `Video:ProcessorEnabled` | FFmpeg for HLS video (without it, uploads play as MP4); the processor runs in the API by default |
 | `Media:SigningKey` | key for signed video links (defaults to one derived from the JWT key) |
 | `Email:BrevoApiKey`, `Email:FromEmail`, `Email:FromName` | real email sending (otherwise logged) |
-| `Storage:Provider=R2` + `Storage:R2*` | Cloudflare R2 for uploads (otherwise local `uploads/`) |
+| `Storage:Provider=R2` + `Storage:R2*` | Cloudflare R2 for uploads (otherwise local `uploads/`); `R2PrivateBucket` is required and must not be public |
 | `Database:MigrateOnStartup` | apply migrations at boot (on in Development) |
 
 `appsettings.Development.json` contains a development-only JWT key; production must set its own.
@@ -136,7 +136,8 @@ Set these with user secrets or environment variables (`Section__Key`), never in 
 - Invoices created before phase 2 were given an exchange rate of 1 by the migration (correct for same-currency invoices).
 - Not built: separate "multiple businesses" signup per user (a user can belong to several via invites and switch between them).
 - WhatsApp phase 2 (Cloud API inbox, online order payments, inventory, staff seats, custom domains) is not built.
-- Before launch: privacy policy and terms, NDPA/GDPR review, Sentry/PostHog/UptimeRobot, daily backups with a restore test.
+- Done for launch: privacy policy and terms (hub `/privacy`, `/terms`), an error log in the admin console, nightly database backups (`deploy/backup-db.sh`). Still to do: a lawyer's NDPA review of the legal pages, uptime monitoring, off-server copies of backups and a restore test.
+- The full list of what is left, in build order, is `docs/superpowers/roadmap-2026-11-17.md`.
 
 ## How bookings stay safe
 
@@ -167,7 +168,7 @@ Set these with user secrets or environment variables (`Section__Key`), never in 
 
 - **Verified agents.** Agencies upload ID and business documents (stored under `private/`, never served from `/uploads`; only
   platform admins open them through the API). Approval adds the verified seal and lets their listings go live without review.
-  Before launch, put R2 verification documents in a separate private bucket.
+  With R2, every key under `private/` goes to `Storage:R2PrivateBucket` (no public access), and the API refuses to start on R2 without it.
 - **Moderation.** New agencies' listings, listings whose photos match another agency's (64-bit difference hash, Hamming distance
   ≤ 6) and listings with three open reports wait for a moderator. Seekers can never be charged an "inspection fee": cost labels
   mentioning inspection are refused.

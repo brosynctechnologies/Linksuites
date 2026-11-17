@@ -89,6 +89,7 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("RateLimits:OtpPer10Minutes", "100000");
         builder.UseSetting("RateLimits:PreviewPerMinute", "1000");
         builder.UseSetting("RateLimits:AdminPerMinute", "1000"); // NextReleaseAuthTests lowers it for its own factory
+        builder.UseSetting("RateLimits:ClientErrorsPerMinute", "1000");
         builder.UseSetting("Video:ProcessorEnabled", "false");
         builder.UseSetting("Jobs:PropertyEnabled", "false"); // tests run PropertyJobs by hand
         builder.UseSetting("Jobs:SchoolEnabled", "false"); // tests run SchoolJobs by hand

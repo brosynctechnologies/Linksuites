@@ -35,7 +35,7 @@ public sealed class TenantMiddleware(RequestDelegate next)
 }
 
 /// <summary>Turns business and validation exceptions into ProblemDetails; everything else is a logged 500.</summary>
-public sealed class AppExceptionHandler(IProblemDetailsService problems, ILogger<AppExceptionHandler> logger) : IExceptionHandler
+public sealed class AppExceptionHandler(IProblemDetailsService problems, Saas.Application.Platform.IErrorLog errorLog, ILogger<AppExceptionHandler> logger) : IExceptionHandler
 {
     public async ValueTask<bool> TryHandleAsync(HttpContext http, Exception exception, CancellationToken ct)
     {
@@ -64,6 +64,16 @@ public sealed class AppExceptionHandler(IProblemDetailsService problems, ILogger
                 break;
             default:
                 logger.LogError(exception, "Unhandled error on {Method} {Path}", http.Request.Method, http.Request.Path);
+                // Its own scope and never throws. Not tied to the request, but given at most 2 seconds, so a crash caused by the database
+                // being down doesn't hold every 500 for the connection timeout. The route template, not the real path: no ids or tokens.
+                using (var recordBudget = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+                {
+                    // The exception handler clears the endpoint before it runs; the feature keeps the one that failed.
+                    var failed = http.Features.Get<IExceptionHandlerFeature>()?.Endpoint ?? http.GetEndpoint();
+                    var route = (failed as RouteEndpoint)?.RoutePattern.RawText is { } raw ? "/" + raw.TrimStart('/') : http.Request.Path.Value;
+                    await errorLog.RecordAsync("api", exception.GetType().FullName ?? exception.GetType().Name, exception.Message,
+                        $"{http.Request.Method} {route}", exception.ToString(), recordBudget.Token);
+                }
                 problem = new ProblemDetails { Status = 500, Title = "Something went wrong", Detail = "Please try again." };
                 break;
         }

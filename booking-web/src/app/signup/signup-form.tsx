@@ -9,6 +9,7 @@ import type { AuthResponse, SignupRequest } from "@/lib/types";
 import { Button, ErrorBox, Input, Select } from "@/components/ui";
 import { nextPath } from "@/components/auth-shell";
 import { ConfirmEmailStep, isSignupPending, type SignupPending } from "@/components/confirm-email";
+import { AgreeTerms } from "@/components/suite/agree-terms";
 
 export function SignupForm() {
   const router = useRouter();
@@ -114,6 +115,7 @@ export function SignupForm() {
         ))}
       </Select>
       <ErrorBox error={error} />
+      <AgreeTerms />
       <Button type="submit" loading={busy} className="w-full">
         Create my account
       </Button>

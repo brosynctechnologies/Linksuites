@@ -1,7 +1,7 @@
 # LinkSuite (6saas) — VPS deploy handoff
 
-**Status:** **LIVE since 2 Nov 2026** on the Health Tutor VPS. All 10 hosts serve over HTTPS. Paystack, Brevo and R2 are **not configured yet** (see "Still open").  
-**Last updated:** 2 Nov 2026  
+**Status:** **LIVE since 2 Nov 2026** on the Health Tutor VPS. All 10 hosts serve over HTTPS. Email runs on Gmail SMTP; online payment is switched off in the admin console (plans are paid by bank transfer); R2 is **not configured yet** (see "Still open").  
+**Last updated:** 17 Nov 2026 (the "Operations" section is current; the sections from "Decision so far" down are the pre-launch history)  
 **Owner:** Brosync Technologies (`brosynctechnologies@gmail.com`)  
 **Repo:** local `C:\Users\MichaelAyindePisiMob\source\repos\6saas` → https://github.com/brosynctechnologies/Linksuites (private; branch `main`; laptop remote `git@github-brosync:brosynctechnologies/Linksuites.git`; repo-local git identity Brosync Technologies)
 
@@ -27,6 +27,9 @@ This document is for any Cursor session that continues the LinkSuite deploy. Rea
 | Migrations | Run automatically on API start (`Database__MigrateOnStartup=true`); seeder only upserts plans (idempotent) |
 | Data protection keys | Stored in Postgres table `data_protection_keys` (survive rebuilds). Startup warning "No XML encryptor configured" is expected |
 | Resource caps | API 2 CPU / 3 GB, DB 1 CPU / 2 GB, each web app 0.5 CPU / 512 MB |
+| Database backups | `deploy/backup-db.sh` from root's crontab at 01:30 UTC (`30 1 * * * /opt/linksuite/deploy/backup-db.sh >> /root/linksuite-backups/backup.log 2>&1`): gzipped `pg_dump` in `/root/linksuite-backups/saas-*-nightly.sql.gz`, checked complete, 14 days kept. Dumps taken by hand before a deploy (`saas-<stamp>-before-<what>.sql.gz`) are never deleted by it. They sit on the same disk: copy them off the server (R2 or a laptop) once R2 exists |
+| Errors | Admin console → Errors (Support, super admin): API crashes and web app crash pages, one row per kind with a count. A new API error emails super and support admins once (at most 10 an hour) |
+| Legal pages | `https://linksuite.brosync.ng/privacy` and `/terms` (hub), linked from every footer and signup form. Their contact line uses `CONTACT_EMAIL` when set, else "reply to any email from LinkSuite" |
 
 ### Verified at go-live (2 Nov 2026)
 
@@ -59,7 +62,8 @@ From a Windows laptop, PowerShell mangles nested quotes in `ssh host "…"`. Pip
 |------|-------------------|
 | Paystack **live** key | `PAYSTACK_SECRET_KEY` is a **test** key (`sk_test_…`, set and verified with Paystack on 3 Nov 2026), so platform payments (plan upgrades, course sales, short-lets) work in test mode only. Platform webhook: `https://api.linksuite.brosync.ng/api/webhooks/paystack` (unsigned requests → 401). Go live: set the `sk_live_…` key with `set-secret.sh PAYSTACK_SECRET_KEY` and the live webhook URL in Paystack. Businesses add their own Paystack keys in their product settings |
 | Email | **Working since 2 Nov 2026 via Gmail SMTP** (`smtp.gmail.com:587` StartTls, from/user `brosynctechnologies@gmail.com`, Google app password in `.env` as `SMTP_PASSWORD`, 16 letters; change with `ssh -t healthtutor-vps bash /opt/linksuite/deploy/set-secret.sh SMTP_PASSWORD`). Sender display name: emails a business sends to its own customers/parents/patients use the business, school or clinic name from the payload (`EmailTemplates.SenderName` in `Notifications.cs`); all other emails use `EMAIL_FROM_NAME` (LinkSuite). Those business emails also set Reply-To: InvoiceLink settings email, else BookLink business email, else the active owner's account email (`NotificationDispatcher.BusinessReplyToAsync`). Delivery status is in table `notifications` (`status`, `attempts`, `error`); failures retry 5 times then stay `Failed`. With `SMTP_HOST` empty the API falls back to logging emails. Gmail limit ≈ 500/day; later move to a `@brosync.ng` sender (Brevo or WhoGoHost) — needs SPF/DKIM records, and note `brosync.ng`/`mail.brosync.ng`/MX currently point at this VPS, which runs no mail server (user confirmed no `@brosync.ng` mailboxes are used) |
-| R2 keys + `STORAGE_PROVIDER=R2` | Uploads stay on the VPS disk (volume); course video processing runs FFmpeg on the shared CPU |
+| R2 keys + `STORAGE_PROVIDER=R2` | Uploads stay on the VPS disk (volume); course video processing runs FFmpeg on the shared CPU. With R2, also create a second bucket with **no public access** and set `R2_PRIVATE_BUCKET` (every `private/` key: ID documents, patient results, school report cards and receipts); the API refuses to start on R2 without it |
+| `CONTACT_EMAIL` | Empty: the hub shows no "Email us" link and the privacy policy and terms point people at replying to a LinkSuite email. Set a public support address, then rebuild `hub` (it is baked into the bundle) |
 | Optional: basic auth / IP allow-list on `admin.linksuite.brosync.ng` | Admin login page is public (protected by app login only) |
 
 To add a secret: edit `/opt/linksuite/.env`, then `cd /opt/linksuite && docker compose -f docker-compose.vps.yml up -d api`.
@@ -295,14 +299,14 @@ Test access first: `ssh -T git@github-linksuite` should greet with the repo name
 
 | Setting | Status | Notes |
 |---------|--------|-------|
-| `Jwt:SigningKey` | [ ] | 32+ random chars; generate on server if needed |
-| Postgres password | [ ] | Separate from Health Tutor MySQL root |
-| `Paystack:SecretKey` | [ ] | Platform payments (courses, short-lets, plan upgrades) |
+| `Jwt:SigningKey` | done | 32+ random chars; generate on server if needed |
+| Postgres password | done | Separate from Health Tutor MySQL root |
+| `Paystack:SecretKey` | test key | Platform payments (courses, short-lets, plan upgrades) |
 | Payment switch (admin console) | done | **Online payment is off** after the `PlanBankTransfer` migration: businesses pay for plans by bank transfer to OPay 9067382888 (Brosync Technologies) and a finance admin confirms each one in Money → Bank transfers; course sales, short-lets and boosts are unavailable until it is switched on. The switch, the plan provider and the bank details are in Money → Payment settings (super admin); they are no longer env settings, and changes apply without a restart. Switching on needs the chosen provider's keys in the env below |
 | `Billing:PlanProvider` + `Opay:*` | optional | Default plan provider until an admin picks one in Payment settings: `paystack` (default) or `opay`. Provider keys stay in env. To use OPay for plans: set the OPAY_* values (`OPAY_MERCHANT_ID`, `OPAY_PUBLIC_KEY`, `OPAY_SECRET_KEY` via `set-secret.sh`, and `OPAY_BASE_URL=https://api.opaycheckout.com`, **required in production**: empty or the sandbox host counts as not configured there unless `OPAY_ALLOW_SANDBOX_IN_PRODUCTION=true`), then restart the api and choose OPay in Payment settings. An unknown `BILLING_PROVIDER` stops the api at startup. OPay callback URL: `https://api.linksuite.brosync.ng/api/webhooks/opay`. Older Paystack plan payments keep verifying with Paystack; courses, short-lets and boosts stay on Paystack |
-| `Email:BrevoApiKey` + From | [ ] | Or accept console-only email until set |
+| Email | done | Gmail SMTP (see "Still open" for moving to a `@brosync.ng` sender) |
 | `Storage:Provider=R2` + R2 keys | [ ] | **Strongly recommended** before course/property media |
-| `Platform:AdminEmails` | [ ] | First super-admin email(s) |
+| `Platform:AdminEmails` | done | First super-admin email(s) |
 | Product Paystack keys | later | Per-tenant invoice Paystack can wait |
 
 ### 4. Product scope for first deploy (optional but useful)
@@ -312,8 +316,8 @@ Test access first: `ssh -T git@github-linksuite` should greet with the repo name
 
 ### 5. Approvals
 
-- [ ] OK to install LinkSuite on **same** VPS as Health Tutor with CPU/RAM caps  
-- [ ] OK that FFmpeg/course uploads may briefly raise load (mitigated by caps)
+- [x] OK to install LinkSuite on **same** VPS as Health Tutor with CPU/RAM caps  
+- [x] OK that FFmpeg/course uploads may briefly raise load (mitigated by caps)
 
 ---
 
@@ -326,11 +330,11 @@ Test access first: `ssh -T git@github-linksuite` should greet with the repo name
 | URL layout | Yes | One subdomain per app |
 | DNS records | Yes | All 10 resolve (8 explicit + wildcard) |
 | First git commit / GitHub remote | Yes | `brosynctechnologies/Linksuites`, `main` |
-| VPS deploy key | Partly | Generated on VPS; user must add it on GitHub |
-| Production compose for LinkSuite | **No** | Need `docker-compose.vps.yml` |
-| Next.js Dockerfiles + `standalone` | **No** | |
-| nginx + SSL for LinkSuite | **No** | After all DNS resolves |
-| Seed / migrate on VPS | **No** | After API up |
+| VPS deploy key | Yes | `github-linksuite` alias on the VPS |
+| Production compose for LinkSuite | Yes | `docker-compose.vps.yml` |
+| Next.js Dockerfiles + `standalone` | Yes | `deploy/web.Dockerfile` |
+| nginx + SSL for LinkSuite | Yes | certbot, cert `linksuite` |
+| Seed / migrate on VPS | Yes | on API start |
 
 Health Tutor deploy history lives in  
 `C:\Users\MichaelAyindePisiMob\source\repos\smartplay-microservices\docs\deploy-vps.md`  

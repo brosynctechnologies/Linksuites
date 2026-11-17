@@ -223,6 +223,7 @@ public static class DependencyInjection
         services.AddScoped<Platform.PlatformPlansService>();
         services.AddScoped<Platform.PlatformMoneyService>();
         services.AddScoped<Platform.PlatformPaymentSettingsService>();
+        services.AddScoped<Platform.PlatformErrorsService>();
         services.AddScoped<Platform.PlatformTransfersService>();
         services.AddScoped<Platform.PlatformOverviewService>();
         services.AddScoped<Platform.PlatformAuditService>();

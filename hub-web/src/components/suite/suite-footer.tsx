@@ -75,7 +75,15 @@ export function SuiteFooter({ app, links, note }: { app?: Product; links: NavLin
         </nav>
       </div>
       <div className="border-t border-white/10">
-        <p className="ls-container ls-small py-5">© LinkSuite.</p>
+        <div className="ls-container ls-small flex flex-wrap items-center gap-x-6 py-3">
+          <p className="py-2">© LinkSuite.</p>
+          <a href={`${hubUrl}/privacy`} className={footLink}>
+            Privacy policy
+          </a>
+          <a href={`${hubUrl}/terms`} className={footLink}>
+            Terms of use
+          </a>
+        </div>
       </div>
     </footer>
   );

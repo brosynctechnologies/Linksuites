@@ -302,6 +302,23 @@ Admin actions: `admin.login`, `admin.add`, `admin.role`, `admin.remove`, `busine
 (`added`/`modified`/`deleted` on audited entities). Ending a session (sign-out, end view) is not audited; a support view's end time
 is on the session and shows in Account activity.
 
+### Errors (SuperAdmin, Support)
+Crashes in production, one row per kind of error (same source, type, message and route once ids and numbers are taken out), with a
+count. The API records every unhandled exception; the web apps' error pages report browser crashes.
+- `GET /api/platform/errors?status=` → `ErrorEventDto[]` (newest first, at most 200). `status`: empty = open, `resolved`, `all`.
+- `POST /api/platform/errors/{id}/resolve` → `ErrorEventDto`. Audited as `error.resolve`. An error that happens again is open again.
+- `POST /api/client-errors` (anonymous, 10 a minute per IP, body at most 32 KB or 413) `{ app, message, path?, stack?, digest? }`
+  → 204; 400 for an unknown `app` (`hub`, `orders`, `invoices`, `bookings`, `courses`, `property`, `school`, `care`, `admin`) or an
+  empty message. The query string of `path` is never stored. One IP may add 5 new kinds per app an hour and each app 200 a day;
+  past that, reports only count against errors already listed. A browser report never reopens an error marked fixed.
+- API errors are stored under the route template (`GET /api/care/patients/{id:guid}`), never the real path.
+```ts
+ErrorEventDto { id, source /* "api" or "web:{app}" */, kind /* exception type, or "client" */, message, path, stack, count,
+  firstSeenAt, lastSeenAt, resolvedAt }
+```
+A new API error emails active super and support admins once (template `platform.error_new`, at most 10 an hour per server; with no
+such admin, `Platform:AdminEmails`). Browser reports never email.
+
 ### Admins (SuperAdmin)
 | Method | Path | Body | Returns |
 |---|---|---|---|

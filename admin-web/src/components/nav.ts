@@ -2,6 +2,7 @@ import type { ComponentType, SVGProps } from "react";
 import type { Area } from "@/lib/roles";
 import type { OverviewDto } from "@/lib/types";
 import {
+  AlertIcon,
   BadgeIcon,
   BankIcon,
   BookIcon,
@@ -73,6 +74,7 @@ export const NAV: NavGroup[] = [
     items: [
       { href: "/audit", label: "Audit log", icon: ListIcon, area: "audit" },
       { href: "/health", label: "Health", icon: PulseIcon, area: "health" },
+      { href: "/errors", label: "Errors", icon: AlertIcon, area: "errors" },
       { href: "/admins", label: "Admins", icon: KeyIcon, area: "admins" },
       { href: "/account", label: "Your account", icon: UserIcon, area: "account" },
     ],

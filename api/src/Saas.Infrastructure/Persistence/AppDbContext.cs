@@ -31,6 +31,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PlatformPaymentSettings> PlatformPaymentSettings => Set<PlatformPaymentSettings>();
+    public DbSet<ErrorEvent> ErrorEvents => Set<ErrorEvent>();
     public DbSet<StoredFile> Files => Set<StoredFile>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<UserNotification> UserNotifications => Set<UserNotification>();
@@ -284,6 +285,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.Property(x => x.BankName).HasMaxLength(Saas.Application.Billing.PaymentSettingsRules.MaxBankName);
             e.Property(x => x.BankAccountNumber).HasMaxLength(10);
             e.Property(x => x.BankAccountName).HasMaxLength(Saas.Application.Billing.PaymentSettingsRules.MaxAccountName);
+        });
+        b.Entity<ErrorEvent>(e =>
+        {
+            e.HasIndex(x => x.Fingerprint).IsUnique();
+            e.HasIndex(x => new { x.ResolvedAt, x.LastSeenAt });
+            e.Property(x => x.Fingerprint).HasMaxLength(64);
+            e.Property(x => x.Source).HasMaxLength(Saas.Application.Platform.ErrorRules.MaxSource);
+            e.Property(x => x.Kind).HasMaxLength(Saas.Application.Platform.ErrorRules.MaxKind);
+            e.Property(x => x.Message).HasMaxLength(Saas.Application.Platform.ErrorRules.MaxMessage);
+            e.Property(x => x.Path).HasMaxLength(Saas.Application.Platform.ErrorRules.MaxPath);
+            e.Property(x => x.Stack).HasMaxLength(Saas.Application.Platform.ErrorRules.MaxStack);
         });
         b.Entity<Notification>(e =>
         {

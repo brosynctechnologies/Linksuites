@@ -13,6 +13,7 @@ export type Area =
   | "money"
   | "payment.settings" // change the online payment switch, plan provider and company bank details
   | "audit"
+  | "errors" // crashes in the API and the web apps
   | "admins"
   | "account";
 
@@ -28,6 +29,7 @@ export const AREA_ROLES: Record<Area, PlatformRole[] | "any"> = {
   money: ["Finance"],
   "payment.settings": ["SuperAdmin"],
   audit: ["Support"],
+  errors: ["Support"],
   admins: ["SuperAdmin"],
   account: "any",
 };

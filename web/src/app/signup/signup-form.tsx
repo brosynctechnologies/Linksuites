@@ -8,6 +8,7 @@ import { COUNTRIES } from "@/lib/config";
 import type { AuthResponse, SignupRequest } from "@/lib/types";
 import { Button, ErrorBox, Input, Select } from "@/components/ui";
 import { ConfirmEmailStep, isSignupPending, type SignupPending } from "@/components/confirm-email";
+import { AgreeTerms } from "@/components/suite/agree-terms";
 
 function fieldError(err: ApiError | null, name: string) {
   if (!err?.errors) return undefined;
@@ -122,6 +123,7 @@ export function SignupForm() {
         />
       </div>
       <ErrorBox error={error} />
+      <AgreeTerms />
       <Button type="submit" loading={busy} className="min-h-12 w-full text-base">
         Create my store
       </Button>

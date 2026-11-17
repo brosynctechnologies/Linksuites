@@ -16,8 +16,22 @@ public sealed class StorageOptions
     public string? R2AccessKeyId { get; set; }
     public string? R2SecretAccessKey { get; set; }
     public string? R2Bucket { get; set; }
+    /// <summary>
+    /// A second bucket with no public access, for keys under "private/" (ID documents, patients' results, pupils' report cards,
+    /// receipts). Required with R2: the public bucket is served to anyone who knows a key.
+    /// </summary>
+    public string? R2PrivateBucket { get; set; }
     /// <summary>Public base URL of the bucket, e.g. https://pub-xxxx.r2.dev or https://cdn.example.com.</summary>
     public string? R2PublicBaseUrl { get; set; }
+
+    /// <summary>Refuses an R2 setup that would put private files in the public bucket.</summary>
+    public void ValidateR2()
+    {
+        if (string.IsNullOrWhiteSpace(R2PrivateBucket))
+            throw new InvalidOperationException("Storage:R2PrivateBucket must be set when Storage:Provider is R2, so private files never sit in the public bucket.");
+        if (string.Equals(R2PrivateBucket.Trim(), R2Bucket?.Trim(), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Storage:R2PrivateBucket must be a different bucket from Storage:R2Bucket.");
+    }
 }
 
 /// <summary>Writes files under the API's content root and serves them from /uploads.</summary>
@@ -79,29 +93,39 @@ public sealed class R2FileStorage : IFileStorage, IDisposable
         });
     }
 
+    /// <summary>Where a key is stored: keys under "private/" go to the private bucket and never get a public URL.</summary>
+    public readonly record struct R2Target(string Bucket, string? PublicUrl, string CacheControl);
+
+    public static R2Target Target(StorageOptions o, string key) =>
+        key.StartsWith("private/", StringComparison.Ordinal)
+            ? new R2Target(o.R2PrivateBucket!, null, "private, no-store")
+            : new R2Target(o.R2Bucket!, $"{o.R2PublicBaseUrl!.TrimEnd('/')}/{key}", "public, max-age=31536000, immutable");
+
     public async Task<string> SaveAsync(string key, Stream content, string contentType, CancellationToken ct = default)
     {
+        var target = Target(_o, key);
         await _s3.PutObjectAsync(new PutObjectRequest
         {
-            BucketName = _o.R2Bucket,
+            BucketName = target.Bucket,
             Key = key,
             InputStream = content,
             ContentType = contentType,
             DisablePayloadSigning = true,
             UseChunkEncoding = false,
-            Headers = { CacheControl = "public, max-age=31536000, immutable" },
+            Headers = { CacheControl = target.CacheControl },
         }, ct);
-        return $"{_o.R2PublicBaseUrl!.TrimEnd('/')}/{key}";
+        // Private files are only read back through the API; callers ignore the return value for them.
+        return target.PublicUrl ?? key;
     }
 
     public Task DeleteAsync(string key, CancellationToken ct = default) =>
-        _s3.DeleteObjectAsync(_o.R2Bucket, key, ct);
+        _s3.DeleteObjectAsync(Target(_o, key).Bucket, key, ct);
 
     public async Task<Stream?> OpenReadAsync(string key, CancellationToken ct = default)
     {
         try
         {
-            var response = await _s3.GetObjectAsync(_o.R2Bucket, key, ct);
+            var response = await _s3.GetObjectAsync(Target(_o, key).Bucket, key, ct);
             return response.ResponseStream;
         }
         catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -113,7 +137,7 @@ public sealed class R2FileStorage : IFileStorage, IDisposable
     /// <summary>A presigned GET URL, so large video files go straight from R2 to the viewer.</summary>
     public string? TemporaryUrl(string key, TimeSpan lifetime) => _s3.GetPreSignedURL(new GetPreSignedUrlRequest
     {
-        BucketName = _o.R2Bucket, Key = key, Expires = DateTime.UtcNow.Add(lifetime), Verb = HttpVerb.GET,
+        BucketName = Target(_o, key).Bucket, Key = key, Expires = DateTime.UtcNow.Add(lifetime), Verb = HttpVerb.GET,
     });
 
     public void Dispose() => _s3.Dispose();

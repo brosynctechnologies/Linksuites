@@ -92,6 +92,7 @@ services:
       Storage__R2AccessKeyId: ${R2_ACCESS_KEY_ID:-}
       Storage__R2SecretAccessKey: ${R2_SECRET_ACCESS_KEY:-}
       Storage__R2Bucket: ${R2_BUCKET:-}
+      Storage__R2PrivateBucket: ${R2_PRIVATE_BUCKET:-}
       Storage__R2PublicBaseUrl: ${R2_PUBLIC_BASE_URL:-}
     ports: ["127.0.0.1:5080:8080"]
     volumes: [uploads:/app/uploads]

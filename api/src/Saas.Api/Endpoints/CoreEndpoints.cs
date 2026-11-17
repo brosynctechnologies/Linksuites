@@ -99,6 +99,27 @@ public static class CoreEndpoints
             return Results.NoContent();
         }).RequireAuthorization(Policies.Owner);
 
+        // A web app's error page reports the crash here. Anonymous (crashes happen signed out too), so per-IP rate limited, and
+        // only for known apps. Browser errors are listed in the admin console but never email anyone.
+        app.MapPost("/api/client-errors", async (Saas.Application.Platform.IErrorLog errorLog, HttpContext http) =>
+        {
+            // Read by hand with a hard size limit: binding would buffer any size of body before this code runs.
+            var max = Saas.Application.Platform.ErrorRules.MaxClientReportBytes;
+            if (http.Request.ContentLength is not { } length || length > max) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            Saas.Application.Platform.ClientErrorRequest? r;
+            try { r = await http.Request.ReadFromJsonAsync<Saas.Application.Platform.ClientErrorRequest>(); }
+            catch (System.Text.Json.JsonException) { return Results.BadRequest(); }
+            if (r is null) return Results.BadRequest();
+            var appKey = r.App?.Trim().ToLowerInvariant();
+            if (appKey is null || !Saas.Application.Platform.ErrorRules.ClientApps.Contains(appKey) || string.IsNullOrWhiteSpace(r.Message))
+                return Results.BadRequest();
+            var stack = string.IsNullOrWhiteSpace(r.Stack) ? (r.Digest is { Length: > 0 } d ? $"Server digest {Saas.Application.Platform.ErrorRules.Cap(d, 100)}" : null) : r.Stack;
+            var reporter = $"{http.Connection.RemoteIpAddress}|{appKey}";
+            await errorLog.RecordAsync($"web:{appKey}", "client", r.Message.Trim(), r.Path, stack, CancellationToken.None, reporter);
+            return Results.NoContent();
+        }).AllowAnonymous().RequireRateLimiting(RateLimits.ClientError).WithTags("Errors")
+            .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(Saas.Application.Platform.ErrorRules.MaxClientReportBytes));
+
         // OPay's callback for plan payments. Only the reference is read: OPay is then asked for the status, so the body's status and
         // signature are never trusted. Always 200 (unknown or unreadable bodies are logged), so OPay doesn't retry what can't succeed.
         app.MapPost("/api/webhooks/opay", async (HttpRequest request, BillingService billingService, ILogger<BillingService> logger, CancellationToken ct) =>
@@ -195,6 +216,8 @@ public static class RateLimits
     /// <summary>Bank transfer claims for plans: a few per business per hour (RateLimits:TransferClaimsPerHour, default 5).</summary>
     public const string TransferClaim = "transfer-claim";
     public const string Admin = "admin";
+    /// <summary>Browser error reports from the web apps: per IP (RateLimits:ClientErrorsPerMinute, default 10).</summary>
+    public const string ClientError = "client-error";
 }
 
 public static class Policies

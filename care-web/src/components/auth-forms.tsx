@@ -11,6 +11,7 @@ import { nextPath } from "./auth-shell";
 import { ConfirmEmailStep, isSignupPending, isUnconfirmed, type SignupPending } from "./confirm-email";
 import { Button, ErrorBox, Input, Notice } from "./ui";
 import { cx, linkClass } from "./styles";
+import { AgreeTerms } from "@/components/suite/agree-terms";
 
 /**
  * Runs a sign-in call, stores the session and moves on: to the path `then` returns, else `?next=` or `fallback`. Final fix pass B: a
@@ -373,6 +374,7 @@ export function ClinicSignupForm() {
         error={error?.field("password")}
       />
       <ErrorBox error={error} />
+      <AgreeTerms />
       <Button type="submit" loading={busy} className="w-full">
         Create my clinic
       </Button>
@@ -536,6 +538,7 @@ export function PatientSignupForm({ onSignedIn }: { onSignedIn?: (res: AuthRespo
         error={error?.field("password")}
       />
       <ErrorBox error={error} />
+      <AgreeTerms />
       <Button type="submit" loading={busy} className="w-full">
         Create my account
       </Button>

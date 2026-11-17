@@ -110,6 +110,11 @@ public static class PlatformEndpoints
         platform.MapPut("/payment-settings", (SavePaymentSettingsRequest r, PlatformPaymentSettingsService s, CancellationToken ct) => s.UpdateAsync(r, ct))
             .RequireAuthorization(Policies.PlatformSuper);
 
+        // Errors seen in production (API crashes and web app crash reports), grouped by kind. Support reads them and marks them fixed.
+        var errors = platform.MapGroup("/errors").RequireAuthorization(Policies.PlatformSupport);
+        errors.MapGet("/", (string? status, PlatformErrorsService s, CancellationToken ct) => s.ListAsync(status, ct));
+        errors.MapPost("/{id:guid}/resolve", (Guid id, PlatformErrorsService s, CancellationToken ct) => s.ResolveAsync(id, ct));
+
         // Plan payments by bank transfer: checked against the company account, then confirmed or rejected.
         var transfers = platform.MapGroup("/transfers").RequireAuthorization(Policies.PlatformFinance);
         transfers.MapGet("/", (string? status, PlatformTransfersService s, CancellationToken ct) => s.ListAsync(status, ct));

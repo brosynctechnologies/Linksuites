@@ -70,7 +70,11 @@ public static class DependencyInjection
 
         services.Configure<StorageOptions>(config.GetSection(StorageOptions.Section));
         if (string.Equals(config[$"{StorageOptions.Section}:Provider"], "R2", StringComparison.OrdinalIgnoreCase))
+        {
+            // Checked at startup: a missing private bucket would put ID documents and patients' results in the public one.
+            (config.GetSection(StorageOptions.Section).Get<StorageOptions>() ?? new StorageOptions()).ValidateR2();
             services.AddSingleton<IFileStorage, R2FileStorage>();
+        }
         else
             services.AddSingleton<IFileStorage>(sp => new LocalFileStorage(
                 sp.GetRequiredService<IOptions<StorageOptions>>(), sp.GetRequiredService<AppUrls>(), contentRoot));
@@ -112,6 +116,7 @@ public static class DependencyInjection
 
         // Online Course Platform
         services.AddSingleton(config.GetSection("Platform").Get<Saas.Application.Auth.PlatformOptions>() ?? new());
+        services.AddSingleton<Saas.Application.Platform.IErrorLog, Saas.Infrastructure.Platform.ErrorLogRecorder>();
         var media = config.GetSection(Saas.Application.Courses.MediaOptions.Section).Get<Saas.Application.Courses.MediaOptions>() ?? new();
         if (string.IsNullOrWhiteSpace(media.SigningKey)) media.SigningKey = "media:" + config["Jwt:SigningKey"]; // separate purpose, same secret store
         services.AddSingleton(media);

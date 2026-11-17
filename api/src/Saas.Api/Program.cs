@@ -89,6 +89,8 @@ builder.Services.AddRateLimiter(o =>
         _ => new FixedWindowRateLimiterOptions { PermitLimit = builder.Configuration.GetValue("RateLimits:AdminPerMinute", 300), Window = TimeSpan.FromMinutes(1) }));
     o.AddPolicy(RateLimits.PublicWrite, c => RateLimitPartition.GetFixedWindowLimiter(Ip(c),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = publicWritesPerMinute, Window = TimeSpan.FromMinutes(1) }));
+    o.AddPolicy(RateLimits.ClientError, c => RateLimitPartition.GetFixedWindowLimiter($"client-error:{Ip(c)}",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = builder.Configuration.GetValue("RateLimits:ClientErrorsPerMinute", 10), Window = TimeSpan.FromMinutes(1) }));
     // "I've sent the transfer": per business (else per user), so a script can't flood the claims list or the admins' inboxes.
     o.AddPolicy(RateLimits.TransferClaim, c => RateLimitPartition.GetFixedWindowLimiter(
         $"transfer:{c.User.FindFirst(Saas.Infrastructure.Auth.AppClaims.Tenant)?.Value ?? c.User.FindFirst("sub")?.Value ?? Ip(c)}",

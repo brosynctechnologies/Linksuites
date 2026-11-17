@@ -396,3 +396,19 @@ export interface TransferClaimRow {
   decidedAt: string | null;
   rejectReason: string | null;
 }
+
+/** One kind of error seen in production (GET /api/platform/errors): an API crash or a web app crash report, counted by kind. */
+export interface ErrorEventDto {
+  id: string;
+  /** "api", or "web:{app}" for a browser crash. */
+  source: string;
+  /** The exception type, or "client" for a browser crash. */
+  kind: string;
+  message: string;
+  path: string | null;
+  stack: string | null;
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  resolvedAt: string | null;
+}

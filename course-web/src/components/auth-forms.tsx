@@ -10,6 +10,7 @@ import type { AuthResponse, TutorSignupRequest } from "@/lib/types";
 import { nextPath } from "./auth-shell";
 import { ConfirmEmailStep, isSignupPending, isUnconfirmed, type SignupPending } from "./confirm-email";
 import { Button, ErrorBox, Input, Notice, Select, linkClass } from "./ui";
+import { AgreeTerms } from "@/components/suite/agree-terms";
 
 /**
  * Runs a sign-in call, stores the session and moves on (`?next=` or `fallback`). Final fix pass B: a sign-up answers "confirm your email"
@@ -158,6 +159,7 @@ export function LearnerSignupForm() {
         error={error?.field("password")}
       />
       <ErrorBox error={error} />
+      <AgreeTerms />
       <Button type="submit" loading={busy} className="w-full">
         Create my account
       </Button>
@@ -386,6 +388,7 @@ export function TutorSignupForm({ defaultName, defaultEmail }: { defaultName?: s
         ))}
       </Select>
       <ErrorBox error={error} />
+      <AgreeTerms />
       <Button type="submit" loading={busy} className="w-full">
         Create my academy
       </Button>

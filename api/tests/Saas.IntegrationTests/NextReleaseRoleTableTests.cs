@@ -55,6 +55,8 @@ public sealed partial class NextReleaseRoleTableTests(ApiFixture api)
         ["GET /api/platform/transfers/"] = [Fin],
         ["POST /api/platform/transfers/{id:guid}/confirm"] = [Fin],
         ["POST /api/platform/transfers/{id:guid}/reject"] = [Fin],
+        ["GET /api/platform/errors/"] = [Sup],
+        ["POST /api/platform/errors/{id:guid}/resolve"] = [Sup],
 
         ["GET /api/admin/categories"] = [Mod],
         ["POST /api/admin/categories"] = [Mod],
