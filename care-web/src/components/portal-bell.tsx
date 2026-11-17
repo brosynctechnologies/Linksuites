@@ -8,13 +8,13 @@ import { api } from "@/lib/api";
 import { formatStamp } from "@/lib/format";
 import { portalHref, usePatientApi, usePortal } from "@/lib/portal";
 import { useApi } from "@/lib/use-api";
-import type { PortalNoticeDto } from "@/lib/types/portal";
+import type { PortalNoticeDto, PortalUnreadDto } from "@/lib/types/portal";
 import { BellIcon, badgeLabel } from "./notification-bell";
 import { Button, EmptyState, ErrorBox, PageLoader, cx, linkClass } from "./ui";
 
 // The portal's notices (Task 15 carry): the per-patient feed `GET /api/care-portal/patients/{id}/notifications`, scoped by account, clinic
 // and patient, never the shared `/api/notifications` feed (which a customer token would see across clinics and products). It holds the
-// newest 50; there is no unread-count route, so the badge counts the unread ones in it. Items are marked read one by one through the
+// newest 50; the badge reads the unread-count route (Wave 1), which counts beyond them. Items are marked read one by one through the
 // shared `POST /api/me/notifications/{id}/read` (the shared "read all" would also mark other clinics' and products' notices).
 
 const POLL_MS = 60_000;
@@ -91,7 +91,13 @@ export function PortalNotificationBell({ className }: { className?: string }) {
   const titleId = useId();
   const items = feed.data ?? [];
   const unread = items.filter((n) => !n.readAt);
-  const count = unread.length;
+  // Wave 1: the badge counts every unread notice for the patient (not only the newest 50), asked again whenever the feed changes.
+  const total = useApi<PortalUnreadDto>(usePatientApi("/notifications/unread-count"));
+  const reloadTotal = total.reload;
+  useEffect(() => {
+    if (feed.data) reloadTotal();
+  }, [feed.data, reloadTotal]);
+  const count = total.data?.count ?? unread.length;
 
   useEffect(() => {
     if (!pos) return;

@@ -8,6 +8,7 @@ import { useCare } from "@/lib/care-me";
 import { formatDay, koboInput, money, naira, toKobo } from "@/lib/format";
 import { useAction } from "@/lib/mutate";
 import { usePlanPaymentReturn } from "@/lib/plan-payment";
+import { LogoCard } from "@/components/branding";
 import { PlanPaymentNotice } from "@/components/plan-payment-notice";
 import { PendingTransferNotice, PlanTransferPanel } from "@/components/plan-transfer";
 import { qs, useApi } from "@/lib/use-api";
@@ -39,10 +40,11 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Settings" subtitle="The clinic's details, its plan and online payments." />
+      <PageHeader title="Settings" subtitle="The clinic's details and logo, its plan and online payments." />
       {setup.error && <ApiErrorView error={setup.error} onRetry={setup.reload} />}
       {!setup.data && !setup.error && <PageLoader />}
       {setup.data && <ProfileForm clinic={setup.data.clinic} readOnly={access.readOnly} onSaved={setup.reload} />}
+      {setup.data && <LogoCard hasLogo={setup.data.clinic.hasLogo} clinicName={setup.data.clinic.name} canEdit={!access.readOnly} />}
       <PlanCard />
       {access.isDirector && <PaystackSettings />}
       {!access.isDirector && (

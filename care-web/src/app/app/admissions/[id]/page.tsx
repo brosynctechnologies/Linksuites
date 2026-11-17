@@ -16,7 +16,7 @@ import { AssignBedDialog, TransferDialog } from "@/components/bed-dialogs";
 import { PatientBanner, PrescriptionCard, PrescriptionForm, TestRequestForm, TestRow, withResult, type ClinicalRun } from "@/components/clinical-parts";
 import { DischargePanel } from "@/components/discharge-panel";
 import { EmergencyReason, useClinicalRead } from "@/components/emergency-reason";
-import { FluidChart, MedicationChart, NursingNotes } from "@/components/ward-care";
+import { FluidChart, MedicationChart, NursingNotes, WardVitals } from "@/components/ward-care";
 import { WardRounds } from "@/components/ward-rounds";
 import {
   ApiErrorView,
@@ -34,11 +34,11 @@ import {
   buttonClass,
 } from "@/components/ui";
 
-type Tab = "medication" | "nursing" | "fluids" | "rounds" | "orders" | "discharge";
+type Tab = "medication" | "vitals" | "nursing" | "fluids" | "rounds" | "orders" | "discharge";
 
 /**
  * One admission (clinical staff only). Opening it is a logged read (`GET /api/care/admissions/{id}`; without a care relationship the API
- * asks for a reason, sent in a header and kept in memory). The tabs are the ward's work: the medication chart, nursing notes, the fluid chart,
+ * asks for a reason, sent in a header and kept in memory). The tabs are the ward's work: the medication chart, vital signs, nursing notes, the fluid chart,
  * ward rounds, orders (prescriptions and tests on the admission) and the discharge. Each tab's read is its own logged open. Logistics
  * (bed, transfer) and the bill link sit in the header.
  */
@@ -135,6 +135,7 @@ export default function AdmissionPage() {
         onChange={setTab}
         items={[
           { value: "medication", label: "Medication chart" },
+          { value: "vitals", label: "Vital signs" },
           { value: "nursing", label: "Nursing notes" },
           { value: "fluids", label: "Fluid chart" },
           { value: "rounds", label: "Ward rounds" },
@@ -144,6 +145,7 @@ export default function AdmissionPage() {
       />
       <div role="tabpanel" id={`ward-panel-${tab}`} aria-labelledby={`ward-tab-${tab}`}>
         {tab === "medication" && <MedicationChart admissionId={a.id} run={run} canRecord={admitted && writable} />}
+        {tab === "vitals" && <WardVitals admissionId={a.id} run={run} canWrite={admitted && writable} />}
         {tab === "nursing" && <NursingNotes admissionId={a.id} run={run} canWrite={admitted && writable} />}
         {tab === "fluids" && <FluidChart admissionId={a.id} run={run} canWrite={admitted && writable} />}
         {tab === "rounds" && <WardRounds admissionId={a.id} run={run} meId={me.userId} admitted={admitted} canStart={admitted && writable && doctor} readOnly={access.readOnly} />}

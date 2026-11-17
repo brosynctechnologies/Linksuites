@@ -24,8 +24,8 @@ export interface BillLineDto {
   removedReason: string | null;
   removedAt: string | null;
   createdAt: string;
-  /** Not on the DTO yet (Task 13 carry): bed lines show their description. */
-  chargeDay?: string | null;
+  /** The Lagos day a bed line charges for (Wave 1); null for every other line. */
+  chargeDay: string | null;
 }
 export interface CarePaymentDto {
   id: string;
@@ -41,6 +41,8 @@ export interface CarePaymentDto {
   status: CarePaymentStatus;
   reversedAt: string | null;
   reversalReason: string | null;
+  /** Online: when Paystack says the patient paid. `paidAt` is when the clinic confirmed it (Wave 1). */
+  providerPaidAt: string | null;
 }
 export interface BillAdjustmentDto {
   id: string;
@@ -86,11 +88,14 @@ export interface MethodTotalDto {
   count: number;
   amountMinor: number;
 }
+/** One Lagos day. `totalMinor` is net: payments taken that day less reversals made that day (Wave 1: a closed day never changes). */
 export interface TakingsDayDto {
   date: string;
   count: number;
   totalMinor: number;
   byMethod: MethodTotalDto[];
+  /** Reversals made this day, by method, with negative amounts. */
+  reversals: MethodTotalDto[];
 }
 export interface TakingsReportDto {
   from: string;
@@ -99,6 +104,7 @@ export interface TakingsReportDto {
   totalMinor: number;
   byMethod: MethodTotalDto[];
   days: TakingsDayDto[];
+  reversals: MethodTotalDto[];
 }
 export interface CareDebtorDto {
   patientId: string;

@@ -121,19 +121,28 @@ function Takings() {
       {r && (
         <>
           <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <Figure label={`Taken, ${plural(r.count, "payment")}`} value={money(r.totalMinor)} strong />
+            <Figure label={`Net, ${plural(r.count, "payment")}`} value={money(r.totalMinor)} strong />
             {r.byMethod.map((m) => (
               <Figure key={m.method} label={`${methodLabel(m.method)}, ${m.count}`} value={money(m.amountMinor)} />
             ))}
+            {r.reversals.map((m) => (
+              <Figure key={`rev-${m.method}`} label={`${methodLabel(m.method)} reversed, ${m.count}`} value={money(m.amountMinor)} />
+            ))}
           </dl>
-          <p className="text-xs text-muted">Received payments only. A reversed payment is left out, including on the day it was taken.</p>
+          <p className="text-xs text-muted">
+            A payment counts on the day it was taken (online: the day the clinic was told), so a closed day never changes. A reversal shows as a
+            minus on the day it was made.
+          </p>
           {r.days.length > 0 && (
             <CaseSheet label="Takings by day" template="minmax(0,1fr) minmax(0,2fr) auto" head={[{ label: "Day" }, { label: "By method" }, { label: "Total", align: "right" }]}>
               {r.days.map((d) => (
                 <li key={d.date} className={caseRowClass}>
                   <span className="tnum font-bold text-ink">{formatDay(d.date)}</span>
                   <span className="tnum col-span-2 text-sm text-slate-700 md:col-span-1">
-                    {d.byMethod.map((m) => `${methodLabel(m.method)} ${money(m.amountMinor)}`).join(", ")}
+                    {[
+                      ...d.byMethod.map((m) => `${methodLabel(m.method)} ${money(m.amountMinor)}`),
+                      ...d.reversals.map((m) => `${methodLabel(m.method)} reversed ${money(m.amountMinor)}`),
+                    ].join(", ")}
                   </span>
                   <span className="tnum font-bold text-ink md:text-right">{money(d.totalMinor)}</span>
                 </li>

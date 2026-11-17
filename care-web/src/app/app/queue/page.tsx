@@ -21,6 +21,7 @@ import {
   PageHeader,
   PageLoader,
   Segmented,
+  WhatsAppLink,
   Wristband,
   buttonClass,
   caseRowClass,
@@ -218,6 +219,11 @@ function VisitRow({ visit: v, onChanged, myId }: { visit: VisitDto; onChanged: (
       <span className="col-span-2 text-sm text-slate-700 md:col-span-1">{v.doctorName ?? <span className="text-muted">No doctor yet</span>}</span>
       <span className="tnum hidden text-sm text-slate-700 md:block">{waited(v.minutesWaited)}</span>
       <span className="col-span-2 flex flex-wrap items-center justify-start gap-2 md:col-span-1 md:justify-end">
+        {v.whatsAppUrl && !access.readOnly && (
+          <WhatsAppLink href={v.whatsAppUrl} className="min-h-10 px-3">
+            {v.stage === "WaitingPayment" ? "Call to pay" : "Call back"}
+          </WhatsAppLink>
+        )}
         {triage && (
           <Link href={`/app/visits/${v.id}/triage`} className={buttonClass(v.stage === "WaitingVitals" ? "primary" : "secondary", "min-h-10 px-3")}>
             {v.stage === "WaitingVitals" ? "Take vitals" : "Re-triage"}

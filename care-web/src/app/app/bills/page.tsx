@@ -8,6 +8,7 @@ import { formatStamp, money } from "@/lib/format";
 import { BILL_STATUS } from "@/lib/inpatient";
 import { canTakeMoney } from "@/lib/roles";
 import { qs, useApi } from "@/lib/use-api";
+import { useDebounced } from "@/lib/use-debounced";
 import type { PatientSummaryDto } from "@/lib/types";
 import type { BillSummaryDto } from "@/lib/types/billing";
 import type { BillStatus, QueueDto } from "@/lib/types/clinical";
@@ -19,6 +20,7 @@ import {
   Button,
   CaseSheet,
   EmptyState,
+  Input,
   NoAccess,
   PageHeader,
   PageLoader,
@@ -28,6 +30,8 @@ import {
   chipClass,
   cx,
 } from "@/components/ui";
+
+const PAGE = 50;
 
 const FILTERS: { value: BillStatus | "all"; label: string }[] = [
   { value: "all", label: "All" },
@@ -40,7 +44,7 @@ const FILTERS: { value: BillStatus | "all"; label: string }[] = [
 
 /**
  * Bills (the cashier and leadership; the support view reads). Today's visits waiting to pay come first, from the queue; then the bills,
- * newest first (the API's latest 200), by status or for one patient. Nothing clinical: lines show the price-item name only.
+ * newest first, 50 a page, by status, for one patient or by search (bill number, patient number or name). Nothing clinical.
  */
 export default function BillsPage() {
   const { access } = useCare();
@@ -53,7 +57,21 @@ export default function BillsPage() {
     return pid && /^[0-9a-f-]{36}$/i.test(pid) ? { id: pid, number: "", fullName: "" } : null;
   });
   const [picking, setPicking] = useState(false);
-  const bills = useApi<BillSummaryDto[]>(allowed ? `/api/care/bills${qs({ status: status === "all" ? null : status, patientId: patient?.id })}` : null);
+  // Wave 1: search by bill number, patient number or name, a page of PAGE at a time (a full page means there may be more).
+  const [search, setSearch] = useState("");
+  const q = useDebounced(search.trim());
+  const [page, setPage] = useState(0);
+  const filters = `${status}|${patient?.id ?? ""}|${q}`;
+  const [pageFor, setPageFor] = useState(filters);
+  if (pageFor !== filters) {
+    setPageFor(filters);
+    setPage(0);
+  }
+  const bills = useApi<BillSummaryDto[]>(
+    allowed
+      ? `/api/care/bills${qs({ status: status === "all" ? null : status, patientId: patient?.id, q: q || null, offset: page * PAGE || null, limit: PAGE })}`
+      : null,
+  );
   const queue = useApi<QueueDto>(allowed ? "/api/care/queue?mine=false" : null);
 
   if (!allowed) return <NoAccess text="Bills are for the cashier, admins and the medical director." />;
@@ -99,6 +117,9 @@ export default function BillsPage() {
               {f.label}
             </button>
           ))}
+        </div>
+        <div className="max-w-md">
+          <Input label="Search bills" srLabel type="search" placeholder="Bill number, patient number or name" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           {patient ? (
@@ -163,7 +184,19 @@ export default function BillsPage() {
             ))}
           </CaseSheet>
         )}
-        {bills.data && bills.data.length >= 200 && <p className="text-xs text-muted">Showing the latest 200. Choose a status or a patient to narrow it.</p>}
+        {bills.data && (page > 0 || bills.data.length >= PAGE) && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" disabled={page === 0 || bills.loading} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+              Newer bills
+            </Button>
+            <Button variant="secondary" disabled={bills.data.length < PAGE || bills.loading} onClick={() => setPage((p) => p + 1)}>
+              Older bills
+            </Button>
+            <span className="tnum text-xs text-muted">
+              Bills {page * PAGE + 1} to {page * PAGE + bills.data.length}
+            </span>
+          </div>
+        )}
       </section>
     </div>
   );

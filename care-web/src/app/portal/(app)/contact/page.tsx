@@ -7,22 +7,21 @@ import { api } from "@/lib/api";
 import { useAction } from "@/lib/mutate";
 import { usePatientApi, usePortal } from "@/lib/portal";
 import { useApi } from "@/lib/use-api";
-import type { PortalContactDto, PortalRecordDto } from "@/lib/types/portal";
+import type { PortalContactDto } from "@/lib/types/portal";
 
 /**
- * The patient's phone, email and address at the clinic. `PUT .../contact` replaces all three (a field left empty is cleared), so the form
- * always sends all three. There is no contact-only read, so the current values come from the record's details.
+ * The patient's phone, email and address at the clinic, read with `GET .../contact` (Wave 1: no longer the whole record, so editing them
+ * isn't a record read). `PUT .../contact` replaces all three (a field left empty is cleared), so the form always sends all three.
  */
 export default function PortalContactPage() {
   const { patient } = usePortal();
-  const record = useApi<PortalRecordDto>(usePatientApi("/record"));
-  const p = record.data?.patient;
+  const contact = useApi<PortalContactDto>(usePatientApi("/contact"));
   return (
     <div className="max-w-xl">
       <PageHeader title="Contact details" subtitle={patient ? `What ${patient.clinicName} uses to reach ${patient.relationship === "Self" ? "you" : patient.firstName}.` : undefined} />
-      {record.error && !record.data && <PortalError error={record.error} onRetry={record.reload} />}
-      {!record.data && !record.error && <PageLoader />}
-      {p && patient && <ContactForm key={p.id} patientId={patient.id} initial={{ phone: p.phone, email: p.email, address: p.address }} />}
+      {contact.error && !contact.data && <PortalError error={contact.error} onRetry={contact.reload} />}
+      {!contact.data && !contact.error && <PageLoader />}
+      {contact.data && patient && <ContactForm key={patient.id} patientId={patient.id} initial={contact.data} />}
     </div>
   );
 }

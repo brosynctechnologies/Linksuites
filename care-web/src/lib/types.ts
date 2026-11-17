@@ -142,6 +142,8 @@ export interface CareMeDto {
   isClinical: boolean;
   isLeadership: boolean;
   isCashier: boolean;
+  /** Wave 1: a signature image is on file (printed on what they sign). */
+  hasSignature: boolean;
 }
 
 // ---- Care: setup and settings ----

@@ -148,6 +148,7 @@ export function ResultsList({ results }: { results: PortalResultDto[] }) {
             <Badge>{t.kind === "Lab" ? "Lab test" : t.kind === "Imaging" ? "Scan or X-ray" : "Test"}</Badge>
           </p>
           <p className="text-sm text-muted">Result {lagosShort(t.resultedAt)}</p>
+          {t.corrected && <p className="mt-1 text-sm text-slate-700">The clinic corrected this result. This is the corrected one.</p>}
           {t.resultText && <p className="mt-2 text-sm whitespace-pre-line text-ink">{t.resultText}</p>}
           {t.hasFile && <p className="mt-2 text-sm text-slate-700">There is a result file too. Ask the clinic for a copy.</p>}
         </Card>

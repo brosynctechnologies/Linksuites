@@ -93,6 +93,8 @@ export interface PortalResultDto {
   resultText: string | null;
   hasFile: boolean;
   resultedAt: string | null;
+  /** Wave 1: this result corrects one entered in error (the earlier one isn't shown). */
+  corrected: boolean;
 }
 export interface PortalVitalsDto {
   takenAt: string;
@@ -233,6 +235,10 @@ export interface PortalContactDto {
   phone: string | null;
   email: string | null;
   address: string | null;
+}
+/** `GET /api/care-portal/patients/{id}/notifications/unread-count` (Wave 1). */
+export interface PortalUnreadDto {
+  count: number;
 }
 export interface PortalNoticeDto {
   id: string;

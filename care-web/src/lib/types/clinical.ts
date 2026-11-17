@@ -23,6 +23,8 @@ export interface VisitDto {
   billId: string | null;
   arrivedAt: string;
   minutesWaited: number;
+  /** Wave 1: a WhatsApp message for a patient who stepped out (waiting or waiting to pay); null otherwise or without a phone. */
+  whatsAppUrl: string | null;
 }
 export interface QueueStageDto {
   stage: VisitStage;
@@ -74,6 +76,8 @@ export interface VitalSignsDto {
   /** "High temperature", "Critical SpO2"… */
   flags: string[];
   critical: boolean;
+  /** Wave 1: set for a set taken on the ward (an admission), null at triage. */
+  admissionId: string | null;
 }
 export interface TriageResultDto {
   visit: VisitDto;
@@ -116,6 +120,8 @@ export interface AppointmentDto {
   reason: string | null;
   status: AppointmentStatus;
   source: "Desk" | "Portal";
+  /** Wave 1: a WhatsApp reminder for a booked, upcoming appointment; null otherwise or without a phone. */
+  whatsAppUrl: string | null;
 }
 
 // ---- Consultations, diagnoses and addenda (clinical) ----
@@ -252,6 +258,26 @@ export interface TestRequestDto {
   reviewedBy: string | null;
   reviewedByName: string | null;
   reviewedAt: string | null;
+  /** Wave 1: when this result replaced one entered in error (null if never corrected). */
+  amendedAt: string | null;
+  /** Wave 1: earlier results entered in error, newest first. */
+  superseded: TestSupersededDto[];
+}
+/** Wave 1: a result entered in error and replaced; kept with who recorded it, who replaced it, when and why. Clinical staff only. */
+export interface TestSupersededDto {
+  id: string;
+  resultText: string | null;
+  hasFile: boolean;
+  resultedBy: string | null;
+  resultedByName: string | null;
+  resultedAt: string | null;
+  reviewedBy: string | null;
+  reviewedByName: string | null;
+  reviewedAt: string | null;
+  supersededBy: string;
+  supersededByName: string | null;
+  supersededAt: string;
+  reason: string;
 }
 /** `POST /api/care/tests/{id}/review`: who reviewed the result and when (idempotent: a second review answers with the first). */
 export interface TestReviewDto {
