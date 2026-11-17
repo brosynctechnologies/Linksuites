@@ -25,6 +25,14 @@ public static class SchoolEndpoints
         school.MapPost("/setup/apply-template", (ApplyTemplateRequest r, AcademicService s, CancellationToken ct) => s.ApplyTemplateAsync(r, ct))
             .RequireAuthorization(admin);
 
+        // The school's calendar: correct session and term names and dates, and move to the next term. Next session: Promotion.
+        school.MapPut("/sessions/{id:guid}", (Guid id, SaveSessionRequest r, SchoolCalendarService s, CancellationToken ct) => s.UpdateSessionAsync(id, r, ct))
+            .RequireAuthorization(admin);
+        school.MapPut("/terms/{id:guid}", (Guid id, SaveTermRequest r, SchoolCalendarService s, CancellationToken ct) => s.UpdateTermAsync(id, r, ct))
+            .RequireAuthorization(admin);
+        school.MapPost("/terms/{id:guid}/make-current", (Guid id, SchoolCalendarService s, CancellationToken ct) => s.MakeCurrentAsync(id, ct))
+            .RequireAuthorization(admin);
+
         school.MapGet("/levels", (AcademicService s, CancellationToken ct) => s.ListLevelsAsync(ct));
         school.MapPost("/levels", (SaveLevelRequest r, AcademicService s, CancellationToken ct) => s.CreateLevelAsync(r, ct)).RequireAuthorization(admin);
         school.MapPut("/levels/{id:guid}", (Guid id, SaveLevelRequest r, AcademicService s, CancellationToken ct) => s.UpdateLevelAsync(id, r, ct)).RequireAuthorization(admin);

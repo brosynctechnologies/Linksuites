@@ -56,6 +56,8 @@ const NAV: NavItem[] = [
   { href: "/app/announcements", label: "Announcements", icon: AnnouncementIcon },
   // The school's name, motto, address, logo and the principal's signature: Owner and Admin (the API's admin policy).
   { href: "/app/settings/school", label: "School settings", icon: SettingsIcon, needs: "school.manage" },
+  // Session and term dates, and moving to the next term: Owner and Admin.
+  { href: "/app/settings/calendar", label: "Terms and dates", icon: SetupIcon, needs: "school.manage" },
   // Proprietor and principal see the plan; only the proprietor can pay (the page decides).
   { href: "/app/billing", label: "Plan and billing", icon: PlanIcon, needs: "billing.read" },
   { href: "/app/account", label: "Account", icon: AccountIcon },

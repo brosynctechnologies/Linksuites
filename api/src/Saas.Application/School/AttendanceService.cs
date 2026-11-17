@@ -189,7 +189,7 @@ public sealed class AttendanceService(
         var today = Today;
         if (date > today) throw BadRequestException.Field("date", "Choose today or an earlier date.");
         var term = await db.Terms.AsNoTracking().FirstOrDefaultAsync(t => t.IsCurrent, ct)
-            ?? throw new ConflictException("Set the current term first.", "no_current_term");
+            ?? throw new ConflictException("Set the current term first, in Terms and dates.", "no_current_term");
         var earliest = access.IsLeadership ? term.StartDate : DateOnly.FromDayNumber(Math.Max(term.StartDate.DayNumber, today.DayNumber - TeacherWindowDays));
         if (date < earliest || date > term.EndDate) throw new ConflictException(CannotChange, "register_locked");
     }

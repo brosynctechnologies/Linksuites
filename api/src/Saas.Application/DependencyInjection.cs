@@ -143,6 +143,7 @@ public static class DependencyInjection
         services.AddScoped<IUsageProvider, School.SchoolUsage>();
         services.AddScoped<IUsageProvider>(sp => new ProductTeamUsage(Products.School, sp.GetRequiredService<TeamUsage>()));
         services.AddScoped<School.SchoolSetupService>();
+        services.AddScoped<School.SchoolCalendarService>();
         services.AddScoped<School.AcademicService>();
         services.AddScoped<School.StaffService>();
         services.AddScoped<School.SchoolAccess>();
