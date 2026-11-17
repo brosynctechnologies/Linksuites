@@ -274,6 +274,11 @@ public sealed class PrescriptionService(
         var staff = await db.CareStaffProfiles.AsNoTracking().Where(s => s.UserId == dto.DoctorUserId)
             .Select(s => new { s.Title, s.LicenceNumber }).FirstOrDefaultAsync(ct);
         var logo = await LogoAsync(storage, clinic.LogoKey, ct);
+        // The doctor's handwritten signature only goes on a prescription whose consultation has been signed (or one written outside a
+        // consultation): a draft printed by the desk must not look authorised.
+        var signed = await db.Prescriptions.AsNoTracking().Where(p => p.Id == id)
+            .AnyAsync(p => p.ConsultationId == null || db.Consultations.Any(c => c.Id == p.ConsultationId && c.Status == NoteStatus.Signed), ct);
+        var signature = signed ? await CareBrandingService.SignatureBytesAsync(db, storage, dto.DoctorUserId, ct) : null;
 
         var written = CareCalendar.Today(dto.CreatedAt);
         var today = CareCalendar.Today(clock.GetUtcNow());
@@ -282,7 +287,7 @@ public sealed class PrescriptionService(
         var data = new PrescriptionPdfData(
             clinic.Name, clinic.Address, clinic.Phone, logo, $"{patient.FirstName} {patient.LastName}", patient.Number, patient.Sex.ToString(), Math.Max(0, age),
             written.ToString("d MMMM yyyy", CultureInfo.InvariantCulture), dto.DoctorName, staff?.Title, staff?.LicenceNumber, dto.AllergyAcknowledged,
-            dto.Items, !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct), await CareBrandingService.SignatureBytesAsync(db, storage, dto.DoctorUserId, ct));
+            dto.Items, !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct), signature);
         return (await pdf.PrescriptionAsync(data, ct), $"prescription-{patient.Number}-{written:yyyyMMdd}.pdf");
     }
 

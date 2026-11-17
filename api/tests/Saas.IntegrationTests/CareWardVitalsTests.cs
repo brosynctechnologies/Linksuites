@@ -36,6 +36,33 @@ public sealed class CareWardVitalsTests(ApiFixture api)
         api.WithDbAsync(db => db.RecordAccesses.IgnoreQueryFilters().Where(a => a.PatientId == patientId).OrderBy(a => a.At).ToListAsync(Ct));
 
     [Fact]
+    public async Task A_long_stay_chart_shows_the_newest_500_readings()
+    {
+        var clinic = await kit.ClinicAsync("Long Stay Clinic");
+        var (doctor, doctorId) = await kit.StaffAsync(clinic, "Doctor");
+        var patientId = (await kit.PatientAsync(clinic, "Long", "Stay")).GetProperty("id").GetGuid();
+        await kit.AssignAsync(clinic, patientId, doctorId);
+        var admissionId = await kit.AdmitAsync(doctor, patientId, emergencyReason: null);
+        var start = DateTimeOffset.UtcNow.AddHours(-600);
+        await api.WithDbAsync(async db =>
+        {
+            for (var i = 0; i < 520; i++)
+                db.VitalSigns.Add(new VitalSigns
+                {
+                    TenantId = clinic.TenantId, PatientId = patientId, AdmissionId = admissionId, TakenBy = doctorId,
+                    TakenAt = start.AddHours(i), Pulse = 60 + i % 40,
+                });
+            return await db.SaveChangesAsync(Ct);
+        });
+
+        var chart = await Json(await doctor.GetAsync($"/api/care/admissions/{admissionId}/vitals", Ct));
+        var times = chart.EnumerateArray().Select(v => v.GetProperty("takenAt").GetDateTimeOffset()).ToList();
+        Assert.Equal(500, times.Count);
+        Assert.True(times.SequenceEqual(times.Order()), "oldest first");
+        Assert.True(times[^1] >= start.AddHours(519).AddSeconds(-1), "the newest reading is on the chart");
+    }
+
+    [Fact]
     public async Task Ward_staff_chart_vitals_on_an_admission()
     {
         var clinic = await kit.ClinicAsync("Ward Vitals Clinic");

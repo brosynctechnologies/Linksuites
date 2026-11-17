@@ -68,11 +68,19 @@ public sealed class SchoolCalendarService(IAppDbContext db)
         {
             // Two saves in one transaction: "one current term per school" is a unique index checked statement by statement.
             await using var tx = await db.Database.BeginTransactionAsync(ct);
-            foreach (var other in await db.Terms.Where(t => t.IsCurrent).ToListAsync(ct)) other.IsCurrent = false;
-            await db.SaveChangesAsync(ct);
-            term.IsCurrent = true;
-            await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
+            try
+            {
+                foreach (var other in await db.Terms.Where(t => t.IsCurrent).ToListAsync(ct)) other.IsCurrent = false;
+                await db.SaveChangesAsync(ct);
+                term.IsCurrent = true;
+                await db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+            }
+            catch (DbUpdateException)
+            {
+                // Someone else changed the current term at the same moment.
+                throw new ConflictException("The current term was just changed by someone else. Refresh to see it.", "term_changed");
+            }
         }
         return await SessionDtoAsync(session, ct);
     }

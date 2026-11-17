@@ -43,11 +43,19 @@ public sealed class PlanPaymentJobsHostedService(IServiceScopeFactory scopes, IL
         if (!locked) return;
         try
         {
-            await scope.ServiceProvider.GetRequiredService<PlanPaymentJobs>().RunOnceAsync(DateTimeOffset.UtcNow, ct);
-            if (DateTimeOffset.UtcNow - _remindersRanAt >= TimeSpan.FromHours(1))
+            try
             {
-                _remindersRanAt = DateTimeOffset.UtcNow;
-                await scope.ServiceProvider.GetRequiredService<PlanReminderJobs>().RunOnceAsync(DateTimeOffset.UtcNow, ct);
+                await scope.ServiceProvider.GetRequiredService<PlanPaymentJobs>().RunOnceAsync(DateTimeOffset.UtcNow, ct);
+            }
+            finally
+            {
+                // Reminders run in their own scope, whatever happened to the payment re-check, and count as run only once they finish.
+                if (DateTimeOffset.UtcNow - _remindersRanAt >= TimeSpan.FromHours(1))
+                {
+                    using var reminders = scopes.CreateScope();
+                    await reminders.ServiceProvider.GetRequiredService<PlanReminderJobs>().RunOnceAsync(DateTimeOffset.UtcNow, ct);
+                    _remindersRanAt = DateTimeOffset.UtcNow;
+                }
             }
         }
         finally

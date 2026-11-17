@@ -13,8 +13,9 @@ namespace Saas.Infrastructure.Auth;
 
 public sealed record ParentProfileDto(string FullName, string Email, string? Phone);
 public sealed record ParentPhoneRequest(string? Phone);
-public sealed record ParentEmailRequest(string? Email);
-public sealed record ParentEmailConfirmRequest(string? Email, string? Code);
+public sealed record ParentEmailRequest(string? Email, string? CurrentPassword = null);
+/// <param name="RefreshToken">This device's refresh token, kept when every other session is signed out.</param>
+public sealed record ParentEmailConfirmRequest(string? Email, string? Code, string? RefreshToken = null);
 
 /// <summary>
 /// The parent's own phone and email (the parent portal's profile). Parent sessions only: <see cref="ParentAccess.CustomerUserId"/> refuses
@@ -23,7 +24,8 @@ public sealed record ParentEmailConfirmRequest(string? Email, string? Code);
 /// takes the new phone or email too, unless another guardian of that school already has it (the school's record then stays as it is).
 /// </summary>
 public sealed class ParentProfileService(
-    AppDbContext db, UserManager<AppUser> users, ParentAccess parents, NotificationQueue notifications, TimeProvider clock)
+    AppDbContext db, UserManager<AppUser> users, ParentAccess parents, NotificationQueue notifications, Saas.Application.Platform.AuthSessions sessions,
+    TimeProvider clock)
 {
     public const string BadPhone = "Enter a phone number such as 0803 123 4567 or +234 803 123 4567.";
     public const string BadCode = "That code is wrong or has expired. Request a new one.";
@@ -60,6 +62,10 @@ public sealed class ParentProfileService(
         var email = CleanEmail(r.Email);
         if (string.Equals(email, user.Email, StringComparison.OrdinalIgnoreCase))
             throw BadRequestException.Field("email", "This is already your email address.");
+        // A session alone (a stolen token, a shared phone) must not be able to move the account: the password is asked for too.
+        if (await users.HasPasswordAsync(user) && (string.IsNullOrEmpty(r.CurrentPassword) || !await users.CheckPasswordAsync(user, r.CurrentPassword)))
+            throw BadRequestException.Field("currentPassword",
+                string.IsNullOrEmpty(r.CurrentPassword) ? "Enter your current password." : "Your current password is wrong.");
         if (await users.FindByEmailAsync(email) is { } other && other.Id != user.Id) throw new ConflictException(EmailTaken, "email_taken");
 
         var now = clock.GetUtcNow();
@@ -107,7 +113,17 @@ public sealed class ParentProfileService(
         user.NormalizedUserName = users.NormalizeName(email);
         user.EmailConfirmed = true;
         var updated = await users.UpdateAsync(user);
-        if (!updated.Succeeded) throw new ConflictException(EmailTaken, "email_taken");
+        if (!updated.Succeeded)
+        {
+            await db.SaveChangesAsync(ct); // the code stays spent
+            throw new ConflictException(EmailTaken, "email_taken");
+        }
+        // Every other session ends, as after a password change, so whoever held the account before can't stay signed in.
+        await users.UpdateSecurityStampAsync(user);
+        var keep = string.IsNullOrWhiteSpace(r.RefreshToken) ? null : Codes.Sha256(r.RefreshToken);
+        await db.RefreshTokens.Where(t => t.UserId == user.Id && t.RevokedAt == null && t.TokenHash != keep)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), ct);
+        await sessions.EndAllForUserAsync(user.Id, user.Id, ct);
 
         var linked = await db.Guardians.IgnoreQueryFilters().Where(g => g.UserId == user.Id && g.Email != email).ToListAsync(ct);
         foreach (var guardian in linked)

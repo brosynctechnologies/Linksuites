@@ -174,7 +174,15 @@ public sealed class CareBrandingTests(ApiFixture api)
         async Task<byte[]> PrescriptionPdfAsync() => await (await doctor.GetAsync($"/api/care/prescriptions/{rx}/pdf", Ct)).Content.ReadAsByteArrayAsync(Ct);
         var unsigned = Images(await PrescriptionPdfAsync());
         await Json(await doctor.PutAsync("/api/care/staff/me/signature", ImageForm(PngOf(300, 100, SKColors.Navy)), Ct));
-        Assert.True(Images(await PrescriptionPdfAsync()) > unsigned, "the prescriber's signature prints on the prescription");
+        // While the consultation is a draft, the prescription prints without the doctor's signature (it must not look authorised).
+        Assert.Equal(unsigned, Images(await PrescriptionPdfAsync()));
+        await Json(await doctor.PutAsJsonAsync($"/api/care/consultations/{consultationId}", new
+        {
+            complaint = "Headache", history = "Two days", examination = "Normal", plan = "Paracetamol",
+            diagnoses = new object[] { new { text = "Tension headache", code = (string?)null, primary = true } },
+        }, Ct));
+        await Json(await doctor.PostAsync($"/api/care/consultations/{consultationId}/sign", null, Ct));
+        Assert.True(Images(await PrescriptionPdfAsync()) > unsigned, "the prescriber's signature prints once the consultation is signed");
 
         // A discharge summary signed by the same doctor.
         var wardId = await kit.WardAsync(clinic, "Signed ward");

@@ -457,12 +457,13 @@ public sealed class WardCareService(
         return VisitService.ToDto(vitals, names.GetValueOrDefault(caller.UserId, ""));
     }
 
-    /// <summary>The admission's ward vital signs, oldest first (at most 500). A clinical open (area vitals).</summary>
+    /// <summary>The admission's latest 500 ward vital signs, oldest first. A clinical open (area vitals).</summary>
     public async Task<IReadOnlyList<VitalSignsDto>> VitalsAsync(Guid admissionId, string? reason, CancellationToken ct)
     {
         await OpenAsync(admissionId, RecordGuard.Areas.WardVitals, reason, ct);
         var rows = await db.VitalSigns.AsNoTracking().Where(v => v.AdmissionId == admissionId)
-            .OrderBy(v => v.TakenAt).ThenBy(v => v.Id).Take(500).ToListAsync(ct);
+            .OrderByDescending(v => v.TakenAt).ThenByDescending(v => v.Id).Take(500).ToListAsync(ct);
+        rows.Reverse(); // the newest readings are the ones that matter on a long stay
         var names = await ConsultationService.NamesAsync(db, rows.Select(v => v.TakenBy), ct);
         return rows.Select(v => VisitService.ToDto(v, names.GetValueOrDefault(v.TakenBy, ""))).ToList();
     }

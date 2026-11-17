@@ -138,6 +138,28 @@ public sealed class SchoolWaveOneTests(ApiFixture api)
             .OrderByDescending(n => n.CreatedAt).FirstAsync(Ct)).Payload["code"]);
 
     [Fact]
+    public async Task Email_change_needs_the_password_and_signs_out_every_other_session()
+    {
+        var (parent, userId, oldEmail) = await kit.ParentAccountAsync();
+        var newEmail = $"moved-{Guid.NewGuid():N}@example.com";
+        var otherDevice = await Json(await api.CreateClient().PostAsJsonAsync("/api/auth/parent/login", new { email = oldEmail, password = "password123" }, Ct));
+
+        // A session alone (a stolen token, a shared phone) can't start the move.
+        await ProblemAsync(await parent.PostAsJsonAsync("/api/parent/profile/email", new { email = newEmail }, Ct), HttpStatusCode.BadRequest);
+        await ProblemAsync(await parent.PostAsJsonAsync("/api/parent/profile/email", new { currentPassword = "wrong-password", email = newEmail }, Ct), HttpStatusCode.BadRequest);
+
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await parent.PostAsJsonAsync("/api/parent/profile/email", new { currentPassword = "password123", email = newEmail }, Ct)).StatusCode);
+        var code = await LatestChangeCodeAsync(newEmail);
+        await Json(await parent.PostAsJsonAsync("/api/parent/profile/email/confirm", new { email = newEmail, code }, Ct));
+
+        // Every session from before the change is ended.
+        var refresh = await api.CreateClient().PostAsJsonAsync("/api/auth/refresh", new { refreshToken = otherDevice.GetProperty("refreshToken").GetString() }, Ct);
+        Assert.False(refresh.IsSuccessStatusCode);
+        Assert.NotEqual(Guid.Empty, userId);
+    }
+
+    [Fact]
     public async Task Parent_changes_email_only_after_the_code_sent_to_the_new_address()
     {
         var school = await kit.SchoolAsync("Wave Email School");
@@ -150,12 +172,12 @@ public sealed class SchoolWaveOneTests(ApiFixture api)
 
         // An address that already belongs to another account is refused.
         var (_, _, takenEmail) = await kit.ParentAccountAsync();
-        var taken = await ProblemAsync(await parent.PostAsJsonAsync("/api/parent/profile/email", new { email = takenEmail }, Ct), HttpStatusCode.Conflict);
+        var taken = await ProblemAsync(await parent.PostAsJsonAsync("/api/parent/profile/email", new { currentPassword = "password123", email = takenEmail }, Ct), HttpStatusCode.Conflict);
         Assert.Equal("Another account already uses this email address.", taken.GetProperty("detail").GetString());
-        await ProblemAsync(await parent.PostAsJsonAsync("/api/parent/profile/email", new { email = "not-an-email" }, Ct), HttpStatusCode.BadRequest);
-        await ProblemAsync(await parent.PostAsJsonAsync("/api/parent/profile/email", new { email = oldEmail.ToUpperInvariant() }, Ct), HttpStatusCode.BadRequest);
+        await ProblemAsync(await parent.PostAsJsonAsync("/api/parent/profile/email", new { currentPassword = "password123", email = "not-an-email" }, Ct), HttpStatusCode.BadRequest);
+        await ProblemAsync(await parent.PostAsJsonAsync("/api/parent/profile/email", new { currentPassword = "password123", email = oldEmail.ToUpperInvariant() }, Ct), HttpStatusCode.BadRequest);
 
-        Assert.Equal(HttpStatusCode.NoContent, (await parent.PostAsJsonAsync("/api/parent/profile/email", new { email = newEmail.ToUpperInvariant() }, Ct)).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await parent.PostAsJsonAsync("/api/parent/profile/email", new { currentPassword = "password123", email = newEmail.ToUpperInvariant() }, Ct)).StatusCode);
         var code = await LatestChangeCodeAsync(newEmail);
         Assert.Matches("^[0-9]{6}$", code);
         // Nothing changes until the code is entered.

@@ -111,6 +111,7 @@ function PhoneForm({ current, onSaved }: { current: string | null; onSaved: () =
 
 function EmailForm({ current, onSaved }: { current: string; onSaved: () => void }) {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [changed, setChanged] = useState(false);
@@ -120,10 +121,11 @@ function EmailForm({ current, onSaved }: { current: string; onSaved: () => void 
   async function sendCode(e: FormEvent) {
     e.preventDefault();
     setChanged(false);
-    const outcome = await send.run(() => api("/api/parent/profile/email", { method: "POST", body: { email } }));
+    const outcome = await send.run(() => api("/api/parent/profile/email", { method: "POST", body: { email, currentPassword: password } }));
     if (outcome.ok) {
       setSentTo(email.trim().toLowerCase());
       setCode("");
+      setPassword("");
     }
   }
 
@@ -131,7 +133,11 @@ function EmailForm({ current, onSaved }: { current: string; onSaved: () => void 
     e.preventDefault();
     if (!sentTo) return;
     const outcome = await confirm.run(() =>
-      api<ParentProfileDto>("/api/parent/profile/email/confirm", { method: "POST", body: { email: sentTo, code } }),
+      api<ParentProfileDto>("/api/parent/profile/email/confirm", {
+        method: "POST",
+        // This device stays signed in; every other session is signed out.
+        body: { email: sentTo, code, refreshToken: getAuth()?.refreshToken || null },
+      }),
     );
     if (outcome.ok) {
       const user = getAuth()?.user;
@@ -185,6 +191,7 @@ function EmailForm({ current, onSaved }: { current: string; onSaved: () => void 
   }
 
   const emailError = send.error?.field("email");
+  const passwordError = send.error?.field("currentPassword");
   return (
     <form onSubmit={sendCode} className="max-w-sm space-y-3">
       <h3 className="text-sm font-bold text-ink">Email address</h3>
@@ -198,8 +205,20 @@ function EmailForm({ current, onSaved }: { current: string; onSaved: () => void 
         value={email}
         onChange={(e) => setEmail(e.target.value)}
       />
-      {send.error && !emailError && <ErrorBox error={send.error} />}
-      {changed && <Notice tone="success">Email address changed. Sign in with the new address from now on.</Notice>}
+      <Input
+        label="Your current password"
+        type="password"
+        autoComplete="current-password"
+        required
+        hint="To make sure it's you."
+        error={passwordError}
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+      />
+      {send.error && !emailError && !passwordError && <ErrorBox error={send.error} />}
+      {changed && (
+        <Notice tone="success">Email address changed. Sign in with the new address from now on; your other devices have been signed out.</Notice>
+      )}
       <Button type="submit" variant="secondary" loading={send.busy}>
         Send code
       </Button>
