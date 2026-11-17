@@ -115,6 +115,21 @@ export interface PortalResultEntryDto {
   principalRemark: string | null;
   subjects: PortalSubjectDto[];
   mode: "Numeric" | "Developmental";
+  /** Every area of a developmental (nursery) row; `scale` is null when the area isn't rated. Empty for a numeric row. */
+  developmental: PortalDevelopmentalDto[];
+  /** Rated psychomotor and affective items (1 to 5). Kinds with no ratings are left out. */
+  traits: PortalTraitBlockDto[];
+}
+
+export interface PortalDevelopmentalDto {
+  area: string;
+  scale: string | null;
+  comment: string | null;
+}
+
+export interface PortalTraitBlockDto {
+  heading: string;
+  rows: { name: string; value: number }[];
 }
 
 export interface PortalResultsDto {

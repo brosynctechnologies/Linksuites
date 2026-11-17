@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   createContext,
+  Fragment,
   useCallback,
   useContext,
   useEffect,
@@ -423,6 +424,45 @@ function ResultCard({ entry, pdfPath }: { entry: PortalResultEntryDto; pdfPath: 
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {entry.developmental.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[22rem] text-left text-sm">
+            <thead>
+              <tr className="border-b border-rule text-xs text-muted">
+                <th className="py-2 pr-3 font-bold">Area</th>
+                <th className="py-2 pr-3 font-bold">Rating</th>
+                <th className="py-2 font-bold">Comment</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entry.developmental.map((d) => (
+                <tr key={d.area} className="border-b border-rule-soft">
+                  <td className="py-2 pr-3 font-medium text-ink">{d.area}</td>
+                  <td className={d.scale ? "slab py-2 pr-3 font-bold" : "py-2 pr-3 text-muted"}>{d.scale ?? "Not yet rated"}</td>
+                  <td className="py-2 text-slate-700">{d.comment ?? ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {entry.traits.length > 0 && (
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          {entry.traits.map((block) => (
+            <div key={block.heading}>
+              <h3 className="mb-1.5 text-sm font-bold text-ink">{block.heading}</h3>
+              <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 text-sm">
+                {block.rows.map((row) => (
+                  <Fragment key={row.name}>
+                    <dt className="text-slate-700">{row.name}</dt>
+                    <dd className="tnum text-right font-bold text-ink">{row.value} of 5</dd>
+                  </Fragment>
+                ))}
+              </dl>
+            </div>
+          ))}
         </div>
       )}
       {(entry.teacherRemark || entry.principalRemark) && (

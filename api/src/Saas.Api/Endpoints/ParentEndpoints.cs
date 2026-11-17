@@ -34,6 +34,18 @@ public static class ParentEndpoints
         // The parent portal. Business tokens (staff, support's view-as) are refused by ParentAccess.
         var parent = app.MapGroup("/api/parent").RequireAuthorization().WithTags("School: parents");
         parent.MapGet("/children", (ParentAccess p, CancellationToken ct) => p.ChildrenAsync(ct));
+
+        // The parent's own phone and email. The email changes only once the code sent to the new address is entered.
+        parent.MapGet("/profile", (ParentProfileService s) => s.GetAsync());
+        parent.MapPut("/profile/phone", (ParentPhoneRequest r, ParentProfileService s, CancellationToken ct) => s.SetPhoneAsync(r, ct))
+            .RequireRateLimiting(RateLimits.PublicWrite);
+        parent.MapPost("/profile/email", async (ParentEmailRequest r, ParentProfileService s, CancellationToken ct) =>
+        {
+            await s.RequestEmailChangeAsync(r, ct);
+            return Results.NoContent();
+        }).RequireRateLimiting(RateLimits.Otp);
+        parent.MapPost("/profile/email/confirm", (ParentEmailConfirmRequest r, ParentProfileService s, CancellationToken ct) => s.ConfirmEmailAsync(r, ct))
+            .RequireRateLimiting(RateLimits.Otp);
         parent.MapGet("/children/{studentId:guid}", (Guid studentId, ParentAccess p, CancellationToken ct) => p.RequireChildAsync(studentId, ct));
 
         // Overview, results, report cards, attendance and the timetable: published results only, and the results hold applies.

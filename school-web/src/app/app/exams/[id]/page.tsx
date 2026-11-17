@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { api } from "@/lib/api";
 import { formatDay, formatStamp } from "@/lib/format";
@@ -8,7 +8,15 @@ import { useAction } from "@/lib/mutate";
 import { useCan, useRole } from "@/lib/roles";
 import { useApi } from "@/lib/use-api";
 import type { ClassSubjectDto, StaffDto } from "@/lib/types";
-import type { ExamPeriodDto, ExamPeriodViewDto, ExamSittingDto, ExamWarningDto, SaveExamSittingRequest } from "@/lib/types/academic";
+import type {
+  ExamPeriodDto,
+  ExamPeriodKind,
+  ExamPeriodViewDto,
+  ExamSittingDto,
+  ExamWarningDto,
+  SaveExamPeriodRequest,
+  SaveExamSittingRequest,
+} from "@/lib/types/academic";
 import { ImportDialog } from "@/components/import-dialog";
 import { ApiErrorView, Badge, Button, EmptyState, ErrorBox, Input, Notice, PageHeader, PageLoader, Select, Textarea, panelClass } from "@/components/ui";
 import { AcademicNoAccess, useAcademicClasses, useReadOnly } from "../../scores/academic-shared";
@@ -167,9 +175,84 @@ function Period({ id }: { id: string }) {
               Publish timetable
             </Button>
           )}
+          {!readOnly && (
+            <PeriodSettings
+              period={period}
+              onSaved={(p) => {
+                clearMessages();
+                view.setData((current) => ({ ...(current ?? period), name: p.name, kind: p.kind, start: p.start, end: p.end }));
+              }}
+            />
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+/** Rename the period, change its kind or dates, or delete it once it has no sittings. */
+function PeriodSettings({ period, onSaved }: { period: ExamPeriodViewDto; onSaved: (p: ExamPeriodDto) => void }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(period.name);
+  const [kind, setKind] = useState<ExamPeriodKind>(period.kind);
+  const [start, setStart] = useState(period.start);
+  const [end, setEnd] = useState(period.end);
+  const save = useAction();
+  const remove = useAction();
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const body: SaveExamPeriodRequest = { termId: period.termId, name: name.trim(), kind, start, end };
+    const res = await save.run(() => api<ExamPeriodDto>(`/api/school/exam-periods/${period.id}`, { method: "PUT", body }));
+    if (res.ok) {
+      onSaved(res.data);
+      setOpen(false);
+    }
+  }
+
+  async function deletePeriod() {
+    if (!window.confirm(`Delete ${period.name}? This can't be undone.`)) return;
+    if ((await remove.run(() => api<void>(`/api/school/exam-periods/${period.id}`, { method: "DELETE" }))).ok) router.push("/app/exams");
+  }
+
+  if (!open) {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" onClick={() => setOpen(true)}>
+          Edit period
+        </Button>
+        <Button variant="ghost" className="text-brick" loading={remove.busy} onClick={deletePeriod}>
+          Delete period
+        </Button>
+        {remove.error && <ErrorBox error={remove.error} />}
+      </div>
+    );
+  }
+
+  return (
+    <form className={`${panelClass} w-full min-w-0 space-y-3 p-4`} onSubmit={submit} aria-label="Edit the exam period">
+      <h2 className="font-semibold text-ink">Edit period</h2>
+      <ErrorBox error={save.error} />
+      <Input label="Name" required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
+      <Select label="Kind" value={kind} onChange={(e) => setKind(e.target.value as ExamPeriodKind)}>
+        <option value="Examination">Examination</option>
+        <option value="Test">Test</option>
+      </Select>
+      <div className="grid w-full min-w-0 gap-3 sm:grid-cols-2">
+        <Input label="Starts" type="date" required value={start} onChange={(e) => setStart(e.target.value)} />
+        <Input label="Ends" type="date" required value={end} onChange={(e) => setEnd(e.target.value)} />
+      </div>
+      <p className="text-xs text-muted">Every sitting must stay inside the new dates.</p>
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" loading={save.busy}>
+          Save period
+        </Button>
+        <Button type="button" variant="secondary" onClick={() => setOpen(false)} disabled={save.busy}>
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }
 

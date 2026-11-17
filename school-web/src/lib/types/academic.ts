@@ -598,6 +598,29 @@ export interface CbtAttemptsDto {
   title: string;
   releasedKeyAt: string | null;
   students: CbtRosterRowDto[];
+  performance: CbtPerformanceDto | null;
+}
+/** Counted attempts only (handed in, not reopened). The marks are null while nobody has handed in. */
+export interface CbtPerformanceDto {
+  classSize: number;
+  handedIn: number;
+  averageMarks: number | null;
+  highestMarks: number | null;
+  lowestMarks: number | null;
+  /** The highest paper total among the counted attempts (draws can differ per student). */
+  paperMarks: number;
+  /** Hardest first. */
+  questions: CbtQuestionPerformanceDto[];
+}
+export interface CbtQuestionPerformanceDto {
+  questionId: string;
+  stem: string;
+  marks: number;
+  handedIn: number;
+  correct: number;
+  /** 0 to 1. */
+  successRate: number;
+  averageMark: number;
 }
 export interface CbtReleaseDto {
   id: string;
@@ -670,6 +693,8 @@ export interface WordListDto {
   name: string;
   words: string[];
   createdBy: string;
+  /** Hidden from students' word search; staff still see it. */
+  archived: boolean;
 }
 export interface SaveBrainTeaserRequest {
   levelId: string | null;

@@ -11,6 +11,7 @@ import type {
   BankQuestionDto,
   CbtAttemptsDto,
   CbtPaperDto,
+  CbtPerformanceDto,
   CbtReleaseDto,
   CbtReopenDto,
   CbtRosterRowDto,
@@ -214,12 +215,74 @@ function AttemptsPanel({ paperId, readOnly }: { paperId: string; readOnly: boole
       <p className="tnum text-sm text-slate-700">
         {handedIn} of {rows.length} handed in
       </p>
+      {view.data.performance && <ClassPerformance performance={view.data.performance} />}
       <RuledSheet label="Attempts" busy={view.loading}>
         {rows.map((row) => (
           <AttemptRow key={row.enrolmentId} row={row} readOnly={readOnly} onReopened={view.reload} />
         ))}
       </RuledSheet>
     </div>
+  );
+}
+
+/** How the class did: counted attempts only (handed in, not reopened). Questions come hardest first. */
+function ClassPerformance({ performance: p }: { performance: CbtPerformanceDto }) {
+  if (p.handedIn === 0) return <p className="text-sm text-muted">Class results show here once a student hands in.</p>;
+  return (
+    <section aria-label="Class performance" className="space-y-3 rounded-control border border-rule-soft p-3">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
+        <div>
+          <dt className="text-xs text-muted">Average</dt>
+          <dd className="slab tnum font-bold text-ink">
+            {score(p.averageMarks ?? 0)} / {score(p.paperMarks)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Highest</dt>
+          <dd className="slab tnum font-bold text-ink">{score(p.highestMarks ?? 0)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Lowest</dt>
+          <dd className="slab tnum font-bold text-ink">{score(p.lowestMarks ?? 0)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Handed in</dt>
+          <dd className="slab tnum font-bold text-ink">
+            {p.handedIn} of {p.classSize}
+          </dd>
+        </div>
+      </dl>
+      {p.questions.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[24rem] text-left text-sm">
+            <caption className="mb-1 text-left text-xs text-muted">Per question, hardest first</caption>
+            <thead>
+              <tr className="border-b border-rule text-xs text-muted">
+                <th className="py-1.5 pr-3 font-bold">Question</th>
+                <th className="tnum py-1.5 pr-3 text-right font-bold">Got it right</th>
+                <th className="tnum py-1.5 text-right font-bold">Average mark</th>
+              </tr>
+            </thead>
+            <tbody>
+              {p.questions.map((q) => (
+                <tr key={q.questionId} className="border-b border-rule-soft">
+                  <td className="py-1.5 pr-3 break-words text-ink">{q.stem}</td>
+                  <td className="tnum py-1.5 pr-3 text-right whitespace-nowrap">
+                    <span className={q.successRate < 0.5 ? "font-bold text-brick" : "font-bold text-ink"}>{Math.round(q.successRate * 100)}%</span>
+                    <span className="block text-xs text-muted">
+                      {q.correct} of {q.handedIn}
+                    </span>
+                  </td>
+                  <td className="tnum py-1.5 text-right whitespace-nowrap">
+                    {score(q.averageMark)} / {score(q.marks)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -55,6 +55,7 @@ public static class DependencyInjection
         services.AddScoped<AuthService>();
         services.AddScoped<PlatformAuthService>();
         services.AddScoped<PasswordService>();
+        services.AddScoped<ParentProfileService>();
         services.AddScoped<ViewAsService>();
         services.AddScoped<AccountActivityService>();
 

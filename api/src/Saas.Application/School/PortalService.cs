@@ -14,9 +14,14 @@ public sealed record PortalFeesDto(long Balance, IReadOnlyList<ParentInvoiceDto>
 public sealed record PortalOverviewDto(
     PortalChildDto Child, IReadOnlyList<PortalTermDto> Results, PortalAttendanceDto? Attendance, PortalFeesDto? Fees, PortalTimetableDto? Timetable);
 public sealed record PortalSubjectDto(string Subject, string SubjectCode, decimal Total, string Grade, string? Remark, decimal ClassAverage, int Position);
+/// <summary>
+/// One published class row of the child. <c>Developmental</c> is every area of a developmental (nursery) row, unrated ones with a null scale;
+/// empty for a numeric row. <c>Traits</c> is the rated psychomotor and affective items (1 to 5), as on the report card.
+/// </summary>
 public sealed record PortalResultEntryDto(
     Guid ClassId, string ClassName, decimal Total, decimal Average, int Position, int ClassSize, int DaysPresent, int? DaysAbsent, int? DaysLate, int? DaysExcused, int DaysOpen,
-    string? TeacherRemark, string? PrincipalRemark, IReadOnlyList<PortalSubjectDto> Subjects, AssessmentMode Mode = AssessmentMode.Numeric);
+    string? TeacherRemark, string? PrincipalRemark, IReadOnlyList<PortalSubjectDto> Subjects, AssessmentMode Mode,
+    IReadOnlyList<ResultDevelopmentalDto> Developmental, IReadOnlyList<TraitBlockDto> Traits);
 /// <summary>One entry per class with a published row (more than one when the child changed class during the term).</summary>
 public sealed record PortalResultsDto(Guid TermId, string TermName, string SessionName, bool Published, IReadOnlyList<PortalResultEntryDto> Entries);
 
@@ -142,9 +147,12 @@ public sealed class PortalService(
             if (view.PublishedAt is null) continue; // unpublished since the lookup above
             // Only the child's own row of the class: never anyone else's.
             if (view.Students.FirstOrDefault(s => s.EnrolmentId == enrolmentId) is not { } mine) continue;
+            var levelId = await db.SchoolClasses.AsNoTracking().Where(c => c.Id == classId).Select(c => c.LevelId).FirstAsync(ct);
+            var traits = (await TraitService.RatedBlocksAsync(db, levelId, termId, [enrolmentId], ct))[enrolmentId];
             entries.Add(new PortalResultEntryDto(classId, view.ClassName, mine.Total, mine.Average, mine.Position, mine.ClassSize, mine.DaysPresent, mine.DaysAbsent, mine.DaysLate, mine.DaysExcused, mine.DaysOpen,
                 mine.TeacherRemark, mine.PrincipalRemark,
-                mine.Subjects.Select(s => new PortalSubjectDto(s.Subject, s.SubjectCode, s.Total, s.Grade, s.Remark, s.ClassAverage, s.Position)).ToList(), mine.Mode));
+                mine.Subjects.Select(s => new PortalSubjectDto(s.Subject, s.SubjectCode, s.Total, s.Grade, s.Remark, s.ClassAverage, s.Position)).ToList(), mine.Mode,
+                mine.Mode == AssessmentMode.Developmental ? mine.Developmental : [], traits));
         }
         return new PortalResultsDto(term.Id, term.Name, sessionName, entries.Count > 0, entries.OrderBy(e => e.ClassName).ToList());
     }
