@@ -56,8 +56,8 @@ public sealed class CareReviewFixTests(ApiFixture api)
         await Json(await doctor.PostAsync($"/api/care/visits/{visitId}/consultation", null, Ct));
         Assert.Equal("WithDoctor", Stage(await Json(await desk.PostAsJsonAsync($"/api/care/visits/{visitId}/stage", new { stage = "WithDoctor" }, Ct))));
 
-        // From the doctor on, nobody (the director included) sends it back to the waiting stages, so triage can't be reopened.
-        foreach (var client in new[] { desk, nurse, clinic.Owner })
+        // From the doctor on, the desk and clinicians (the doctor too) can't send it back to the waiting stages, so triage can't be reopened.
+        foreach (var client in new[] { desk, nurse, doctor })
             foreach (var stage in new[] { "WaitingVitals", "WaitingDoctor" })
                 await AssertProblemAsync(await client.PostAsJsonAsync($"/api/care/visits/{visitId}/stage", new { stage }, Ct), HttpStatusCode.Conflict, "visit_seen");
         Assert.Equal("WaitingPayment", Stage(await Json(await desk.PostAsJsonAsync($"/api/care/visits/{visitId}/stage", new { stage = "WaitingPayment" }, Ct))));
@@ -66,6 +66,11 @@ public sealed class CareReviewFixTests(ApiFixture api)
         Assert.Equal("WithDoctor", Stage(await Json(await desk.PostAsJsonAsync($"/api/care/visits/{visitId}/stage", new { stage = "WithDoctor" }, Ct))));
         await AssertProblemAsync(await nurse.PostAsJsonAsync($"/api/care/visits/{visitId}/triage", new { vitals = new { pulse = 80 }, doctorUserId = doctorId }, Ct),
             HttpStatusCode.Conflict);
+
+        // Leadership may send it back (a hand-over to another doctor through re-triage), audited with ids only.
+        Assert.Equal("WaitingDoctor", Stage(await Json(await clinic.Owner.PostAsJsonAsync($"/api/care/visits/{visitId}/stage", new { stage = "WaitingDoctor" }, Ct))));
+        var audit = Assert.Single(await api.WithDbAsync(db => db.AuditLogs.Where(a => a.Action == "care.visit_sent_back" && a.EntityId == visitId.ToString()).ToListAsync(Ct)));
+        Assert.Contains("WithDoctor", audit.AfterJson);
     }
 
     // ---------- (b) Late orders on a Done visit ----------

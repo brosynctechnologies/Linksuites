@@ -439,7 +439,7 @@ public sealed class CareConsultationTests(ApiFixture api)
         await Json(await w.Nurse.PostAsJsonAsync($"/api/care/visits/{visitId}/triage", new { vitals = new { pulse = 80 }, urgency = "Routine", doctorUserId = w.DoctorId }, Ct));
         var draftId = Id(await Json(await OpenAsync(w.Doctor, visitId)));
         await Json(await SaveAsync(w.Doctor, draftId, Note("Cough and fever")));
-        await Json(await w.Desk.PostAsJsonAsync($"/api/care/visits/{visitId}/stage", new { stage = "WaitingDoctor" }, Ct));
+        await Json(await w.Clinic.Owner.PostAsJsonAsync($"/api/care/visits/{visitId}/stage", new { stage = "WaitingDoctor" }, Ct)); // Wave 1: leadership sends a seen visit back
         Assert.Equal(0, await AuthorChangesAsync(w.Clinic.TenantId));
         await Json(await w.Nurse.PostAsJsonAsync($"/api/care/visits/{visitId}/triage", new { vitals = new { pulse = 82 }, urgency = "Routine", doctorUserId = doctorBId }, Ct));
 
@@ -635,7 +635,7 @@ public sealed class CareConsultationTests(ApiFixture api)
             .CountAsync(x => x.VisitId == w.VisitId && x.StaffUserId == w.DoctorId && x.Kind == CareAssignmentKind.VisitDoctor, Ct)));
 
         // Re-triage takes the same visit lock, so it can't slip between the doctor check and the draft.
-        await Json(await w.Desk.PostAsJsonAsync($"/api/care/visits/{w.VisitId}/stage", new { stage = "WaitingDoctor" }, Ct));
+        await Json(await w.Clinic.Owner.PostAsJsonAsync($"/api/care/visits/{w.VisitId}/stage", new { stage = "WaitingDoctor" }, Ct)); // Wave 1: leadership only
         Task<HttpResponseMessage> triage;
         await using (await HoldAsync(key))
         {

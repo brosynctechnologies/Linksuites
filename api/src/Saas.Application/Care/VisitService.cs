@@ -59,7 +59,7 @@ public sealed class VisitService(
     public const string VisitClosed = "This visit is closed.";
     public const string TriageNotWaiting = "Triage is only for patients waiting to be seen.";
     public const string BillNotPaid = "This bill isn't paid yet.";
-    public const string VisitSeen = "The doctor has already seen this patient. The visit can't go back to waiting.";
+    public const string VisitSeen = "The doctor has already seen this patient. Ask the medical director or an admin to send the visit back.";
     /// <summary>How long a visit's care relationships (triage nurse, visit doctor) last after the visit is Done: follow-up review.</summary>
     public static readonly TimeSpan FollowUpWindow = TimeSpan.FromDays(30);
     public const string CriticalNotice = CareNotices.CriticalVitalText;
@@ -305,9 +305,19 @@ public sealed class VisitService(
         }
         else PatientService.EnsureDesk(caller);
         if (visit.Stage == VisitStage.Done) throw new ConflictException(VisitClosed, "visit_closed");
-        // Wave 1 (final review): once the doctor has seen the patient the visit never goes back to the waiting stages (for anyone, the
-        // director included), so triage can't be reopened to join the patient's care without the emergency reason.
-        if (visit.Stage >= VisitStage.WithDoctor && stage < VisitStage.WithDoctor) throw new ConflictException(VisitSeen, "visit_seen");
+        // Wave 1 (final review): once the doctor has seen the patient only leadership (the medical director or an admin) sends the visit
+        // back to the waiting stages (a hand-over to another doctor through re-triage), so a clinician can't reopen triage to join the
+        // patient's care without the emergency reason. The move is audited.
+        if (visit.Stage >= VisitStage.WithDoctor && stage < VisitStage.WithDoctor)
+        {
+            if (!caller.IsLeadership) throw new ConflictException(VisitSeen, "visit_seen");
+            db.AuditLogs.Add(new AuditLog
+            {
+                TenantId = TenantId, ActorId = caller.UserId, Action = "care.visit_sent_back", EntityType = nameof(Visit), EntityId = visit.Id.ToString(),
+                AfterJson = System.Text.Json.JsonSerializer.Serialize(new { visitId = visit.Id, patientId = visit.PatientId, from = visit.Stage.ToString(), to = stage.ToString() }),
+                Ip = user.IpAddress, CreatedAt = clock.GetUtcNow(),
+            });
+        }
         if (caller.IsCashier)
         {
             // The cashier closes a visit only when its bill is settled: nothing owed, or waived.

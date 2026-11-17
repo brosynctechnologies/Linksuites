@@ -136,7 +136,7 @@ A patient portal token gets 403 on every `/api/care` route. Staff tokens get 403
 | GET | `/api/care/visits/{id}` | Everyone | |
 | GET | `/api/care/visits/{id}/vitals` | Clinical | Logged open. |
 | POST | `/api/care/visits/{id}/triage` | Clinical | `{ vitals, urgency, doctorUserId }`. Critical values notify the doctor. |
-| POST | `/api/care/visits/{id}/stage` | Everyone writes | `{ stage }`. The cashier moves a visit to Done only once paid. Wave 1: runs under the visit lock (as triage and the consultation open); once a visit is WithDoctor or later it never goes back to WaitingVitals or WaitingDoctor, for anyone: 409 `visit_seen` "The doctor has already seen this patient. The visit can't go back to waiting." (back to WithDoctor is allowed). |
+| POST | `/api/care/visits/{id}/stage` | Everyone writes | `{ stage }`. The cashier moves a visit to Done only once paid. Wave 1: runs under the visit lock (as triage and the consultation open); once a visit is WithDoctor or later only leadership (the medical director or an admin) sends it back to WaitingVitals or WaitingDoctor (a hand-over through re-triage; audited `care.visit_sent_back`, ids only); anyone else gets 409 `visit_seen` "The doctor has already seen this patient. Ask the medical director or an admin to send the visit back." Back to WithDoctor is allowed. |
 | POST | `/api/care/visits/{id}/consultation` | Doctors (S) | Opens (or returns) the visit's consultation. The visit's doctor or the director. Logged open. |
 | PUT | `/api/care/consultations/{id}` | Doctors (S) | Autosave the draft: complaint, history, examination, plan, diagnoses. The author only. |
 | POST | `/api/care/consultations/{id}/sign` | Doctors (S) | Locks the note; it shows in the portal from now on. |
