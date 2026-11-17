@@ -24,9 +24,10 @@ public sealed record BookRequest(Guid? PatientId, Guid? DoctorUserId, DateTimeOf
 /// <summary>Move a booked appointment to another slot (and optionally another doctor). A null reason keeps the current one.</summary>
 public sealed record RescheduleRequest(Guid? DoctorUserId, DateTimeOffset? Start, string? Reason);
 
+/// <summary>An appointment as staff see it. <see cref="WhatsAppUrl"/> (Wave 1, the desk's list only): a reminder link for a booked, upcoming appointment.</summary>
 public sealed record AppointmentDto(
     Guid Id, Guid PatientId, string PatientNumber, string PatientName, Guid DoctorUserId, string DoctorName,
-    DateTimeOffset Start, DateTimeOffset End, string? Reason, AppointmentStatus Status, AppointmentSource Source);
+    DateTimeOffset Start, DateTimeOffset End, string? Reason, AppointmentStatus Status, AppointmentSource Source, string? WhatsAppUrl = null);
 
 /// <summary>
 /// Doctor schedules, slots and appointments. Schedules are Africa/Lagos wall-clock <see cref="TimeOnly"/> blocks; slots are computed for a
@@ -215,7 +216,35 @@ public sealed class AppointmentService(
         if (doctorUserId is { } d) query = query.Where(x => x.DoctorUserId == d);
         if (patientId is { } p) query = query.Where(x => x.PatientId == p);
         if (status is { } st) query = query.Where(x => x.Status == st);
-        return (await Dtos(query.OrderBy(x => x.Start).Take(500)).ToListAsync(ct)).OrderBy(dto => dto.Start).ToList();
+        var list = (await Dtos(query.OrderBy(x => x.Start).Take(500)).ToListAsync(ct)).OrderBy(dto => dto.Start).ToList();
+        return await WithRemindersAsync(list, ct);
+    }
+
+    /// <summary>
+    /// Wave 1: a WhatsApp reminder link on each booked appointment that hasn't started, for the desk to send: "Hello {First}, this is a
+    /// reminder of your appointment with {doctor} at {clinic} on {day} at {time}." Never the booking reason. None for a patient recorded as
+    /// deceased, or without a phone.
+    /// </summary>
+    private async Task<List<AppointmentDto>> WithRemindersAsync(List<AppointmentDto> list, CancellationToken ct)
+    {
+        var now = clock.GetUtcNow();
+        var due = list.Where(a => a.Status == AppointmentStatus.Booked && a.Start > now).ToList();
+        if (due.Count == 0) return list;
+        var ids = due.Select(a => a.PatientId).Distinct().ToList();
+        var patients = await db.Patients.AsNoTracking().Where(p => ids.Contains(p.Id))
+            .Select(p => new { p.Id, p.FirstName, p.Phone, p.Status }).ToDictionaryAsync(p => p.Id, ct);
+        var clinic = await db.ClinicProfiles.AsNoTracking().Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
+        return list.Select(a =>
+        {
+            if (a.Status != AppointmentStatus.Booked || a.Start <= now || !patients.TryGetValue(a.PatientId, out var p) || p.Status == PatientStatus.Deceased) return a;
+            var at = a.Start.ToOffset(CareCalendar.LagosOffset);
+            var when = $"{at.ToString("dddd d MMMM", System.Globalization.CultureInfo.InvariantCulture)} at {at.ToString("h:mm tt", System.Globalization.CultureInfo.InvariantCulture).ToLowerInvariant()}";
+            return a with
+            {
+                WhatsAppUrl = Saas.Application.School.GuardianInviteService.WhatsAppUrl(p.Phone,
+                    $"Hello {p.FirstName}, this is a reminder of your appointment with {a.DoctorName} at {clinic} on {when}."),
+            };
+        }).ToList();
     }
 
     /// <summary>
@@ -276,9 +305,24 @@ public sealed class AppointmentService(
     public async Task<AppointmentDto> RescheduleAsync(Guid id, RescheduleRequest r, CancellationToken ct)
     {
         PatientService.EnsureDesk(await access.CallerAsync(ct));
+        return await RescheduleCoreAsync(id, r, null, ct);
+    }
+
+    /// <summary>
+    /// Wave 1: the portal's reschedule (the portal has already checked the account's link to <paramref name="patientId"/>): the patient's own
+    /// booked appointment only (404 otherwise), moved to another of the doctor's open slots (or another doctor's) under exactly the booking
+    /// rules, and at least <see cref="PortalCancelNotice"/> before it starts (409 "This appointment starts soon. Call the clinic to change
+    /// it."), checked under the doctor's lock. The patient hears the new time.
+    /// </summary>
+    public Task<AppointmentDto> RescheduleForPortalAsync(Guid patientId, Guid id, RescheduleRequest r, CancellationToken ct) =>
+        RescheduleCoreAsync(id, r, patientId, ct);
+
+    private async Task<AppointmentDto> RescheduleCoreAsync(Guid id, RescheduleRequest r, Guid? portalPatientId, CancellationToken ct)
+    {
         if (r.Start is not { } requested) throw BadRequestException.Field("start", "Choose a time.");
         var reason = r.Reason is null ? null : CleanReason(r.Reason);
-        var current = await db.Appointments.AsNoTracking().Where(a => a.Id == id).Select(a => new { a.DoctorUserId }).FirstOrDefaultAsync(ct)
+        var current = await db.Appointments.AsNoTracking().Where(a => a.Id == id && (portalPatientId == null || a.PatientId == portalPatientId))
+            .Select(a => new { a.DoctorUserId }).FirstOrDefaultAsync(ct)
             ?? throw new NotFoundException("Appointment");
         var doctorId = r.DoctorUserId ?? current.DoctorUserId;
         if (doctorId != current.DoctorUserId) await DoctorForBookingAsync(doctorId, ct);
@@ -289,6 +333,8 @@ public sealed class AppointmentService(
             await db.LockAsync(key, ct);
         var appointment = await db.Appointments.FirstOrDefaultAsync(a => a.Id == id, ct) ?? throw new NotFoundException("Appointment");
         if (appointment.Status != AppointmentStatus.Booked) throw new ConflictException("Only a booked appointment can be moved.", "appointment_not_booked");
+        if (portalPatientId is not null && appointment.Start - clock.GetUtcNow() < PortalCancelNotice)
+            throw new ConflictException(LateCancel, "appointment_starts_soon");
         await EnsureAliveUnderLockAsync(appointment.PatientId, ct);
 
         var slot = await ClaimSlotAsync(doctorId, requested.ToUniversalTime(), appointment.Id, ct);
@@ -412,5 +458,5 @@ public sealed class AppointmentService(
         join p in db.Patients.AsNoTracking() on a.PatientId equals p.Id
         join u in db.Users.AsNoTracking() on a.DoctorUserId equals u.Id
         select new AppointmentDto(a.Id, p.Id, p.Number, p.FirstName + " " + p.LastName, a.DoctorUserId, u.FullName,
-            a.Start, a.End, a.Reason, a.Status, a.Source);
+            a.Start, a.End, a.Reason, a.Status, a.Source, null);
 }

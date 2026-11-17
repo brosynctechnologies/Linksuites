@@ -11,7 +11,8 @@ namespace Saas.Application.Care;
 /// <summary>A payment as staff see it: amount, method, status, reference and receipt number (nothing clinical).</summary>
 public sealed record CarePaymentDto(
     Guid Id, Guid BillId, Guid PatientId, long AmountMinor, PayMethod Method, string? Reference, string? ReceiptNumber, bool IsDeposit,
-    Guid? RecordedByUserId, DateTimeOffset PaidAt, CarePaymentStatus Status, DateTimeOffset? ReversedAt, string? ReversalReason);
+    Guid? RecordedByUserId, DateTimeOffset PaidAt, CarePaymentStatus Status, DateTimeOffset? ReversedAt, string? ReversalReason,
+    DateTimeOffset? ProviderPaidAt = null);
 
 /// <summary>A desk payment. <c>IdempotencyKey</c> (or the <c>Idempotency-Key</c> header) makes a retry return the first payment.</summary>
 public sealed record DeskPaymentRequest(long? AmountMinor, PayMethod? Method, string? Reference, string? IdempotencyKey);
@@ -21,7 +22,8 @@ public sealed record CareReversalResult(CarePaymentDto Payment, string Message);
 /// <summary>What a payment receipt prints, already formatted. No bill lines and nothing clinical: the receipt goes to every member.</summary>
 public sealed record CareReceiptData(
     string ClinicName, string? Address, string? Phone, byte[]? Logo, string ReceiptNumber, string PaidOn, string PatientName, string PatientNumber,
-    string BillNumber, string Amount, string Method, string? Reference, string BillBalance, string? ReversedText, bool ShowBranding);
+    string BillNumber, string Amount, string Method, string? Reference, string BillBalance, string? ReversedText, bool ShowBranding,
+    string? ReceivedBy = null, byte[]? Signature = null);
 
 /// <summary>
 /// Patient payments at the desk (cash, POS, transfer; admission deposits too), reversals and receipts. Every change runs under the per-clinic
@@ -219,10 +221,13 @@ public sealed class PaymentService(
             ? $"Reversed on {CareCalendar.Today(at).ToString("d MMMM yyyy", CultureInfo.InvariantCulture)}"
             : null;
         var name = string.Join(' ', new[] { row.FirstName, row.MiddleName, row.LastName }.Where(n => !string.IsNullOrWhiteSpace(n)));
+        // Wave 1: a desk payment prints who took the money and, when they have one, their signature (an online payment has no recorder).
+        var receivedBy = payment.RecordedByUserId is { } by ? await db.Users.AsNoTracking().Where(u => u.Id == by).Select(u => u.FullName).FirstOrDefaultAsync(ct) : null;
+        var signature = await CareBrandingService.SignatureBytesAsync(db, storage, payment.RecordedByUserId, ct);
         return new CareReceiptData(clinic.Name, clinic.Address, clinic.Phone, await PrescriptionService.LogoAsync(storage, clinic.LogoKey, ct),
             payment.ReceiptNumber!, CareCalendar.Today(payment.PaidAt).ToString("d MMMM yyyy", CultureInfo.InvariantCulture), name, row.PatientNumber,
             row.Number, Money.Format(payment.AmountMinor, payment.Currency), MethodLabel(payment.Method), payment.ProviderRef ?? payment.Reference,
-            Money.Format(row.BalanceMinor, payment.Currency), reversed, !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct));
+            Money.Format(row.BalanceMinor, payment.Currency), reversed, !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct), receivedBy, signature);
     }
 
     public static string MethodLabel(PayMethod method) => method switch
@@ -235,5 +240,5 @@ public sealed class PaymentService(
 
     public static CarePaymentDto ToDto(CarePayment p) =>
         new(p.Id, p.BillId, p.PatientId, p.AmountMinor, p.Method, p.ProviderRef ?? p.Reference, p.ReceiptNumber, p.IsDeposit, p.RecordedByUserId, p.PaidAt,
-            p.Status, p.ReversedAt, p.ReversalReason);
+            p.Status, p.ReversedAt, p.ReversalReason, p.ProviderPaidAt);
 }

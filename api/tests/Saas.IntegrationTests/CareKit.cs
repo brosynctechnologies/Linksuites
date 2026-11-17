@@ -133,6 +133,27 @@ public sealed class CareKit(ApiFixture api)
         client.PostAsJsonAsync($"/api/care/admissions/{admissionId}/bed",
             new { bedId, depositMinor, method = depositMinor > 0 ? "Cash" : null, reference = (string?)null, overrideByOwner }, Ct);
 
+    /// <summary>
+    /// A family portal account linked to the patient (a link-only invite from the director, accepted as <paramref name="relationship"/>).
+    /// Returns the signed-in portal client and the account's user id.
+    /// </summary>
+    public async Task<(HttpClient Client, Guid UserId)> PortalAccountAsync(Clinic clinic, Guid patientId, string relationship = "Parent")
+    {
+        var invite = await clinic.Owner.PostAsJsonAsync($"/api/care/patients/{patientId}/invites", new { }, Ct);
+        if (!invite.IsSuccessStatusCode) throw new InvalidOperationException($"{(int)invite.StatusCode} {await invite.Content.ReadAsStringAsync(Ct)}");
+        var link = (await invite.Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct)).GetProperty("link").GetString()!;
+        var portal = api.CreateClient();
+        var email = $"portal-family-{Guid.NewGuid():N}@example.com";
+        var signup = await api.SignUpAsync(portal, "/api/auth/patient/signup", new { fullName = "Portal Family", email, password = "password123" }, Ct);
+        if (!signup.IsSuccessStatusCode) throw new InvalidOperationException($"{(int)signup.StatusCode} {await signup.Content.ReadAsStringAsync(Ct)}");
+        var auth = await signup.Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct);
+        portal.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", auth.GetProperty("accessToken").GetString());
+        var accepted = await portal.PostAsJsonAsync($"/api/care-portal/invites/{link[(link.LastIndexOf('/') + 1)..]}/accept", new { relationship }, Ct);
+        if (!accepted.IsSuccessStatusCode) throw new InvalidOperationException($"{(int)accepted.StatusCode} {await accepted.Content.ReadAsStringAsync(Ct)}");
+        var userId = await api.WithDbAsync(db => db.Users.Where(u => u.Email == email).Select(u => u.Id).FirstAsync(Ct));
+        return (portal, userId);
+    }
+
     /// <summary>Registers a patient as the medical director and returns the patient JSON (from <c>{ patient, possibleDuplicates }</c>).</summary>
     public async Task<JsonElement> PatientAsync(Clinic clinic, string firstName = "Ada", string lastName = "Obi", string dateOfBirth = "1990-04-12",
         string? phone = null, string sex = "Female")

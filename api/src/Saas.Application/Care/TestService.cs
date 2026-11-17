@@ -11,7 +11,22 @@ public sealed record RecordResultRequest(string? Text);
 public sealed record TestRequestDto(
     Guid Id, Guid PatientId, Guid? ConsultationId, Guid? AdmissionId, Guid RequestedBy, string RequestedByName, TestKind Kind, string Description,
     Guid? PriceItemId, TestStatus Status, string? ResultText, bool HasFile, Guid? ResultedBy, string? ResultedByName, DateTimeOffset? ResultedAt,
-    DateTimeOffset CreatedAt, Guid? ReviewedBy = null, string? ReviewedByName = null, DateTimeOffset? ReviewedAt = null);
+    DateTimeOffset CreatedAt, Guid? ReviewedBy = null, string? ReviewedByName = null, DateTimeOffset? ReviewedAt = null,
+    DateTimeOffset? AmendedAt = null, IReadOnlyList<TestSupersededDto>? Superseded = null);
+
+/// <summary>
+/// Wave 1: an earlier result of the test that was entered in error, for clinical staff only: what it said, who recorded and reviewed it, and
+/// who marked it entered in error, when and why. Newest first on the test.
+/// </summary>
+public sealed record TestSupersededDto(
+    Guid Id, string? ResultText, bool HasFile, Guid? ResultedBy, string? ResultedByName, DateTimeOffset? ResultedAt, Guid? ReviewedBy,
+    string? ReviewedByName, DateTimeOffset? ReviewedAt, Guid SupersededBy, string? SupersededByName, DateTimeOffset SupersededAt, string Reason);
+
+/// <summary>
+/// Wave 1: a corrected result. <c>Reason</c> (required) says why the recorded one was wrong; <c>KeepFile</c> keeps the current result file
+/// on the corrected result when no new file is attached (otherwise the corrected result has only what is sent).
+/// </summary>
+public sealed record AmendResultRequest(string? Text, string? Reason, bool? KeepFile);
 
 public sealed record TestResultDto(Guid Id, TestStatus Status, string? ResultText, bool HasFile, Guid? ResultedBy, DateTimeOffset? ResultedAt);
 
@@ -116,7 +131,10 @@ public sealed class TestService(
         await db.SaveChangesAsync(ct);
         // Tests are charged whether or not the clinic dispenses drugs; the line shows the price item's name.
         if (r.PriceItemId is { } itemId && await CareOrders.BillAsync(billing, context, ct) is { } billId)
+        {
             await billing.AddLineAsync(billId, itemId, 1, test.Id.ToString(), ct);
+            await CareOrders.BillDueIfVisitDoneAsync(db, notices, context, billId, ct);
+        }
         if (tx is not null) await tx.CommitAsync(ct);
 
         var names = await ConsultationService.NamesAsync(db, [caller.UserId], ct);
@@ -170,6 +188,78 @@ public sealed class TestService(
             throw;
         }
         return new TestResultDto(test.Id, test.Status, body, key is not null, caller.UserId, now);
+    }
+
+    public const int MaxAmendReasonLength = 500;
+
+    /// <summary>
+    /// Wave 1: replaces a result that was entered in error. Doctors and nurses (and the director), as for recording. In order: 403 without
+    /// clinical access; 400 <c>reason</c> when no reason is given; 400 <c>text</c> when the corrected result has neither text nor a file (a
+    /// kept file counts); 400 <c>file</c> as for recording; 404 for an unknown or another clinic's test; 409 <c>test_not_resulted</c> when
+    /// there is no result to correct. The recorded result is kept unchanged as a <see cref="TestResultAmendment"/> (with who replaced it,
+    /// when and the reason, stored through <see cref="ClinicalText"/>); the corrected one takes its place, recorded by the caller now, and
+    /// waits for a doctor's review again before the portal shows it (the portal then notes it was corrected). Audited with ids only. A write,
+    /// not a record open: the answer echoes the corrected result.
+    /// </summary>
+    public async Task<TestResultDto> AmendResultAsync(Guid id, string? resultText, Upload? file, string? reason, bool keepFile, CancellationToken ct)
+    {
+        var caller = await access.CallerAsync(ct);
+        access.EnsureClinical(caller);
+        var why = CareOrders.Required("reason", reason, MaxAmendReasonLength, "Say why the recorded result was wrong.");
+        var body = CareOrders.Optional("text", resultText, MaxResultLength);
+        if (body is null && file is null && !keepFile) throw BadRequestException.Field("text", "Write the corrected result or attach the corrected file.");
+        var stored = file is null ? null : await ReadFileAsync(file, ct);
+
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        await db.LockAsync(LockKey(TenantId, id), ct); // the result lock: an amendment never interleaves with a result or a review
+        var test = await db.TestRequests.FirstOrDefaultAsync(t => t.Id == id, ct) ?? throw new NotFoundException("Test");
+        if (test.Status != TestStatus.Resulted) throw new ConflictException(NotResulted, "test_not_resulted");
+        var kept = file is null && keepFile ? test.ResultFileKey : null;
+        if (body is null && stored is null && kept is null) throw BadRequestException.Field("text", "Write the corrected result or attach the corrected file.");
+
+        string? key = null;
+        if (stored is { } f)
+        {
+            key = $"private/care/{TenantId}/results/{test.Id:N}-{Guid.NewGuid():N}{f.Extension}";
+            await using var stream = new MemoryStream(f.Bytes);
+            await storage.SaveAsync(key, stream, f.ContentType, ct);
+        }
+        var now = clock.GetUtcNow();
+        now = now.AddTicks(-(now.Ticks % 10)); // Postgres keeps microseconds
+        var amendment = new TestResultAmendment
+        {
+            TenantId = TenantId, TestRequestId = test.Id, PatientId = test.PatientId, ResultText = test.ResultText, ResultFileKey = test.ResultFileKey,
+            ResultFileType = test.ResultFileType, ResultedBy = test.ResultedBy, ResultedAt = test.ResultedAt, ReviewedBy = test.ReviewedBy,
+            ReviewedAt = test.ReviewedAt, SupersededBy = caller.UserId, SupersededAt = now, Reason = text.Protect(why),
+        };
+        db.TestResultAmendments.Add(amendment);
+        var keptType = kept is null ? null : test.ResultFileType;
+        test.ResultText = body is null ? null : text.Protect(body);
+        test.ResultFileKey = key ?? kept;
+        test.ResultFileType = stored?.ContentType ?? keptType;
+        test.ResultedBy = caller.UserId;
+        test.ResultedAt = now;
+        // The correction is a new result: it waits for a doctor's review before the portal shows it (and the patient is told again then).
+        test.ReviewedBy = null;
+        test.ReviewedAt = null;
+        test.AmendedAt = now;
+        db.AuditLogs.Add(new Saas.Domain.Core.AuditLog
+        {
+            TenantId = TenantId, ActorId = caller.UserId, Action = "care.result_amended", EntityType = nameof(TestRequest), EntityId = test.Id.ToString(),
+            AfterJson = System.Text.Json.JsonSerializer.Serialize(new { testId = test.Id, patientId = test.PatientId, amendmentId = amendment.Id, amendedBy = caller.UserId }),
+            CreatedAt = now,
+        });
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            if (tx is not null) await tx.CommitAsync(ct);
+        }
+        catch
+        {
+            if (key is not null) await DeleteQuietlyAsync(key);
+            throw;
+        }
+        return new TestResultDto(test.Id, test.Status, body, test.ResultFileKey is not null, caller.UserId, now);
     }
 
     public const string DoctorsReview = "Only doctors can review results.";
@@ -273,16 +363,28 @@ public sealed class TestService(
     {
         var rows = await query.OrderByDescending(t => t.CreatedAt).ThenByDescending(t => t.Id).ToListAsync(ct);
         if (rows.Count == 0) return [];
+        // Wave 1: each test's results entered in error, newest first.
+        var ids = rows.Where(t => t.AmendedAt != null).Select(t => t.Id).ToList();
+        List<TestResultAmendment> amendments = ids.Count == 0 ? [] : await db.TestResultAmendments.AsNoTracking().Where(a => ids.Contains(a.TestRequestId))
+            .OrderByDescending(a => a.SupersededAt).ThenByDescending(a => a.Id).ToListAsync(ct);
         var names = await ConsultationService.NamesAsync(db,
-            rows.Select(t => t.RequestedBy).Concat(rows.Select(t => t.ResultedBy).OfType<Guid>()).Concat(rows.Select(t => t.ReviewedBy).OfType<Guid>()), ct);
-        return rows.Select(t => ToDto(t, text.Read(t.Description) ?? "", text.Read(t.ResultText), names)).ToList();
+            rows.Select(t => t.RequestedBy).Concat(rows.Select(t => t.ResultedBy).OfType<Guid>()).Concat(rows.Select(t => t.ReviewedBy).OfType<Guid>())
+                .Concat(amendments.Select(a => a.SupersededBy)).Concat(amendments.Select(a => a.ResultedBy).OfType<Guid>())
+                .Concat(amendments.Select(a => a.ReviewedBy).OfType<Guid>()), ct);
+        var byTest = amendments.ToLookup(a => a.TestRequestId);
+        return rows.Select(t => ToDto(t, text.Read(t.Description) ?? "", text.Read(t.ResultText), names) with
+        {
+            Superseded = byTest[t.Id].Select(a => new TestSupersededDto(a.Id, text.Read(a.ResultText), a.ResultFileKey is not null, a.ResultedBy,
+                a.ResultedBy is { } by ? names.GetValueOrDefault(by) : null, a.ResultedAt, a.ReviewedBy, a.ReviewedBy is { } rb ? names.GetValueOrDefault(rb) : null,
+                a.ReviewedAt, a.SupersededBy, names.GetValueOrDefault(a.SupersededBy), a.SupersededAt, text.Read(a.Reason) ?? "")).ToList(),
+        }).ToList();
     }
 
     private static TestRequestDto ToDto(TestRequest t, string description, string? result, IReadOnlyDictionary<Guid, string> names) =>
         new(t.Id, t.PatientId, t.ConsultationId, t.AdmissionId, t.RequestedBy, names.GetValueOrDefault(t.RequestedBy, ""), t.Kind, description,
             t.PriceItemId, t.Status, result, t.ResultFileKey is not null, t.ResultedBy,
             t.ResultedBy is { } by ? names.GetValueOrDefault(by) : null, t.ResultedAt, t.CreatedAt,
-            t.ReviewedBy, t.ReviewedBy is { } rb ? names.GetValueOrDefault(rb) : null, t.ReviewedAt);
+            t.ReviewedBy, t.ReviewedBy is { } rb ? names.GetValueOrDefault(rb) : null, t.ReviewedAt, t.AmendedAt, []);
 
     /// <summary>Serialises recording one test's result, so two results can't both land.</summary>
     public static long LockKey(Guid tenantId, Guid testId) =>

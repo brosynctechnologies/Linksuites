@@ -29,6 +29,35 @@ public static class CareEndpoints
         care.MapPut("/settings/profile", (SaveClinicProfileRequest r, CareSetupService s, CancellationToken ct) => s.SaveProfileAsync(r, ct))
             .RequireAuthorization(leadership);
 
+        // Wave 1: the clinic logo (leadership writes; every member reads it for the letterhead and the app) and each member's own signature
+        // (printed on their prescriptions, discharge summaries and receipts). Private images, resized and re-encoded on upload, read only here.
+        care.MapPut("/settings/logo", (IFormFile file, CareBrandingService s, CancellationToken ct) => s.UploadLogoAsync(file.ToUpload(), ct))
+            .RequireAuthorization(leadership).DisableAntiforgery();
+        care.MapDelete("/settings/logo", async (CareBrandingService s, CancellationToken ct) =>
+        {
+            await s.DeleteLogoAsync(ct);
+            return Results.NoContent();
+        }).RequireAuthorization(leadership);
+        care.MapGet("/settings/logo", async (CareBrandingService s, HttpContext http, CancellationToken ct) =>
+        {
+            var image = await s.LogoAsync(ct);
+            http.Response.Headers.CacheControl = "private, no-store";
+            return Results.File(image.Content, image.ContentType);
+        });
+        care.MapPut("/staff/me/signature", (IFormFile file, CareBrandingService s, CancellationToken ct) => s.UploadSignatureAsync(file.ToUpload(), ct))
+            .DisableAntiforgery();
+        care.MapDelete("/staff/me/signature", async (CareBrandingService s, CancellationToken ct) =>
+        {
+            await s.DeleteSignatureAsync(ct);
+            return Results.NoContent();
+        });
+        care.MapGet("/staff/me/signature", async (CareBrandingService s, HttpContext http, CancellationToken ct) =>
+        {
+            var image = await s.SignatureAsync(ct);
+            http.Response.Headers.CacheControl = "private, no-store";
+            return Results.File(image.Content, image.ContentType);
+        });
+
         care.MapGet("/staff", (CareStaffService s, CancellationToken ct) => s.ListAsync(ct)).RequireAuthorization(leadership);
         care.MapGet("/staff/me", (CareStaffService s, CancellationToken ct) => s.MeAsync(ct));
         care.MapPut("/staff/{userId:guid}", (Guid userId, SaveCareStaffRequest r, CareStaffService s, CancellationToken ct) => s.UpdateAsync(userId, r, ct))
@@ -43,6 +72,8 @@ public static class CareEndpoints
         // There is deliberately no DELETE: a patient is made inactive instead.
         care.MapGet("/patients", (string? q, PatientService s, CancellationToken ct) => s.SearchAsync(q, ct));
         care.MapPost("/patients", (SavePatientRequest r, PatientService s, CancellationToken ct) => s.RegisterAsync(r, ct));
+        // Wave 1: the registration form's duplicate check before saving (front desk and above; names in the body, not the address).
+        care.MapPost("/patients/duplicates", (DuplicateCheckRequest r, PatientService s, CancellationToken ct) => s.DuplicatesAsync(r, ct));
         // A clinical caller opens the record through RecordGuard (logged); the X-Care-Reason header carries the emergency-access reason
         // when there's no care relationship. The access log is the medical director's only.
         care.MapGet("/patients/{id:guid}", (Guid id, [FromHeader(Name = RecordGuard.ReasonHeader)] string? reason, PatientService s, CancellationToken ct) =>
@@ -130,6 +161,20 @@ public static class CareEndpoints
             var body = request.ContentLength is 0 ? null : await request.ReadFromJsonAsync<RecordResultRequest>(ct);
             return await s.RecordResultAsync(id, body?.Text, null, ct);
         }).DisableAntiforgery();
+        // Wave 1: correcting a result entered in error (doctors and nurses, as recording; JSON or multipart with text, reason, keepFile and
+        // file). The original is kept and marked; the correction waits for a doctor's review again before the portal shows it.
+        care.MapPost("/tests/{id:guid}/amend", async (Guid id, HttpRequest request, TestService s, CancellationToken ct) =>
+        {
+            if (request.HasFormContentType)
+            {
+                var form = await request.ReadFormAsync(ct);
+                var file = form.Files.GetFile("file");
+                var keep = bool.TryParse(form["keepFile"].ToString(), out var k) && k;
+                return await s.AmendResultAsync(id, form["text"].ToString(), file?.ToUpload(), form["reason"].ToString(), keep, ct);
+            }
+            var body = request.ContentLength is 0 ? null : await request.ReadFromJsonAsync<AmendResultRequest>(ct);
+            return await s.AmendResultAsync(id, body?.Text, null, body?.Reason, body?.KeepFile == true, ct);
+        }).DisableAntiforgery();
         care.MapGet("/tests/{id:guid}/file", (Guid id, [FromHeader(Name = RecordGuard.ReasonHeader)] string? reason, TestService s, CancellationToken ct) =>
             s.FileLinkAsync(id, reason, ct));
         // Post-build: a doctor or the director reviews a result before the portal shows it (and the patient is told); the list of results
@@ -147,7 +192,9 @@ public static class CareEndpoints
         }).AllowAnonymous().ExcludeFromDescription().WithTags("Care");
 
         // Bills: everyone reads (clinical references only for clinical staff); the cashier or leadership adds manual lines and removes lines.
-        care.MapGet("/bills", (Guid? patientId, BillStatus? status, BillingService s, CancellationToken ct) => s.ListAsync(patientId, status, ct));
+        // Wave 1: ?q= (bill number, patient number or name) and paging (?offset=&limit=, at most 200 a page).
+        care.MapGet("/bills", (Guid? patientId, BillStatus? status, string? q, int? offset, int? limit, BillingService s, CancellationToken ct) =>
+            s.ListAsync(patientId, status, q, offset, limit, ct));
         care.MapGet("/bills/{id:guid}", (Guid id, BillingService s, CancellationToken ct) => s.GetAsync(id, ct));
         care.MapPost("/bills/{id:guid}/lines", (Guid id, AddBillLineRequest r, BillingService s, CancellationToken ct) => s.AddManualLineAsync(id, r, ct));
         care.MapPost("/bills/{id:guid}/lines/{lineId:guid}/remove", (Guid id, Guid lineId, RemoveBillLineRequest r, BillingService s, CancellationToken ct) =>
@@ -216,6 +263,12 @@ public static class CareEndpoints
         care.MapGet("/admissions/{id:guid}/medication-chart", (Guid id, DateOnly? date, [FromHeader(Name = RecordGuard.ReasonHeader)] string? reason,
             WardCareService s, CancellationToken ct) => s.MedicationChartAsync(id, date, reason, ct));
         care.MapPost("/doses/{id:guid}", (Guid id, RecordDoseRequest r, WardCareService s, CancellationToken ct) => s.RecordDoseAsync(id, r, ct));
+        // Wave 1: an as-needed (PRN) dose given now, and the ward's vital signs chart (the same writers as nursing notes; reads are opens).
+        care.MapPost("/admissions/{id:guid}/prn-doses", (Guid id, RecordAsNeededDoseRequest r, WardCareService s, CancellationToken ct) =>
+            s.RecordAsNeededDoseAsync(id, r, ct));
+        care.MapPost("/admissions/{id:guid}/vitals", (Guid id, WardVitalsRequest r, WardCareService s, CancellationToken ct) => s.AddVitalsAsync(id, r, ct));
+        care.MapGet("/admissions/{id:guid}/vitals", (Guid id, [FromHeader(Name = RecordGuard.ReasonHeader)] string? reason, WardCareService s,
+            CancellationToken ct) => s.VitalsAsync(id, reason, ct));
         // The author discards an unsigned ward-round draft (before discharge).
         care.MapPost("/ward-rounds/{id:guid}/discard", async (Guid id, WardCareService s, CancellationToken ct) =>
         {

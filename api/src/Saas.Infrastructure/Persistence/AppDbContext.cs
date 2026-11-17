@@ -200,6 +200,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Saas.Domain.Care.Prescription> Prescriptions => Set<Saas.Domain.Care.Prescription>();
     public DbSet<Saas.Domain.Care.PrescriptionItem> PrescriptionItems => Set<Saas.Domain.Care.PrescriptionItem>();
     public DbSet<Saas.Domain.Care.TestRequest> TestRequests => Set<Saas.Domain.Care.TestRequest>();
+    public DbSet<Saas.Domain.Care.TestResultAmendment> TestResultAmendments => Set<Saas.Domain.Care.TestResultAmendment>();
     public DbSet<Saas.Domain.Care.Ward> Wards => Set<Saas.Domain.Care.Ward>();
     public DbSet<Saas.Domain.Care.Bed> Beds => Set<Saas.Domain.Care.Bed>();
     public DbSet<Saas.Domain.Care.Admission> Admissions => Set<Saas.Domain.Care.Admission>();
@@ -1331,6 +1332,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.HasOne<Saas.Domain.Care.PriceItem>().WithMany().HasForeignKey(x => x.PriceItemId).OnDelete(DeleteBehavior.Restrict);
             e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(8);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(10);
+            e.Property(x => x.ResultFileKey).HasMaxLength(300);
+            e.Property(x => x.ResultFileType).HasMaxLength(40);
+        });
+        b.Entity<Saas.Domain.Care.TestResultAmendment>(e =>
+        {
+            // Wave 1: results entered in error. Text and reason are ClinicalText ciphertext (unbounded); the file stays private.
+            e.HasIndex(x => new { x.TenantId, x.TestRequestId });
+            e.HasOne<Saas.Domain.Care.TestRequest>().WithMany().HasForeignKey(x => x.TestRequestId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Saas.Domain.Care.Patient>().WithMany().HasForeignKey(x => x.PatientId).OnDelete(DeleteBehavior.Restrict);
             e.Property(x => x.ResultFileKey).HasMaxLength(300);
             e.Property(x => x.ResultFileType).HasMaxLength(40);
         });

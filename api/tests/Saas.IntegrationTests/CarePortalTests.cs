@@ -1270,6 +1270,10 @@ public sealed class CarePortalTests(ApiFixture api)
         ["GET /api/care-portal/patients/{id:guid}/doctors"] = w => $"{P(w.PatientId)}/doctors",
         ["GET /api/care-portal/patients/{id:guid}/doctors/{doctorId:guid}/slots"] = w => $"{P(w.PatientId)}/doctors/{w.DoctorId}/slots?date={Today.AddDays(2):yyyy-MM-dd}",
         ["GET /api/care-portal/patients/{id:guid}/notifications"] = w => $"{P(w.PatientId)}/notifications",
+        // Wave 1: the unread count, the contact details and the results-only list.
+        ["GET /api/care-portal/patients/{id:guid}/notifications/unread-count"] = w => $"{P(w.PatientId)}/notifications/unread-count",
+        ["GET /api/care-portal/patients/{id:guid}/contact"] = w => $"{P(w.PatientId)}/contact",
+        ["GET /api/care-portal/patients/{id:guid}/results"] = w => $"{P(w.PatientId)}/results",
         ["GET /api/care-portal/invites/{token}"] = w => $"/api/care-portal/invites/{w.InviteToken}",
     };
 

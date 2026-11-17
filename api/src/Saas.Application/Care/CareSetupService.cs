@@ -86,7 +86,7 @@ public sealed partial class CareSetupService(IAppDbContext db, CareAccess access
     [GeneratedRegex("^[A-Z0-9]{1,6}$")]
     private static partial Regex PrefixPattern();
 
-    private static ClinicDto ToDto(ClinicProfile p) => new(
+    internal static ClinicDto ToDto(ClinicProfile p) => new(
         p.Name, p.Slug, p.Address, p.Phone, p.PatientPrefix, p.LogoKey is not null, p.PaystackSecretKeyProtected is not null, p.DispensesDrugs,
         p.MinDepositMinor, p.LowDepositThresholdMinor, p.RegistrationPriceItemId, p.ConsultationPriceItemId);
 }

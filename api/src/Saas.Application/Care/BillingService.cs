@@ -11,7 +11,7 @@ namespace Saas.Application.Care;
 public sealed record BillLineDto(
     Guid Id, Guid? PriceItemId, string Description, int Quantity, long UnitPriceMinor, long AmountMinor, BillLineSource Source, string? Reason,
     string? RemovedReason, DateTimeOffset? RemovedAt, DateTimeOffset CreatedAt,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClinicalRef = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ClinicalRef = null, DateOnly? ChargeDay = null);
 
 /// <summary>A bill in a list. <c>CreditMinor</c> is money held beyond the net amount (balance 0, status InCredit).</summary>
 public sealed record BillSummaryDto(
@@ -181,16 +181,28 @@ public sealed class BillingService(IAppDbContext db, ITenantContext tenant, Care
 
     // ---------- Staff routes ----------
 
-    public async Task<IReadOnlyList<BillSummaryDto>> ListAsync(Guid? patientId, BillStatus? status, CancellationToken ct)
+    public const int MaxPage = 200;
+
+    /// <summary>
+    /// Bills, newest first. Every member. Filters: the patient, the status, and (Wave 1) <paramref name="q"/>: part of the bill number, the
+    /// patient number or the patient's name. Paging (Wave 1): skip <paramref name="offset"/> bills (default 0) and return at most
+    /// <paramref name="limit"/> (1 to 200, default 200); a full page means there may be more. 400 <c>offset</c> or <c>limit</c> out of range.
+    /// </summary>
+    public async Task<IReadOnlyList<BillSummaryDto>> ListAsync(Guid? patientId, BillStatus? status, string? q, int? offset, int? limit, CancellationToken ct)
     {
         await access.CallerAsync(ct);
+        if (offset is < 0) throw BadRequestException.Field("offset", "The offset can't be negative.");
+        if (limit is < 1 or > MaxPage) throw BadRequestException.Field("limit", $"Ask for 1 to {MaxPage} bills at a time.");
+        var term = string.IsNullOrWhiteSpace(q) ? null : q.Trim().ToLower();
         return await (from b in db.PatientBills.AsNoTracking()
                       join p in db.Patients on b.PatientId equals p.Id
                       where (patientId == null || b.PatientId == patientId) && (status == null || b.Status == status)
-                      orderby b.CreatedAt descending
+                            && (term == null || b.Number.ToLower().Contains(term) || p.Number.ToLower().Contains(term)
+                                || (p.FirstName + " " + p.LastName).ToLower().Contains(term) || (p.LastName + " " + p.FirstName).ToLower().Contains(term))
+                      orderby b.CreatedAt descending, b.Id descending
                       select new BillSummaryDto(b.Id, b.Number, b.PatientId, p.Number, p.FirstName + " " + p.LastName, b.VisitId, b.AdmissionId,
                           b.Status, b.TotalMinor, b.PaidMinor, b.BalanceMinor, b.CreatedAt, b.FinalisedAt, b.CreditMinor, b.NeedsReview))
-            .Take(200).ToListAsync(ct);
+            .Skip(offset ?? 0).Take(limit ?? MaxPage).ToListAsync(ct);
     }
 
     public async Task<BillDto> GetAsync(Guid id, CancellationToken ct)
@@ -329,7 +341,7 @@ public sealed class BillingService(IAppDbContext db, ITenantContext tenant, Care
         return new BillDto(bill.Id, bill.Number, bill.PatientId, row.Number, row.Name, bill.VisitId, bill.AdmissionId, bill.Status, bill.TotalMinor,
             bill.PaidMinor, bill.BalanceMinor, bill.CreatedAt, bill.FinalisedAt, bill.AdjustedMinor, bill.CreditMinor, bill.NeedsReview,
             lines.Select(l => new BillLineDto(l.Id, names ? l.PriceItemId : null, Describe(l), l.Quantity, l.UnitPriceMinor, l.AmountMinor, l.Source, l.Reason,
-                l.RemovedReason, l.RemovedAt, l.CreatedAt, clinical ? l.ClinicalRef : null)).ToList(),
+                l.RemovedReason, l.RemovedAt, l.CreatedAt, clinical ? l.ClinicalRef : null, l.ChargeDay)).ToList(),
             payments.Select(PaymentService.ToDto).ToList(),
             adjustments.Select(a => new BillAdjustmentDto(a.Id, a.Kind, a.AmountMinor, a.Reason, a.ByUserId, a.At)).ToList());
     }

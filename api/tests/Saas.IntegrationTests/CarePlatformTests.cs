@@ -219,6 +219,13 @@ public sealed partial class CarePlatformTests(ApiFixture api)
         ["PUT /api/care/settings/profile"] = LeadersWrite,
         ["GET /api/care/staff"] = Leaders,
         ["GET /api/care/staff/me"] = Everyone,
+        // Wave 1: the clinic logo (leadership writes, everyone reads) and each member's own signature.
+        ["PUT /api/care/settings/logo"] = LeadersWrite,
+        ["DELETE /api/care/settings/logo"] = LeadersWrite,
+        ["GET /api/care/settings/logo"] = Everyone,
+        ["PUT /api/care/staff/me/signature"] = EveryoneWrites,
+        ["DELETE /api/care/staff/me/signature"] = EveryoneWrites,
+        ["GET /api/care/staff/me/signature"] = Everyone,
         ["PUT /api/care/staff/{userId:guid}"] = LeadersWrite,
         // Price list (Task 2): everyone reads; leadership or the cashier writes.
         ["GET /api/care/price-list"] = Everyone,
@@ -227,6 +234,7 @@ public sealed partial class CarePlatformTests(ApiFixture api)
         // Patients (Task 2): everyone searches and reads demographics; front desk and above register and edit; clinical facts are clinical.
         ["GET /api/care/patients"] = Everyone,
         ["POST /api/care/patients"] = DeskWrites,
+        ["POST /api/care/patients/duplicates"] = DeskWrites, // Wave 1: the registration form's duplicate check
         ["GET /api/care/patients/{id:guid}"] = Everyone,
         ["GET /api/care/patients/{id:guid}/access-log"] = OwnerWrites, // Task 3 ruling: the director only, never through the support view
         ["PUT /api/care/patients/{id:guid}"] = DeskWrites,
@@ -268,6 +276,7 @@ public sealed partial class CarePlatformTests(ApiFixture api)
         ["GET /api/care/prescriptions/{id:guid}/pdf"] = Clinical,
         ["POST /api/care/tests"] = Doctors,
         ["POST /api/care/tests/{id:guid}/result"] = Clinical,
+        ["POST /api/care/tests/{id:guid}/amend"] = Clinical, // Wave 1: as recording
         ["GET /api/care/tests/{id:guid}/file"] = Clinical,
         // Post-build (user decision): doctors and the director review a result before the portal shows it, and list those waiting.
         ["POST /api/care/tests/{id:guid}/review"] = Doctors,
@@ -310,6 +319,10 @@ public sealed partial class CarePlatformTests(ApiFixture api)
         ["POST /api/care/ward-rounds/{id:guid}/discard"] = DoctorsS,
         ["GET /api/care/admissions/{id:guid}/medication-chart"] = Clinical,
         ["POST /api/care/doses/{id:guid}"] = ClinicalS,
+        // Wave 1: an as-needed dose and the ward's vital signs (writers as nursing notes; the read is a logged open).
+        ["POST /api/care/admissions/{id:guid}/prn-doses"] = ClinicalS,
+        ["POST /api/care/admissions/{id:guid}/vitals"] = ClinicalS,
+        ["GET /api/care/admissions/{id:guid}/vitals"] = Clinical,
         // Discharge (Task 10): the admissions list is leadership, clinical staff and the front desk (ruling I3); the summary and the
         // discharge are the care team's doctors; the director takes over a draft.
         ["GET /api/care/admissions"] = DeskReads,
