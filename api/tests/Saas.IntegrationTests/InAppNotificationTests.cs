@@ -23,12 +23,15 @@ public sealed class InAppNotificationTests(ApiFixture api)
         return JsonDocument.Parse(body).RootElement.Clone();
     }
 
-    private async Task AddAsync(Guid userId, string title, Guid? tenantId = null, string kind = "test.kind")
+    private async Task AddAsync(Guid userId, string title, Guid? tenantId = null, string kind = "test.kind", string link = "/app/students")
     {
         using var scope = api.Services.CreateScope();
-        scope.ServiceProvider.GetRequiredService<InAppNotifications>().Add(userId, "school", kind, title, "Body text", "/app/students", tenantId);
+        scope.ServiceProvider.GetRequiredService<InAppNotifications>().Add(userId, "school", kind, title, "Body text", link, tenantId);
         await scope.ServiceProvider.GetRequiredService<Saas.Infrastructure.Persistence.AppDbContext>().SaveChangesAsync(Ct);
     }
+
+    /// <summary>Wave 2: a customer session shows only customer-app notifications (links outside /app).</summary>
+    private const string Parent = "/parent/fees";
 
     private static async Task<List<string>> TitlesAsync(HttpClient client, string query = "")
     {
@@ -71,9 +74,9 @@ public sealed class InAppNotificationTests(ApiFixture api)
         Assert.Equal(1, await CountAsync(school.Owner));
 
         var (parent, parentId, _) = await kit.ParentAccountAsync();
-        await AddAsync(parentId, "School A", school.TenantId);
-        await AddAsync(parentId, "School B", elsewhere.TenantId);
-        await AddAsync(parentId, "No school");
+        await AddAsync(parentId, "School A", school.TenantId, link: Parent);
+        await AddAsync(parentId, "School B", elsewhere.TenantId, link: Parent);
+        await AddAsync(parentId, "No school", link: Parent);
         Assert.Equal(3, (await TitlesAsync(parent)).Count);
         Assert.Equal(3, await CountAsync(parent));
     }
@@ -82,9 +85,9 @@ public sealed class InAppNotificationTests(ApiFixture api)
     public async Task Unread_count_and_mark_read()
     {
         var (parent, parentId, _) = await kit.ParentAccountAsync();
-        await AddAsync(parentId, "First");
-        await AddAsync(parentId, "Second");
-        await AddAsync(parentId, "Third");
+        await AddAsync(parentId, "First", link: Parent);
+        await AddAsync(parentId, "Second", link: Parent);
+        await AddAsync(parentId, "Third", link: Parent);
         Assert.Equal(3, await CountAsync(parent));
         Assert.Equal("Third", (await TitlesAsync(parent))[0]); // newest first
 

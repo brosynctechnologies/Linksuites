@@ -361,7 +361,7 @@ public static class CareEndpoints
         });
         care.MapPost("/imports/{kind}/preview", (string kind, IFormFile? file, Saas.Application.School.Imports.ImportEngine s, CancellationToken ct) =>
             s.PreviewAsync(Saas.Application.Billing.Products.Care, kind, Saas.Application.School.Imports.ImportScope.Empty, file?.ToUpload(), ct))
-            .DisableAntiforgery();
+            .DisableAntiforgery().RequireRateLimiting(RateLimits.ImportPreview);
         care.MapPost("/imports/{token}/confirm", (string token, Saas.Application.School.Imports.ImportEngine s, CancellationToken ct) =>
             s.ConfirmAsync(Saas.Application.Billing.Products.Care, token, ct));
 

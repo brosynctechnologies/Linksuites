@@ -13,7 +13,7 @@ public sealed record ResultDevelopmentalDto(string Area, string? Scale, string? 
 /// <see cref="Mode"/> is the mode the row was computed in. Late, absent and excused are null on rows published before they were counted.
 /// </summary>
 public sealed record ResultStudentDto(
-    Guid EnrolmentId, Guid StudentId, string Name, string AdmissionNo, decimal Total, decimal Average, int Position, int ClassSize,
+    Guid EnrolmentId, Guid StudentId, string Name, string AdmissionNo, decimal? Total, decimal? Average, int? Position, int ClassSize,
     int DaysPresent, int? DaysAbsent, int? DaysLate, int? DaysExcused, int DaysOpen, string? TeacherRemark, string? PrincipalRemark, bool Incomplete, IReadOnlyList<ResultSubjectDto> Subjects,
     IReadOnlyList<ResultDevelopmentalDto> Developmental, AssessmentMode Mode);
 /// <summary><see cref="Mode"/> is the mode of the stored rows, or the level's current mode when there are none yet.</summary>
@@ -597,7 +597,7 @@ public sealed class ResultService(
 
     // ---------- View ----------
 
-    /// <param name="subjectLimit">Null shows every subject. A set shows only those class-subjects. Student totals stay the stored figures.</param>
+    /// <param name="subjectLimit">Null shows every subject with the overall total, average and position. A set shows only those class-subjects and no overall figures.</param>
     private async Task<ResultsDto> ViewAsync(SchoolClass cls, Term term, HashSet<Guid>? subjectLimit, CancellationToken ct)
     {
         // The stored rows of this class and term, whoever is in the class now (published rows are frozen).
@@ -620,11 +620,13 @@ public sealed class ResultService(
             ? await DevelopmentalByEnrolmentAsync(cls, term, developmentalIds, ct)
             : new Dictionary<Guid, List<ResultDevelopmentalDto>>();
 
+        var overall = subjectLimit is null;
         var students = roster.Select(x => new { Student = x, Result = results.FirstOrDefault(r => r.EnrolmentId == x.EnrolmentId) })
             .Where(x => x.Result is not null)
-            .OrderBy(x => x.Result!.Position).ThenBy(x => x.Student.Name)
+            // Wave 2: a subject teacher (subjectLimit set) gets no overall total, average or position, and the rows come by name, not by rank.
+            .OrderBy(x => subjectLimit is null ? x.Result!.Position : 0).ThenBy(x => x.Student.Name)
             .Select(x => new ResultStudentDto(
-                x.Student.EnrolmentId, x.Student.StudentId, x.Student.Name, x.Student.AdmissionNo, x.Result!.Total, x.Result.Average, x.Result.Position,
+                x.Student.EnrolmentId, x.Student.StudentId, x.Student.Name, x.Student.AdmissionNo, overall ? x.Result!.Total : null, overall ? x.Result!.Average : null, overall ? x.Result!.Position : null,
                 x.Result.ClassSize, x.Result.DaysPresent, x.Result.DaysAbsent, x.Result.DaysLate, x.Result.DaysExcused, x.Result.DaysOpen, x.Result.TeacherRemark, x.Result.PrincipalRemark, x.Result.Incomplete,
                 modes[x.Student.EnrolmentId] == AssessmentMode.Developmental
                     ? []

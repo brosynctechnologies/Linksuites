@@ -117,8 +117,8 @@ export function PlanForm({
         <Textarea
           key={field.key}
           label={field.label}
-          required
           maxLength={MAX_TEXT}
+          hint="You can save a draft without it. It is needed before you submit."
           value={draft[field.key]}
           onChange={(e) => set({ [field.key]: e.target.value } as Partial<PlanDraft>)}
         />

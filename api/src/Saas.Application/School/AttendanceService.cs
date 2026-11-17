@@ -155,6 +155,8 @@ public sealed class AttendanceService(
             .Join(db.Guardians.AsNoTracking(), l => l.GuardianId, g => g.Id, (l, g) => new { l.StudentId, Guardian = g }).ToListAsync(ct);
         var school = await db.SchoolProfiles.Select(p => p.Name).FirstOrDefaultAsync(ct) ?? throw new NotFoundException("School");
         var dateText = date.ToString("d MMMM yyyy", CultureInfo.InvariantCulture);
+        // Wave 2: a register taken for an earlier day names that day, not "today".
+        var when = date == Today ? $"today ({dateText})" : $"on {dateText}";
 
         var message = new List<MessageParentDto>();
         foreach (var student in students)
@@ -167,7 +169,7 @@ public sealed class AttendanceService(
             if (guardian.UserId is { } userId)
                 feed.Notify(userId, "school.absent", $"{student.Name} was marked absent", $"{school} marked {student.Name} absent on {dateText}.", SchoolFeed.ParentLink("attendance", student.StudentId));
             var url = GuardianInviteService.WhatsAppUrl(guardian.Phone,
-                $"Hello {guardian.FullName}, {student.Name} was marked absent at {school} today ({dateText}). Please contact the school if this is unexpected.");
+                $"Hello {guardian.FullName}, {student.Name} was marked absent at {school} {when}. Please contact the school if this is unexpected.");
             if (url is not null) message.Add(new MessageParentDto(student.Name, guardian.FullName, url));
         }
         return message;

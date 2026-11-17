@@ -270,7 +270,8 @@ public sealed class AssignmentService(
     private async Task EnsureCanSetAsync(Guid classSubjectId, CancellationToken ct)
     {
         if (access.IsLeadership || await access.TeachesClassSubjectAsync(classSubjectId, ct)) return;
-        throw new ForbiddenException("You can only set assignments for subjects you teach.");
+        // Wave 2 (M8): a class subject the teacher does not teach looks like an unknown one, as on every other route.
+        throw new NotFoundException("Class subject");
     }
 
     private async Task<(ClassSubject Cs, SchoolClass Cls, Term Term)> LoadSubjectAsync(Guid classSubjectId, Guid termId, CancellationToken ct)

@@ -25,6 +25,12 @@ public sealed class SchoolCalendarService(IAppDbContext db)
             throw BadRequestException.Field("name", "Another session already has this name.");
         if (await db.AcademicSessions.AnyAsync(s => s.Id != id && s.StartDate <= r.EndDate && s.EndDate >= r.StartDate, ct))
             throw BadRequestException.Field("startDate", "These dates overlap another session.");
+        // Wave 2: the session keeps every one of its terms inside its dates.
+        var terms = await db.Terms.AsNoTracking().Where(t => t.SessionId == id).ToListAsync(ct);
+        if (terms.Where(t => t.StartDate < r.StartDate).OrderBy(t => t.StartDate).FirstOrDefault() is { } early)
+            throw BadRequestException.Field("startDate", $"{early.Name} starts on {Day(early.StartDate)}. The session must start on or before that.");
+        if (terms.Where(t => t.EndDate > r.EndDate).OrderByDescending(t => t.EndDate).FirstOrDefault() is { } late)
+            throw BadRequestException.Field("endDate", $"{late.Name} ends on {Day(late.EndDate)}. The session must end on or after that.");
 
         session.Name = name;
         session.StartDate = r.StartDate;
@@ -47,6 +53,12 @@ public sealed class SchoolCalendarService(IAppDbContext db)
             throw BadRequestException.Field("startDate", $"{before.Name} ends on {before.EndDate:d MMM yyyy}. This term must start after that.");
         if (siblings.Where(t => t.Number > term.Number).OrderBy(t => t.Number).FirstOrDefault() is { } after && r.EndDate >= after.StartDate)
             throw BadRequestException.Field("endDate", $"{after.Name} starts on {after.StartDate:d MMM yyyy}. This term must end before that.");
+        // Wave 2: a term stays inside its session's dates.
+        var owner = await db.AcademicSessions.AsNoTracking().FirstAsync(s => s.Id == term.SessionId, ct);
+        if (r.StartDate < owner.StartDate)
+            throw BadRequestException.Field("startDate", $"The session starts on {Day(owner.StartDate)}. The term can't start before that.");
+        if (r.EndDate > owner.EndDate)
+            throw BadRequestException.Field("endDate", $"The session ends on {Day(owner.EndDate)}. The term can't end after that.");
 
         term.Name = name;
         term.StartDate = r.StartDate;
@@ -84,6 +96,8 @@ public sealed class SchoolCalendarService(IAppDbContext db)
         }
         return await SessionDtoAsync(session, ct);
     }
+
+    private static string Day(DateOnly d) => d.ToString("d MMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
 
     private static string CleanName(string? name, int max)
     {

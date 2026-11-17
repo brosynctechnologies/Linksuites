@@ -31,6 +31,7 @@ public sealed class ParentProfileService(
     public const string BadCode = "That code is wrong or has expired. Request a new one.";
     public const string EmailTaken = "Another account already uses this email address.";
     public const int CodesPer10Minutes = 3;
+    public const int MaxAttempts = 5;
 
     private static string Purpose(Guid userId) => $"email-change:{userId:N}";
     private static string Hash(string email, string code) => Codes.Sha256($"{email}:{code}");
@@ -91,20 +92,21 @@ public sealed class ParentProfileService(
         var purpose = Purpose(user.Id);
         var otp = await db.OtpCodes.Where(o => o.Target == email && o.Purpose == purpose && o.UsedAt == null && o.ExpiresAt > now)
             .OrderByDescending(o => o.CreatedAt).FirstOrDefaultAsync(ct);
-        if (otp is null || otp.Attempts >= 5) throw new BadRequestException(BadCode);
-        otp.Attempts++;
+        if (otp is null || otp.Attempts >= MaxAttempts) throw new BadRequestException(BadCode);
+        // Wave 2: the attempt is counted in one conditional update, so guesses sent together can't share one read of the count and
+        // get more than five tries between them.
+        var counted = await db.OtpCodes.Where(o => o.Id == otp.Id && o.Attempts < MaxAttempts && o.UsedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.Attempts, o => o.Attempts + 1), ct);
+        if (counted == 0) throw new BadRequestException(BadCode);
         if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(otp.CodeHash), Encoding.UTF8.GetBytes(Hash(email, code))))
-        {
-            await db.SaveChangesAsync(ct);
             throw new BadRequestException(BadCode);
-        }
-        otp.UsedAt = now;
+        // The right code is spent in one conditional update too, so two confirms with it can't both go on.
+        if (await db.OtpCodes.Where(o => o.Id == otp.Id && o.UsedAt == null).ExecuteUpdateAsync(s => s.SetProperty(o => o.UsedAt, now), ct) == 0)
+            throw new BadRequestException(BadCode);
+        db.Entry(otp).State = EntityState.Detached;
         // Taken since the code was sent: the code is spent, the account stays as it is.
         if (await users.FindByEmailAsync(email) is { } other && other.Id != user.Id)
-        {
-            await db.SaveChangesAsync(ct);
             throw new ConflictException(EmailTaken, "email_taken");
-        }
 
         var oldEmail = user.Email!;
         user.Email = email;
@@ -112,10 +114,20 @@ public sealed class ParentProfileService(
         user.UserName = email;
         user.NormalizedUserName = users.NormalizeName(email);
         user.EmailConfirmed = true;
-        var updated = await users.UpdateAsync(user);
+        IdentityResult updated;
+        try
+        {
+            updated = await users.UpdateAsync(user);
+        }
+        catch (DbUpdateException)
+        {
+            // Wave 2: another account took the address between the check above and this save (the unique index decided). The code
+            // stays spent; the account stays as it was.
+            updated = IdentityResult.Failed();
+        }
         if (!updated.Succeeded)
         {
-            await db.SaveChangesAsync(ct); // the code stays spent
+            db.ChangeTracker.Clear();
             throw new ConflictException(EmailTaken, "email_taken");
         }
         // Every other session ends, as after a password change, so whoever held the account before can't stay signed in.

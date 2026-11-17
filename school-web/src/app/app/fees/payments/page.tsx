@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useState } from "react";
 import { useCan } from "@/lib/roles";
 import { qs, useApi } from "@/lib/use-api";
+import { useDebounced } from "@/lib/use-debounced";
 import type { FeePaymentDto, InvoiceSummaryDto } from "@/lib/types/fees";
 import { ImportDialog } from "@/components/import-dialog";
 import { ApiErrorView, Button, EmptyState, Notice, PageLoader, RuledSheet, SearchField, linkClass, ruledRowClass } from "@/components/ui";
 import { InvoiceStatusBadge, ReceiptButton, RecordPaymentModal, TermSelect, money, useTermChoice } from "../fees-shared";
 
-const TAKE = 2000;
+const TAKE = 500;
 
 /** The bursar's counter: find a student with a balance and record what they paid in person. */
 export default function PaymentsPage() {
@@ -18,17 +19,18 @@ export default function PaymentsPage() {
   const [q, setQ] = useState("");
   const [paying, setPaying] = useState<InvoiceSummaryDto | null>(null);
   const [last, setLast] = useState<{ invoice: InvoiceSummaryDto; payment: FeePaymentDto } | null>(null);
-  const list = useApi<InvoiceSummaryDto[]>(t.termId ? `/api/school/invoices${qs({ termId: t.termId, take: TAKE })}` : null);
+  // The search runs on the server over every invoice with a balance, so a school with more than one page of invoices finds them all.
+  const needle = useDebounced(q.trim());
+  const list = useApi<InvoiceSummaryDto[]>(t.termId ? `/api/school/invoices${qs({ termId: t.termId, owing: true, q: needle, take: TAKE })}` : null);
+  // Whether the term has any invoice at all (for the empty state): one row is enough.
+  const any = useApi<InvoiceSummaryDto[]>(t.termId ? `/api/school/invoices${qs({ termId: t.termId, take: 1 })}` : null);
 
   if (t.error) return <ApiErrorView error={t.error} onRetry={t.reload} />;
   if (!t.loaded) return <PageLoader />;
   if (t.terms.length === 0) return <EmptyState title="No terms yet" text="Add the session and its terms on the setup page first." />;
 
-  const needle = q.trim().toLowerCase();
-  const owing = (list.data ?? []).filter((i) => i.status !== "Cancelled" && i.balance > 0);
-  const rows = needle
-    ? owing.filter((i) => i.studentName.toLowerCase().includes(needle) || i.admissionNo.toLowerCase().includes(needle) || i.number.toLowerCase().includes(needle))
-    : owing;
+  const rows = list.data ?? [];
+  const owing = needle ? null : rows;
 
   return (
     <div className="space-y-4">
@@ -66,12 +68,12 @@ export default function PaymentsPage() {
 
       {list.error && <ApiErrorView error={list.error} onRetry={list.reload} />}
       {!list.data && !list.error && <PageLoader />}
-      {list.data && owing.length === 0 && (
+      {list.data && owing && owing.length === 0 && (
         <EmptyState
           title="Nobody owes anything this term"
-          text={list.data.length === 0 ? "There are no invoices for this term yet. Generate them on the invoices page." : "Every invoice for this term is paid or cancelled."}
+          text={any.data?.length === 0 ? "There are no invoices for this term yet. Generate them on the invoices page." : "Every invoice for this term is paid or cancelled."}
           action={
-            list.data.length === 0 ? (
+            any.data?.length === 0 ? (
               <Link href="/app/fees/invoices" className={linkClass}>
                 Go to invoices
               </Link>
@@ -79,8 +81,8 @@ export default function PaymentsPage() {
           }
         />
       )}
-      {list.data && owing.length > 0 && rows.length === 0 && <p className="text-sm text-muted">No student with a balance matches. Try another name or number.</p>}
-      {list.data && list.data.length >= TAKE && <Notice tone="warning">Showing the first {TAKE.toLocaleString("en-NG")} invoices. Search by name to find the rest.</Notice>}
+      {list.data && needle && rows.length === 0 && <p className="text-sm text-muted">No student with a balance matches. Try another name or number.</p>}
+      {list.data && list.data.length >= TAKE && <Notice tone="warning">Showing the first {TAKE.toLocaleString("en-NG")} invoices. Search by name or number to narrow them.</Notice>}
       {rows.length > 0 && (
         <RuledSheet
           label="Invoices with a balance"

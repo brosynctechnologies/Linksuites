@@ -136,9 +136,10 @@ export interface ResultStudentDto {
   studentId: string;
   name: string;
   admissionNo: string;
-  total: number;
-  average: number;
-  position: number;
+  /** Null for a subject teacher: the overall figures cover subjects they don't teach. */
+  total: number | null;
+  average: number | null;
+  position: number | null;
   classSize: number;
   daysPresent: number;
   /** Null on results published before late, absent and excused were counted. */
@@ -640,6 +641,8 @@ export interface CbtStartDto {
   attemptId: string;
   deadlineAt: string;
   items: CbtStartItemDto[];
+  /** The server's clock when this was sent: the countdown runs from it, not from the device's clock. */
+  serverNow: string;
 }
 export interface SaveCbtAnswerRequest {
   itemId: string;
@@ -653,6 +656,7 @@ export interface CbtAttemptOpenDto {
   attemptId: string;
   deadlineAt: string;
   items: CbtOpenItemDto[];
+  serverNow: string;
 }
 /** After submit, before the key is released: the total only. */
 export interface CbtAttemptTotalDto {
@@ -661,6 +665,8 @@ export interface CbtAttemptTotalDto {
   submittedAt: string | null;
   totalMarks: number;
   autoMarked: boolean;
+  /** What the sitting is marked out of. */
+  outOf: number;
 }
 export interface CbtMarkedItemDto extends CbtOpenItemDto {
   correct: boolean;
@@ -674,6 +680,7 @@ export interface CbtAttemptMarkedDto {
   totalMarks: number;
   autoMarked: boolean;
   items: CbtMarkedItemDto[];
+  outOf: number;
 }
 /** GET /api/student/cbt/attempts/{id} and the submit response: one of the three shapes above. */
 export type CbtAttemptViewDto = CbtAttemptOpenDto | CbtAttemptTotalDto | CbtAttemptMarkedDto;

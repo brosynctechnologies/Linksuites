@@ -190,7 +190,7 @@ function ClassResults({
                     nursery ? "grid-cols-[minmax(0,1fr)_auto]" : "grid-cols-1 md:grid-cols-[4rem_minmax(0,1fr)_6rem_6rem_auto] md:gap-x-4",
                   )}
                 >
-                  {!nursery && <span className="slab tnum hidden text-lg font-bold text-ink md:block">{ordinal(s.position)}</span>}
+                  {!nursery && <span className="slab tnum hidden text-lg font-bold text-ink md:block">{place(s.position)}</span>}
                   <div className="min-w-0">
                     <Link
                       href={`/app/results/students/${s.studentId}?termId=${termId}&classId=${classId}`}
@@ -207,12 +207,12 @@ function ClassResults({
                     <span className="mt-0.5 block text-xs break-words text-muted">{attendanceLine(s)}.</span>
                     {!nursery && (
                       <span className="mt-1 block text-sm text-ink md:hidden">
-                        {ordinal(s.position)} · total {score(s.total)} · average {s.average.toFixed(2)}
+                        {place(s.position)} · total {overall(s.total)} · average {mean(s.average)}
                       </span>
                     )}
                   </div>
-                  {!nursery && <span className="tnum hidden text-right md:block">{score(s.total)}</span>}
-                  {!nursery && <span className="slab tnum hidden text-right text-lg font-bold text-ink md:block">{s.average.toFixed(2)}</span>}
+                  {!nursery && <span className="tnum hidden text-right md:block">{overall(s.total)}</span>}
+                  {!nursery && <span className="slab tnum hidden text-right text-lg font-bold text-ink md:block">{mean(s.average)}</span>}
                   <button
                     type="button"
                     aria-expanded={open === s.enrolmentId}
@@ -438,7 +438,7 @@ function StudentDetail({
   const canEditPrincipal = leadership && !published && !readOnly;
   const changed =
     (canEditTeacher && teacherRemark !== (student.teacherRemark ?? "")) || (canEditPrincipal && principalRemark !== (student.principalRemark ?? ""));
-  const marks = student.subjects.length > 0;
+  const marks = student.subjects.length > 0 && student.total !== null;
 
   useEffect(() => {
     onTyping(changed);
@@ -489,9 +489,9 @@ function StudentDetail({
                     {s.subject}
                     {s.incomplete && <span className="ml-1.5 text-xs text-crest">(scores missing)</span>}
                   </td>
-                  <td className="tnum px-2 py-1.5 text-right">{score(s.total)}</td>
+                  <td className="tnum px-2 py-1.5 text-right">{overall(s.total)}</td>
                   <td className="slab px-2 py-1.5 font-bold">{s.grade}</td>
-                  <td className="tnum px-2 py-1.5 text-right">{ordinal(s.position)}</td>
+                  <td className="tnum px-2 py-1.5 text-right">{place(s.position)}</td>
                   <td className="tnum px-2 py-1.5 text-right">{s.classAverage.toFixed(2)}</td>
                   <td className="py-1.5 pl-2 text-slate-700">{s.remark ?? ""}</td>
                 </tr>
@@ -515,8 +515,8 @@ function StudentDetail({
       <p className="text-sm break-words text-slate-700">
         {marks && (
           <>
-            Total <span className="tnum font-semibold">{score(student.total)}</span>, average{" "}
-            <span className="tnum font-semibold">{student.average.toFixed(2)}</span>, {ordinal(student.position)} of {student.classSize}.{" "}
+            Total <span className="tnum font-semibold">{overall(student.total)}</span>, average{" "}
+            <span className="tnum font-semibold">{mean(student.average)}</span>, {place(student.position)} of {student.classSize}.{" "}
           </>
         )}
         {attendanceLine(student)}.
@@ -698,4 +698,15 @@ function BundlePanel({
       </div>
     </div>
   );
+}
+
+/** A subject teacher gets no overall figures (they cover subjects they do not teach): shown as a dash. */
+function place(position: number | null) {
+  return position === null ? "—" : ordinal(position);
+}
+function overall(total: number | null) {
+  return total === null ? "—" : score(total);
+}
+function mean(average: number | null) {
+  return average === null ? "—" : average.toFixed(2);
 }

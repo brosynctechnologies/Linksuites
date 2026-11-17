@@ -473,7 +473,10 @@ public sealed class FeeService(IAppDbContext db, ITenantContext tenant, SchoolFe
 
     // ---------- Reads ----------
 
-    public async Task<IReadOnlyList<InvoiceSummaryDto>> ListAsync(Guid? termId, Guid? classId, string? status, int? skip, int? take, CancellationToken ct)
+    /// <param name="q">Wave 2: the student's name, admission number or the invoice number (any part, any case), searched on the server.</param>
+    /// <param name="owing">Wave 2: only invoices with a balance that are not cancelled (the payments counter).</param>
+    public async Task<IReadOnlyList<InvoiceSummaryDto>> ListAsync(Guid? termId, Guid? classId, string? status, int? skip, int? take, CancellationToken ct,
+        string? q = null, bool owing = false)
     {
         InvoiceStatus? wanted = null;
         if (!string.IsNullOrWhiteSpace(status))
@@ -481,7 +484,14 @@ public sealed class FeeService(IAppDbContext db, ITenantContext tenant, SchoolFe
             if (!Enum.TryParse<InvoiceStatus>(status, true, out var parsed)) throw BadRequestException.Field("status", "Choose Unpaid, PartlyPaid, Paid or Cancelled.");
             wanted = parsed;
         }
-        var rows = await Query(i => (termId == null || i.TermId == termId) && (wanted == null || i.Status == wanted), classId)
+        var query = Query(i => (termId == null || i.TermId == termId) && (wanted == null || i.Status == wanted)
+            && (!owing || (i.Status != InvoiceStatus.Cancelled && i.Balance > 0)), classId);
+        if ((q ?? "").Trim().ToLowerInvariant() is { Length: > 0 } needle)
+        {
+            if (needle.Length > 100) throw BadRequestException.Field("q", "Search with 100 characters or fewer.");
+            query = query.Where(x => x.StudentName.ToLower().Contains(needle) || x.AdmissionNo.ToLower().Contains(needle) || x.Number.ToLower().Contains(needle));
+        }
+        var rows = await query
             .OrderBy(x => x.ClassName).ThenBy(x => x.StudentName).ThenBy(x => x.Number)
             .Skip(Math.Max(0, skip ?? 0)).Take(Math.Clamp(take ?? 500, 1, 2000)).ToListAsync(ct);
         return rows.Select(x => new InvoiceSummaryDto(x.Id, x.Number, x.EnrolmentId, x.StudentId, x.StudentName, x.AdmissionNo, x.ClassId, x.ClassName,

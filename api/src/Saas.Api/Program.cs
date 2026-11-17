@@ -87,7 +87,10 @@ builder.Services.AddRateLimiter(o =>
     // Per signed-in admin, so a leaked admin token can't bulk-export or bulk-change data quickly.
     o.AddPolicy(RateLimits.Admin, c => RateLimitPartition.GetFixedWindowLimiter(c.User.FindFirst("sub")?.Value ?? Ip(c),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = builder.Configuration.GetValue("RateLimits:AdminPerMinute", 300), Window = TimeSpan.FromMinutes(1) }));
-    o.AddPolicy(RateLimits.PublicWrite, c => RateLimitPartition.GetFixedWindowLimiter(Ip(c),
+    // Wave 2: an import preview parses a whole file (up to 5 MB) and holds it; per signed-in user, so one account can't keep the server parsing.
+    o.AddPolicy(RateLimits.ImportPreview, c => RateLimitPartition.GetFixedWindowLimiter(c.User.FindFirst("sub")?.Value ?? Ip(c),
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = builder.Configuration.GetValue("RateLimits:ImportPreviewsPerMinute", 20), Window = TimeSpan.FromMinutes(1) }));
+    o.AddPolicy(RateLimits.PublicWrite, c =>RateLimitPartition.GetFixedWindowLimiter(Ip(c),
         _ => new FixedWindowRateLimiterOptions { PermitLimit = publicWritesPerMinute, Window = TimeSpan.FromMinutes(1) }));
     o.AddPolicy(RateLimits.ClientError, c => RateLimitPartition.GetFixedWindowLimiter($"client-error:{Ip(c)}",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = builder.Configuration.GetValue("RateLimits:ClientErrorsPerMinute", 10), Window = TimeSpan.FromMinutes(1) }));

@@ -213,9 +213,10 @@ public sealed class SchoolTraitTests(ApiFixture api)
 
         (await s.School.Owner.PostAsync($"{resultsUrl}/lock", null, Ct)).EnsureSuccessStatusCode();
         (await s.School.Owner.PostAsync($"{resultsUrl}/publish", null, Ct)).EnsureSuccessStatusCode();
+        // Wave 2: a locked (and so a published) term freezes the ratings too, as it does scores.
         var changed = ratings.Select(r => new { r.criterionId, value = 1 }).ToArray();
-        var edited = await Json(await s.ClassTeacher.PutAsJsonAsync(TraitsUrl(studentId, s.TermId, "Psychomotor"), new { ratings = changed }, Ct));
-        Assert.All(edited.GetProperty("ratings").EnumerateArray(), row => Assert.Equal(1, row.GetProperty("value").GetInt32()));
+        var refused = await s.ClassTeacher.PutAsJsonAsync(TraitsUrl(studentId, s.TermId, "Psychomotor"), new { ratings = changed }, Ct);
+        Assert.Equal(System.Net.HttpStatusCode.Conflict, refused.StatusCode);
 
         var published = await Json(await s.School.Owner.GetAsync(resultsUrl, Ct));
         Assert.Equal(total, StudentRow(published, "Ada").GetProperty("total").GetDecimal());
