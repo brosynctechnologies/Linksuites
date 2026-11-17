@@ -681,6 +681,7 @@ public sealed partial class SchoolPlatformTests(ApiFixture api)
         ["DELETE /api/school/assessment/{levelId:guid}"] = Admin,
         ["GET /api/school/traits"] = Everyone,
         ["PUT /api/school/traits"] = Admin,
+        ["DELETE /api/school/traits/{levelId:guid}"] = Admin,
         ["GET /api/school/developmental/areas"] = Everyone,
         ["PUT /api/school/developmental/areas"] = Admin,
         ["GET /api/school/developmental/scale"] = Everyone,
@@ -753,6 +754,8 @@ public sealed partial class SchoolPlatformTests(ApiFixture api)
         ["GET /api/school/exam-periods/{id:guid}"] = "YYNY", // a teacher gets 404 until the period is published, and then only sittings for subjects they teach
         ["POST /api/school/exam-periods/{id:guid}/sittings"] = Admin,
         ["POST /api/school/exam-periods/{id:guid}/publish"] = Admin,
+        ["PUT /api/school/exam-periods/{id:guid}"] = Admin,
+        ["DELETE /api/school/exam-periods/{id:guid}"] = Admin,
         ["GET /api/school/exam-sittings/{id:guid}"] = "YYNY",
         ["PUT /api/school/exam-sittings/{id:guid}"] = Admin,
         ["DELETE /api/school/exam-sittings/{id:guid}"] = Admin,
@@ -770,6 +773,13 @@ public sealed partial class SchoolPlatformTests(ApiFixture api)
         ["POST /api/school/play/words"] = "YYNY", // a teacher or leadership; a class-subject list needs its teacher; the bursar is refused before lookup
         ["GET /api/school/play/teasers"] = "YYNY", // staff read the answer too; the bursar is refused
         ["POST /api/school/play/teasers"] = "YYNY",
+        // Edit and archive: the writer or leadership (another teacher's item is a 403 from the record check); the bursar is refused first.
+        ["PUT /api/school/play/words/{id:guid}"] = "YYNY",
+        ["POST /api/school/play/words/{id:guid}/archive"] = "YYNY",
+        ["POST /api/school/play/words/{id:guid}/unarchive"] = "YYNY",
+        ["PUT /api/school/play/teasers/{id:guid}"] = "YYNY",
+        ["POST /api/school/play/teasers/{id:guid}/archive"] = "YYNY",
+        ["POST /api/school/play/teasers/{id:guid}/unarchive"] = "YYNY",
         ["GET /api/school/scores"] = "YYNS",
         ["PUT /api/school/scores"] = "YYNS",
         ["POST /api/school/results/{classId:guid}/{termId:guid}/lock"] = Admin,

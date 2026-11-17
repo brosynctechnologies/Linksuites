@@ -318,38 +318,10 @@ public sealed class ReportCardService(
     }
 
     /// <summary>Psychomotor and affective ratings for the card. A kind with no ratings is left out, so a numeric card with none is unchanged.</summary>
-    private async Task<Dictionary<Guid, List<ReportCardTraitBlock>>> TraitBlocksAsync(Guid levelId, Guid termId, List<Guid> enrolmentIds, CancellationToken ct)
-    {
-        async Task<List<TraitCriterion>> Criteria(TraitKind kind)
-        {
-            var own = await db.TraitCriteria.AsNoTracking().Where(c => c.LevelId == levelId && c.Kind == kind).OrderBy(c => c.Order).ThenBy(c => c.Name).ToListAsync(ct);
-            if (own.Count > 0) return own;
-            return await db.TraitCriteria.AsNoTracking().Where(c => c.LevelId == null && c.Kind == kind).OrderBy(c => c.Order).ThenBy(c => c.Name).ToListAsync(ct);
-        }
-
-        var psychomotor = await Criteria(TraitKind.Psychomotor);
-        var affective = await Criteria(TraitKind.Affective);
-        var criterionIds = psychomotor.Select(c => c.Id).Concat(affective.Select(c => c.Id)).ToList();
-        var ratings = criterionIds.Count == 0 || enrolmentIds.Count == 0
-            ? []
-            : await db.TraitRatings.AsNoTracking()
-                .Where(r => r.TermId == termId && enrolmentIds.Contains(r.EnrolmentId) && criterionIds.Contains(r.CriterionId))
-                .Select(r => new { r.EnrolmentId, r.CriterionId, r.Value }).ToListAsync(ct);
-        var byEnrolment = ratings.GroupBy(r => r.EnrolmentId).ToDictionary(g => g.Key, g => g.ToDictionary(r => r.CriterionId, r => r.Value));
-
-        List<ReportCardTraitBlock> Blocks(Guid enrolmentId)
-        {
-            if (!byEnrolment.TryGetValue(enrolmentId, out var mine)) return [];
-            ReportCardTraitBlock? Block(string heading, IReadOnlyList<TraitCriterion> criteria)
-            {
-                var rows = criteria.Where(c => mine.ContainsKey(c.Id)).Select(c => new ReportCardTraitRow(c.Name, $"{mine[c.Id]} of 5")).ToList();
-                return rows.Count == 0 ? null : new ReportCardTraitBlock(heading, rows);
-            }
-            return new ReportCardTraitBlock?[] { Block("Psychomotor", psychomotor), Block("Affective", affective) }.Where(b => b is not null).Cast<ReportCardTraitBlock>().ToList();
-        }
-
-        return enrolmentIds.ToDictionary(id => id, Blocks);
-    }
+    private async Task<Dictionary<Guid, List<ReportCardTraitBlock>>> TraitBlocksAsync(Guid levelId, Guid termId, List<Guid> enrolmentIds, CancellationToken ct) =>
+        (await TraitService.RatedBlocksAsync(db, levelId, termId, enrolmentIds, ct)).ToDictionary(
+            x => x.Key,
+            x => x.Value.Select(b => new ReportCardTraitBlock(b.Heading, b.Rows.Select(r => new ReportCardTraitRow(r.Name, $"{r.Value} of 5")).ToList())).ToList());
 
     /// <summary>The date set on the term, else the start of the next term (even in the next session). Null when there is neither.</summary>
     private async Task<string?> NextTermBeginsAsync(Term term, CancellationToken ct)

@@ -173,6 +173,8 @@ public static class SchoolEndpoints
         school.MapGet("/exam-periods", (Guid termId, ExamTimetableService s, CancellationToken ct) => s.ListAsync(termId, ct));
         school.MapPost("/exam-periods", (SaveExamPeriodRequest r, ExamTimetableService s, CancellationToken ct) => s.CreatePeriodAsync(r, ct)).RequireAuthorization(admin);
         school.MapGet("/exam-periods/{id:guid}", (Guid id, ExamTimetableService s, CancellationToken ct) => s.GetAsync(id, ct));
+        school.MapPut("/exam-periods/{id:guid}", (Guid id, SaveExamPeriodRequest r, ExamTimetableService s, CancellationToken ct) => s.UpdatePeriodAsync(id, r, ct)).RequireAuthorization(admin);
+        school.MapDelete("/exam-periods/{id:guid}", async (Guid id, ExamTimetableService s, CancellationToken ct) => { await s.DeletePeriodAsync(id, ct); return Results.NoContent(); }).RequireAuthorization(admin);
         school.MapPost("/exam-periods/{id:guid}/sittings", (Guid id, SaveExamSittingRequest r, ExamTimetableService s, CancellationToken ct) => s.AddSittingAsync(id, r, ct)).RequireAuthorization(admin);
         school.MapPost("/exam-periods/{id:guid}/publish", (Guid id, ExamTimetableService s, CancellationToken ct) => s.PublishAsync(id, ct)).RequireAuthorization(admin);
         school.MapGet("/exam-sittings/{id:guid}", (Guid id, ExamTimetableService s, CancellationToken ct) => s.GetSittingAsync(id, ct));
@@ -202,6 +204,13 @@ public static class SchoolEndpoints
         school.MapPost("/play/words", (SaveWordListRequest r, PlayService s, CancellationToken ct) => s.CreateWordListAsync(r, ct));
         school.MapGet("/play/teasers", (PlayService s, CancellationToken ct) => s.ListTeasersAsync(ct));
         school.MapPost("/play/teasers", (SaveBrainTeaserRequest r, PlayService s, CancellationToken ct) => s.CreateTeaserAsync(r, ct));
+        // Edit and archive: the staff member who wrote it, or leadership. Archived items stay listed for staff and are hidden from students.
+        school.MapPut("/play/words/{id:guid}", (Guid id, SaveWordListRequest r, PlayService s, CancellationToken ct) => s.UpdateWordListAsync(id, r, ct));
+        school.MapPost("/play/words/{id:guid}/archive", (Guid id, PlayService s, CancellationToken ct) => s.SetWordListArchivedAsync(id, true, ct));
+        school.MapPost("/play/words/{id:guid}/unarchive", (Guid id, PlayService s, CancellationToken ct) => s.SetWordListArchivedAsync(id, false, ct));
+        school.MapPut("/play/teasers/{id:guid}", (Guid id, SaveBrainTeaserRequest r, PlayService s, CancellationToken ct) => s.UpdateTeaserAsync(id, r, ct));
+        school.MapPost("/play/teasers/{id:guid}/archive", (Guid id, PlayService s, CancellationToken ct) => s.SetTeaserArchivedAsync(id, true, ct));
+        school.MapPost("/play/teasers/{id:guid}/unarchive", (Guid id, PlayService s, CancellationToken ct) => s.SetTeaserArchivedAsync(id, false, ct));
         school.MapGet("/settings/play", (PlayService s, CancellationToken ct) => s.GetSettingsAsync(ct)).RequireAuthorization(admin);
         school.MapPut("/settings/play", (PlaySettingsRequest r, PlayService s, CancellationToken ct) => s.SetEnabledAsync(r, ct)).RequireAuthorization(admin);
         app.MapGet("/api/school/assignment-files/{id:guid}/{expires:long}/{signature}", async (Guid id, long expires, string signature, AssignmentService s, HttpContext http, CancellationToken ct) =>
@@ -400,6 +409,7 @@ public static class SchoolEndpoints
         // Trait criteria: any staff member reads them; leadership replaces a kind. Null levelId is the school default, seeded on the first read.
         school.MapGet("/traits", (TraitKind? kind, Guid? levelId, TraitService s, CancellationToken ct) => s.GetCriteriaAsync(kind, levelId, ct));
         school.MapPut("/traits", (TraitKind? kind, Guid? levelId, SaveTraitCriteriaRequest r, TraitService s, CancellationToken ct) => s.SaveCriteriaAsync(kind, levelId, r, ct)).RequireAuthorization(admin);
+        school.MapDelete("/traits/{levelId:guid}", async (Guid levelId, TraitKind? kind, TraitService s, CancellationToken ct) => { await s.ResetCriteriaAsync(levelId, kind, ct); return Results.NoContent(); }).RequireAuthorization(admin);
 
         // Developmental areas and scale: any staff member reads them; leadership replaces them. Null levelId is the school default, seeded on the first read.
         school.MapGet("/developmental/areas", (Guid? levelId, DevelopmentalService s, CancellationToken ct) => s.GetAreasAsync(levelId, ct));

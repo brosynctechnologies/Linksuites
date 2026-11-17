@@ -108,6 +108,12 @@ public static class EmailTemplates
         {
             "otp" => ($"Your {appName} login code: {P("code")}",
                 $"Hi {P("name")},\n\nYour login code is {P("code")}. It expires in 10 minutes.\n\nIf you did not ask for it, ignore this email."),
+            "email.change_code" => ($"Your {appName} code to change your email: {P("code")}",
+                $"Hi {P("name")},\n\nEnter this code to make this your new email address: {P("code")}. It expires in 10 minutes.\n\n" +
+                "If you did not ask to change your email, ignore this email. Your account stays as it is."),
+            "email.changed" => ($"Your {appName} email address was changed",
+                $"Hi {P("name")},\n\nYour account's email address was changed to {P("email")}. From now on, sign in with that address.\n\n" +
+                "If this wasn't you, contact support straight away."),
             "password.reset" => ($"Reset your {appName} password",
                 $"Hi {P("name")},\n\nSomeone (hopefully you) asked to reset your password. Choose a new one here within 10 minutes:\n\n{P("link")}\n\n" +
                 "If you didn't ask, ignore this email: your password stays the same."),

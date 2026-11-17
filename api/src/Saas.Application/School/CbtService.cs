@@ -30,8 +30,19 @@ public sealed record CbtStaffAttemptDto(
     Guid AttemptId, DateTimeOffset StartedAt, DateTimeOffset DeadlineAt, DateTimeOffset? SubmittedAt, DateTimeOffset? ReopenedAt,
     decimal TotalMarks, decimal PaperMarks, IReadOnlyList<CbtStaffItemDto> Items);
 public sealed record CbtRosterRowDto(Guid EnrolmentId, string Name, string AdmissionNo, IReadOnlyList<CbtStaffAttemptDto> Attempts);
+/// <summary>
+/// One question across the handed-in attempts that were shown it. <see cref="SuccessRate"/> is the share answered correctly (0 to 1),
+/// <see cref="AverageMark"/> the average marks awarded (a blank answer counts as 0).
+/// </summary>
+public sealed record CbtQuestionPerformanceDto(Guid QuestionId, string Stem, decimal Marks, int HandedIn, int Correct, decimal SuccessRate, decimal AverageMark);
+/// <summary>
+/// How the class did: only each student's counted attempt (handed in and not reopened). The marks are null while nobody has handed in.
+/// <see cref="PaperMarks"/> is the highest paper total among them (draws can differ per student).
+/// </summary>
+public sealed record CbtPerformanceDto(
+    int ClassSize, int HandedIn, decimal? AverageMarks, decimal? HighestMarks, decimal? LowestMarks, decimal PaperMarks, IReadOnlyList<CbtQuestionPerformanceDto> Questions);
 /// <summary>Every student on the class roster, with their attempts newest first. Marks awarded are null until an attempt is handed in.</summary>
-public sealed record CbtAttemptsDto(Guid PaperId, string Title, DateTimeOffset? ReleasedKeyAt, IReadOnlyList<CbtRosterRowDto> Students);
+public sealed record CbtAttemptsDto(Guid PaperId, string Title, DateTimeOffset? ReleasedKeyAt, IReadOnlyList<CbtRosterRowDto> Students, CbtPerformanceDto? Performance = null);
 
 public sealed record CbtStartItemDto(Guid Id, string Stem, IReadOnlyList<string> Options);
 public sealed record CbtStartDto(Guid AttemptId, DateTimeOffset DeadlineAt, IReadOnlyList<CbtStartItemDto> Items);
@@ -205,7 +216,29 @@ public sealed class CbtService(
                 return new CbtStaffAttemptDto(a.Id, a.StartedAt, a.DeadlineAt, a.SubmittedAt, a.ReopenedAt, a.TotalMarks, shown.Sum(i => i.Marks),
                     shown.Select(i => new CbtStaffItemDto(i.Order + 1, i.Stem, i.Marks, i.MarksAwarded)).ToList());
             }).ToList())).ToList();
-        return new CbtAttemptsDto(paper.Id, paper.Title, paper.ReleasedKeyAt, rows);
+        return new CbtAttemptsDto(paper.Id, paper.Title, paper.ReleasedKeyAt, rows, Performance(roster.Count, attempts, items));
+    }
+
+    /// <summary>Class figures from each student's counted attempt: handed in and not reopened, the newest when there are several.</summary>
+    private static CbtPerformanceDto Performance(int classSize, IReadOnlyList<CbtAttempt> attempts, ILookup<Guid, CbtAttemptItem> items)
+    {
+        var counted = attempts.Where(a => a.SubmittedAt != null && a.ReopenedAt == null)
+            .GroupBy(a => a.EnrolmentId).Select(g => g.OrderByDescending(a => a.StartedAt).First()).ToList();
+        var totals = counted.Select(a => a.TotalMarks).ToList();
+        var shown = counted.SelectMany(a => items[a.Id]).ToList();
+        var paperMarks = counted.Count == 0 ? 0m : counted.Max(a => items[a.Id].Sum(i => i.Marks));
+        var questions = shown.GroupBy(i => i.BankQuestionId).Select(g =>
+        {
+            var handedIn = g.Count();
+            var correct = g.Count(i => i.ChosenIndex == i.CorrectShownIndex);
+            return new CbtQuestionPerformanceDto(g.Key, g.First().Stem, g.First().Marks, handedIn, correct,
+                Math.Round((decimal)correct / handedIn, 4), Math.Round(g.Average(i => i.MarksAwarded ?? 0m), 2));
+        }).OrderBy(q => q.SuccessRate).ThenBy(q => q.Stem, StringComparer.Ordinal).ToList();
+        return new CbtPerformanceDto(classSize, counted.Count,
+            totals.Count == 0 ? null : Math.Round(totals.Average(), 2),
+            totals.Count == 0 ? null : totals.Max(),
+            totals.Count == 0 ? null : totals.Min(),
+            paperMarks, questions);
     }
 
     /// <summary>

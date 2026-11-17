@@ -888,6 +888,8 @@ public class WordList : TenantEntity
     public Guid? LevelId { get; set; }
     public required string Name { get; set; }
     public List<string> Words { get; set; } = [];
+    /// <summary>Hides the list from students' word search. Staff still see it and can bring it back.</summary>
+    public bool Archived { get; set; }
     /// <summary>The user who wrote it.</summary>
     public Guid CreatedBy { get; set; }
 }

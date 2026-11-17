@@ -103,6 +103,12 @@ function Editor({
     }
   }
 
+  async function reset() {
+    if ((await run(() => api(`/api/school/traits/${levelId}${qs({ kind })}`, { method: "DELETE" }))).ok) {
+      onSaved("This level now uses the school's list.");
+    }
+  }
+
   return (
     <div className="space-y-4">
       {inherits && <Notice>This level uses the school&apos;s list. Change it below to give this level its own.</Notice>}
@@ -148,6 +154,11 @@ function Editor({
           >
             Add an item
           </Button>
+          {levelId && !inherits && (
+            <Button variant="ghost" onClick={reset} disabled={busy}>
+              Use the school&apos;s list
+            </Button>
+          )}
         </div>
       )}
     </div>

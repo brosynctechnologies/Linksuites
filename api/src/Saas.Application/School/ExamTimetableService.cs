@@ -87,6 +87,54 @@ public sealed class ExamTimetableService(
         return ToDto(period);
     }
 
+    /// <summary>
+    /// Changes the name, kind and dates (same body as creating one). A period stays in its term. Dates that would leave a sitting outside
+    /// the period are refused, so the sittings never sit outside their period.
+    /// </summary>
+    public async Task<ExamPeriodDto> UpdatePeriodAsync(Guid id, SaveExamPeriodRequest r, CancellationToken ct)
+    {
+        RequireLeadership();
+        var name = Required(r.Name, "name", "Enter a name for the exam period.", MaxNameLength);
+        if (r.Start == default) throw BadRequestException.Field("start", "Choose the start date.");
+        if (r.End == default) throw BadRequestException.Field("end", "Choose the end date.");
+        if (r.End < r.Start) throw BadRequestException.Field("end", "The exam period must end on or after it starts.");
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.LockAsync(LockKey(TenantId), ct);
+        var period = await FindPeriodAsync(id, ct, track: true);
+        if (r.TermId != Guid.Empty && r.TermId != period.TermId)
+            throw BadRequestException.Field("termId", "An exam period stays in its term. Create a new period in the other term instead.");
+        var outside = await db.ExamSittings.CountAsync(s => s.PeriodId == period.Id && (s.Date < r.Start || s.Date > r.End), ct);
+        if (outside > 0)
+            throw BadRequestException.Field("end", outside == 1
+                ? "1 sitting falls outside these dates. Move it or remove it first."
+                : $"{outside} sittings fall outside these dates. Move them or remove them first.");
+        period.Name = name;
+        period.Kind = r.Kind;
+        period.Start = r.Start;
+        period.End = r.End;
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return ToDto(period);
+    }
+
+    /// <summary>Deletes an exam period with no sittings. One with sittings is refused (409 <c>exam_period_has_sittings</c>) and says how many.</summary>
+    public async Task DeletePeriodAsync(Guid id, CancellationToken ct)
+    {
+        RequireLeadership();
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.LockAsync(LockKey(TenantId), ct);
+        var period = await FindPeriodAsync(id, ct, track: true);
+        var sittings = await db.ExamSittings.CountAsync(s => s.PeriodId == period.Id, ct);
+        if (sittings > 0)
+            throw new ConflictException(
+                $"This exam period has {sittings} {(sittings == 1 ? "sitting" : "sittings")}. Remove its sittings first, then delete the period.",
+                "exam_period_has_sittings");
+        db.ExamPeriods.Remove(period);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+    }
+
     public async Task<ExamPeriodViewDto> GetAsync(Guid id, CancellationToken ct)
     {
         RefuseBursar();

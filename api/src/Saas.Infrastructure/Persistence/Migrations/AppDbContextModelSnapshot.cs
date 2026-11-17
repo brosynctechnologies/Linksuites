@@ -12585,6 +12585,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<bool>("Archived")
+                        .HasColumnType("boolean")
+                        .HasColumnName("archived");
+
                     b.Property<Guid?>("ClassSubjectId")
                         .HasColumnType("uuid")
                         .HasColumnName("class_subject_id");

@@ -5,7 +5,7 @@ using Saas.Domain.School;
 namespace Saas.Application.School;
 
 public sealed record SaveWordListRequest(Guid? ClassSubjectId, Guid? LevelId, string? Name, IReadOnlyList<string>? Words);
-public sealed record WordListDto(Guid Id, Guid? ClassSubjectId, Guid? LevelId, string Name, IReadOnlyList<string> Words, Guid CreatedBy);
+public sealed record WordListDto(Guid Id, Guid? ClassSubjectId, Guid? LevelId, string Name, IReadOnlyList<string> Words, Guid CreatedBy, bool Archived = false);
 public sealed record SaveBrainTeaserRequest(Guid? LevelId, string? Prompt, string? Answer);
 public sealed record BrainTeaserDto(Guid Id, Guid? LevelId, string Prompt, string Answer, bool Archived, Guid CreatedBy);
 public sealed record PlayTeaserDto(Guid Id, string Prompt);
@@ -50,8 +50,83 @@ public sealed class PlayService(IAppDbContext db, ITenantContext tenant, ICurren
         };
         db.WordLists.Add(row);
         await db.SaveChangesAsync(ct);
-        return new WordListDto(row.Id, row.ClassSubjectId, row.LevelId, row.Name, row.Words, row.CreatedBy);
+        return ToDto(row);
     }
+
+    /// <summary>Replaces a word list (same body and rules as adding one). The writer or leadership; a list the caller can't see is 404.</summary>
+    public async Task<WordListDto> UpdateWordListAsync(Guid id, SaveWordListRequest r, CancellationToken ct)
+    {
+        RefuseBursar();
+        var row = await EditableWordListAsync(id, ct);
+        var (name, words) = CheckWordList(r.Name, r.Words, r.ClassSubjectId, r.LevelId);
+        if (r.ClassSubjectId is { } classSubjectId
+            && (!await db.ClassSubjects.AnyAsync(c => c.Id == classSubjectId, ct)
+                || (!access.IsLeadership && !await access.TeachesClassSubjectAsync(classSubjectId, ct))))
+            throw new NotFoundException("Class subject");
+        await RequireLevelAsync(r.LevelId, ct);
+        row.ClassSubjectId = r.ClassSubjectId;
+        row.LevelId = r.LevelId;
+        row.Name = name;
+        row.Words = words;
+        await db.SaveChangesAsync(ct);
+        return ToDto(row);
+    }
+
+    /// <summary>Archiving hides the list from students' word search; staff still see it. The writer or leadership.</summary>
+    public async Task<WordListDto> SetWordListArchivedAsync(Guid id, bool archived, CancellationToken ct)
+    {
+        RefuseBursar();
+        var row = await EditableWordListAsync(id, ct);
+        row.Archived = archived;
+        await db.SaveChangesAsync(ct);
+        return ToDto(row);
+    }
+
+    /// <summary>Replaces a teaser's level, prompt and answer. The writer or leadership.</summary>
+    public async Task<BrainTeaserDto> UpdateTeaserAsync(Guid id, SaveBrainTeaserRequest r, CancellationToken ct)
+    {
+        RefuseBursar();
+        var row = await EditableTeaserAsync(id, ct);
+        var (prompt, answer) = CheckTeaser(r.Prompt, r.Answer);
+        await RequireLevelAsync(r.LevelId, ct);
+        row.LevelId = r.LevelId;
+        row.Prompt = prompt;
+        row.Answer = answer;
+        await db.SaveChangesAsync(ct);
+        return ToDto(row);
+    }
+
+    /// <summary>Archiving hides the teaser from students; staff still see it. The writer or leadership.</summary>
+    public async Task<BrainTeaserDto> SetTeaserArchivedAsync(Guid id, bool archived, CancellationToken ct)
+    {
+        RefuseBursar();
+        var row = await EditableTeaserAsync(id, ct);
+        row.Archived = archived;
+        await db.SaveChangesAsync(ct);
+        return ToDto(row);
+    }
+
+    public const string NotYours = "Only the teacher who wrote it, or the principal, can change it.";
+
+    private async Task<WordList> EditableWordListAsync(Guid id, CancellationToken ct)
+    {
+        var row = await db.WordLists.FirstOrDefaultAsync(w => w.Id == id, ct) ?? throw new NotFoundException("This word list");
+        if (access.IsLeadership) return row;
+        if (row.ClassSubjectId is { } classSubjectId && !await access.TeachesClassSubjectAsync(classSubjectId, ct))
+            throw new NotFoundException("This word list");
+        if (row.CreatedBy != UserId) throw new ForbiddenException(NotYours);
+        return row;
+    }
+
+    private async Task<BrainTeaser> EditableTeaserAsync(Guid id, CancellationToken ct)
+    {
+        var row = await db.BrainTeasers.FirstOrDefaultAsync(t => t.Id == id, ct) ?? throw new NotFoundException("This teaser");
+        if (!access.IsLeadership && row.CreatedBy != UserId) throw new ForbiddenException(NotYours);
+        return row;
+    }
+
+    private static WordListDto ToDto(WordList w) => new(w.Id, w.ClassSubjectId, w.LevelId, w.Name, w.Words, w.CreatedBy, w.Archived);
+    private static BrainTeaserDto ToDto(BrainTeaser t) => new(t.Id, t.LevelId, t.Prompt, t.Answer, t.Archived, t.CreatedBy);
 
     public async Task<BrainTeaserDto> CreateTeaserAsync(SaveBrainTeaserRequest r, CancellationToken ct)
     {
@@ -77,7 +152,7 @@ public sealed class PlayService(IAppDbContext db, ITenantContext tenant, ICurren
                 if (await access.TeachesClassSubjectAsync(id, ct)) taught.Add(id);
             rows = rows.Where(w => w.ClassSubjectId is not { } id || taught.Contains(id)).ToList();
         }
-        return rows.Select(w => new WordListDto(w.Id, w.ClassSubjectId, w.LevelId, w.Name, w.Words, w.CreatedBy)).ToList();
+        return rows.Select(ToDto).ToList();
     }
 
     /// <summary>Every teaser with its answer, newest first. Staff only; the bursar is refused.</summary>
@@ -105,17 +180,17 @@ public sealed class PlayService(IAppDbContext db, ITenantContext tenant, ICurren
 
     /// <summary>
     /// The class subject's list when it is a subject of the student's class, else the school's list (the student's level first),
-    /// else the built-in list for the student's stage.
+    /// else the built-in list for the student's stage. Archived lists are skipped.
     /// </summary>
     public async Task<WordSearchDto> WordSearchAsync(Guid? classSubjectId, CancellationToken ct)
     {
         var place = await OpenAsync(ct);
         List<string>? words = null;
         if (classSubjectId is { } id && await db.ClassSubjects.AnyAsync(c => c.Id == id && c.ClassId == place.ClassId, ct))
-            words = await db.WordLists.AsNoTracking().Where(w => w.ClassSubjectId == id)
+            words = await db.WordLists.AsNoTracking().Where(w => w.ClassSubjectId == id && !w.Archived)
                 .OrderByDescending(w => w.CreatedAt).ThenByDescending(w => w.Id).Select(w => w.Words).FirstOrDefaultAsync(ct);
         words ??= await db.WordLists.AsNoTracking()
-            .Where(w => w.ClassSubjectId == null && (w.LevelId == null || w.LevelId == place.LevelId))
+            .Where(w => w.ClassSubjectId == null && !w.Archived && (w.LevelId == null || w.LevelId == place.LevelId))
             .OrderByDescending(w => w.LevelId != null).ThenByDescending(w => w.CreatedAt).ThenByDescending(w => w.Id)
             .Select(w => w.Words).FirstOrDefaultAsync(ct);
         words ??= [.. BuiltInWords(place.Stage)];

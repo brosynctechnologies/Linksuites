@@ -13,6 +13,10 @@ public sealed record TraitRatingItemDto(Guid CriterionId, string Name, int Order
 public sealed record TraitRatingsDto(Guid StudentId, Guid TermId, TraitKind Kind, IReadOnlyList<TraitRatingItemDto> Ratings);
 public sealed record SaveTraitRating(Guid CriterionId, int Value);
 public sealed record SaveTraitRatingsRequest(IReadOnlyList<SaveTraitRating>? Ratings);
+/// <summary>One rated item: <see cref="Value"/> is 1 to 5.</summary>
+public sealed record TraitBlockRowDto(string Name, int Value);
+/// <summary>The rated items of one kind ("Psychomotor" or "Affective").</summary>
+public sealed record TraitBlockDto(string Heading, IReadOnlyList<TraitBlockRowDto> Rows);
 
 /// <summary>
 /// Psychomotor and affective criteria, and the class teacher's 1–5 ratings. Ratings are not scores: saving one does not
@@ -95,6 +99,29 @@ public sealed class TraitService(IAppDbContext db, ITenantContext tenant, School
         return ToDto(levelId, traitKind, saved);
     }
 
+    /// <summary>
+    /// Leadership removes a level's own list for one kind, so the level uses the school's list again. Nothing to remove is fine.
+    /// Refused (409 <c>trait_has_ratings</c>) once any child has a rating on one of the level's own items: the ratings would lose their list.
+    /// </summary>
+    public async Task ResetCriteriaAsync(Guid levelId, TraitKind? kind, CancellationToken ct)
+    {
+        if (!access.IsLeadership) throw new ForbiddenException("Only the principal can change the trait list.");
+        await EnsureLevelAsync(levelId, ct);
+        var traitKind = RequireKind(kind);
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.LockAsync(SeedLockKey(TenantId), ct);
+        var own = await db.TraitCriteria.Where(c => c.LevelId == levelId && c.Kind == traitKind).ToListAsync(ct);
+        if (own.Count == 0) return;
+        var ids = own.Select(c => c.Id).ToList();
+        if (await db.TraitRatings.AnyAsync(r => ids.Contains(r.CriterionId), ct))
+            throw new ConflictException(
+                "Children have already been rated on this level's own list, so it can't be removed. You can still rename its items.", "trait_has_ratings");
+        db.TraitCriteria.RemoveRange(own);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+    }
+
     /// <summary>Ratings for a child the caller has already been allowed to read. Seeds the list. Does not check who is asking.</summary>
     public async Task<IReadOnlyList<TraitRatingItemDto>> RatingsForAsync(Guid levelId, Guid enrolmentId, Guid studentId, Guid termId, TraitKind kind, CancellationToken ct)
     {
@@ -167,6 +194,44 @@ public sealed class TraitService(IAppDbContext db, ITenantContext tenant, School
         }
         if (tx is not null) await tx.CommitAsync(ct);
         return await ViewAsync(studentId, term, traitKind, child.Enrolment.Id, criteria, ct);
+    }
+
+    /// <summary>
+    /// The rated items of each enrolment for the term, Psychomotor then Affective, on the level's own list or the school's. A kind with no
+    /// ratings is left out. For callers that already decided the child may be shown (the report card, the portals); checks nobody.
+    /// </summary>
+    internal static async Task<Dictionary<Guid, List<TraitBlockDto>>> RatedBlocksAsync(IAppDbContext db, Guid levelId, Guid termId, IReadOnlyList<Guid> enrolmentIds, CancellationToken ct)
+    {
+        async Task<List<TraitCriterion>> Criteria(TraitKind kind)
+        {
+            var own = await db.TraitCriteria.AsNoTracking().Where(c => c.LevelId == levelId && c.Kind == kind).OrderBy(c => c.Order).ThenBy(c => c.Name).ToListAsync(ct);
+            if (own.Count > 0) return own;
+            return await db.TraitCriteria.AsNoTracking().Where(c => c.LevelId == null && c.Kind == kind).OrderBy(c => c.Order).ThenBy(c => c.Name).ToListAsync(ct);
+        }
+
+        var psychomotor = await Criteria(TraitKind.Psychomotor);
+        var affective = await Criteria(TraitKind.Affective);
+        var criterionIds = psychomotor.Select(c => c.Id).Concat(affective.Select(c => c.Id)).ToList();
+        var ids = enrolmentIds.ToList();
+        var ratings = criterionIds.Count == 0 || ids.Count == 0
+            ? []
+            : await db.TraitRatings.AsNoTracking()
+                .Where(r => r.TermId == termId && ids.Contains(r.EnrolmentId) && criterionIds.Contains(r.CriterionId))
+                .Select(r => new { r.EnrolmentId, r.CriterionId, r.Value }).ToListAsync(ct);
+        var byEnrolment = ratings.GroupBy(r => r.EnrolmentId).ToDictionary(g => g.Key, g => g.ToDictionary(r => r.CriterionId, r => r.Value));
+
+        List<TraitBlockDto> Blocks(Guid enrolmentId)
+        {
+            if (!byEnrolment.TryGetValue(enrolmentId, out var mine)) return [];
+            TraitBlockDto? Block(string heading, IReadOnlyList<TraitCriterion> criteria)
+            {
+                var rows = criteria.Where(c => mine.ContainsKey(c.Id)).Select(c => new TraitBlockRowDto(c.Name, mine[c.Id])).ToList();
+                return rows.Count == 0 ? null : new TraitBlockDto(heading, rows);
+            }
+            return new[] { Block("Psychomotor", psychomotor), Block("Affective", affective) }.OfType<TraitBlockDto>().ToList();
+        }
+
+        return ids.Distinct().ToDictionary(id => id, Blocks);
     }
 
     private async Task<Child> LoadChildAsync(Guid studentId, Guid termId, CancellationToken ct)
