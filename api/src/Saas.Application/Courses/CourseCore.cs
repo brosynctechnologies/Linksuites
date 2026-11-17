@@ -98,6 +98,11 @@ public sealed class CourseCore(
             db.Enrollments.Add(enrollment);
             await db.Courses.Where(c => c.Id == course.Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.StudentsCount, c => c.StudentsCount + 1), ct);
         }
+        else if (enrollment.Revoked)
+        {
+            // Back after a refund: the refund took them off the count, so they are counted again.
+            await db.Courses.Where(c => c.Id == course.Id).ExecuteUpdateAsync(s => s.SetProperty(c => c.StudentsCount, c => c.StudentsCount + 1), ct);
+        }
         enrollment.Revoked = false;
         enrollment.OrderId ??= orderId;
         return enrollment;

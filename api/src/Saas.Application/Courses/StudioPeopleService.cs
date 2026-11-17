@@ -13,10 +13,10 @@ public sealed class StudioPeopleService(IAppDbContext db, CourseCore core, PlanS
     public async Task<StudioDashboardDto> DashboardAsync(CancellationToken ct)
     {
         var academy = await core.AcademyAsync(ct);
-        var monthStart = new DateTimeOffset(core.Now.Year, core.Now.Month, 1, 0, 0, 0, TimeSpan.Zero);
+        var monthStart = CourseRules.MonthStartInLagos(core.Now); // studio dates are shown in Lagos time
         var ledger = await LedgerAsync(ct);
         var students = await db.Enrollments.Where(e => !e.Revoked).Select(e => e.UserId).Distinct().CountAsync(ct);
-        var thisMonth = await db.Enrollments.CountAsync(e => e.CreatedAt >= monthStart, ct);
+        var thisMonth = await db.Enrollments.CountAsync(e => e.CreatedAt >= monthStart && !e.Revoked, ct);
         var revenue = await db.Earnings.Where(e => e.Source == EarningSource.CourseOrder && !e.Reversed && e.CreatedAt >= monthStart).SumAsync(e => (long?)e.NetMinor, ct) ?? 0;
         var ratings = await db.Courses.Where(c => c.RatingCount > 0).Select(c => new { c.RatingAverage, c.RatingCount }).ToListAsync(ct);
         var rating = ratings.Sum(r => r.RatingCount) == 0 ? 0 : Math.Round(ratings.Sum(r => r.RatingAverage * r.RatingCount) / ratings.Sum(r => r.RatingCount), 1);

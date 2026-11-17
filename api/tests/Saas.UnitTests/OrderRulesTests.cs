@@ -86,6 +86,22 @@ public class WhatsAppMessageTests
     }
 
     [Fact]
+    public void WhatsAppMessage_DeliveryWithoutZone_SaysToBeAgreed()
+    {
+        var order = new Order
+        {
+            Number = 7, Code = "ZZ", CustomerName = "Ada", Phone = "2348030000000", Currency = "NGN",
+            Fulfilment = Fulfilment.Delivery, DeliveryZoneId = null, DeliveryFeeMinor = 0, TotalMinor = 100_000,
+            Items = [new OrderItem { NameSnapshot = "Chapman", Quantity = 1, LineTotalMinor = 100_000 }],
+        };
+
+        var message = WhatsAppMessage.Build(order, "https://yourapp.com/o/ZZ");
+
+        Assert.Contains("Delivery - to be agreed", message);
+        Assert.DoesNotContain("₦0", message);
+    }
+
+    [Fact]
     public void Link_url_encodes_the_text() =>
         Assert.Equal("https://wa.me/2348031234567?text=Hi%20%26%20%231", WhatsAppMessage.Link("2348031234567", "Hi & #1"));
 }

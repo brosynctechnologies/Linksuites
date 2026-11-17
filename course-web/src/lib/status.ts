@@ -35,6 +35,8 @@ export const PAYOUT_STATUS: Record<PayoutStatus, { label: string; tone: Tone }> 
 export const EARNING_STATUS: Record<EarningStatus, { label: string; tone: Tone }> = {
   Pending: { label: "Pending", tone: "lagoon" },
   Available: { label: "Available", tone: "lime" },
+  PartlyAvailable: { label: "Partly available", tone: "lime" },
+  Requested: { label: "In payout", tone: "lagoon" },
   PaidOut: { label: "Paid out", tone: "neutral" },
   Reversed: { label: "Refunded", tone: "brick" },
 };

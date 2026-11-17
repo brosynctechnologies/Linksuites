@@ -161,10 +161,12 @@ public sealed class LearnService(IAppDbContext db, CourseCore core, IPaymentGate
         progress.PositionSec = Math.Max(0, r.PositionSec);
         // Quizzes complete only by passing an attempt.
         if (r.Completed && lesson.Type != LessonType.Quiz) progress.CompletedAt ??= core.Now;
-        if (lesson.Type == LessonType.Video && lesson.DurationSec == 0 && r.PositionSec > 0 && r.Completed)
+        // Learn the length of a video the server couldn't probe from the duration the player reports, never from a learner's
+        // position (a "Mark complete" halfway through would set the length every learner and the marketplace see).
+        if (lesson.Type == LessonType.Video && lesson.DurationSec == 0 && r.MediaDurationSec is > 0 and <= 24 * 3600)
         {
             var tracked = await db.Lessons.FirstAsync(l => l.Id == lessonId, ct);
-            tracked.DurationSec = r.PositionSec; // learn the length from the first full watch when the server couldn't probe it
+            tracked.DurationSec = r.MediaDurationSec.Value;
         }
         enrollment.LastLessonId = lessonId;
         await db.SaveChangesAsync(ct);

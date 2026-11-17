@@ -11,7 +11,16 @@ import { useApi } from "@/lib/use-api";
 import { useCan } from "@/lib/permissions";
 import type { BusinessDto, ItemDto, RecurringDto, RecurringFrequency, SaveRecurringRequest, TaxRateDto, TemplateDto } from "@/lib/types";
 import { ClientPicker, type PickedClient } from "@/components/client-picker";
-import { LineItemsEditor, editorLinesFrom, isBlankLine, mathInput, newLine, toLineRequests, type EditorLine } from "@/components/line-items-editor";
+import {
+  LineItemsEditor,
+  editorLinesFrom,
+  hasDeletedRate,
+  isBlankLine,
+  mathInput,
+  newLine,
+  toLineRequests,
+  type EditorLine,
+} from "@/components/line-items-editor";
 import { TemplatePicker } from "@/components/template-picker";
 import {
   ApiErrorView,
@@ -212,6 +221,8 @@ function RecurringForm({
     if (!client) return setError("Choose or add a client.");
     const reqLines = toLineRequests(lines);
     if (!reqLines.length) return setError("Add at least one line item.");
+    if (lines.some((l) => !isBlankLine(l) && hasDeletedRate(l, taxRates)))
+      return setError("A line's tax rate was deleted. Choose a current rate (or No tax) for it.");
     if (endDate && endDate < startDate) return setError("The end date can't be before the start date.");
     const body: SaveRecurringRequest = {
       clientId: client.id,

@@ -1,13 +1,48 @@
 import type { MetadataRoute } from "next";
-import { SITE_URL } from "@/lib/config";
+import { API_URL, SITE_URL } from "@/lib/config";
 
-/**
- * The marketing pages. Stores and their products are public and indexable, but the API has no endpoint that lists every
- * store, so they can't be enumerated here yet; add them (with generateSitemaps past 50,000 URLs) once it does.
- */
-export default function sitemap(): MetadataRoute.Sitemap {
+/** Rebuilt at most hourly; the store list changes slowly. */
+export const revalidate = 3600;
+
+interface SlugPage {
+  items: { slug: string; updatedAt: string }[];
+  total: number;
+}
+
+const PAGE_SIZE = 1000;
+/** A single sitemap holds up to 50,000 URLs; past that, split with generateSitemaps. */
+const MAX_STORES = 45_000;
+
+/** Every public store (active business with something for sale), from GET /api/public/stores. */
+async function storeSlugs(): Promise<SlugPage["items"]> {
+  const all: SlugPage["items"] = [];
+  try {
+    for (let page = 1; all.length < MAX_STORES; page++) {
+      const res = await fetch(`${API_URL}/api/public/stores?page=${page}&pageSize=${PAGE_SIZE}`, {
+        headers: { Accept: "application/json" },
+        next: { revalidate },
+      });
+      if (!res.ok) break;
+      const body = (await res.json()) as SlugPage;
+      all.push(...body.items);
+      if (body.items.length < PAGE_SIZE || page * PAGE_SIZE >= body.total) break;
+    }
+  } catch {
+    // The API is down: still serve the marketing pages.
+  }
+  return all;
+}
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const stores = await storeSlugs();
   return [
     { url: `${SITE_URL}/`, changeFrequency: "monthly", priority: 1 },
     { url: `${SITE_URL}/signup`, changeFrequency: "yearly", priority: 0.6 },
+    ...stores.map((s) => ({
+      url: `${SITE_URL}/${encodeURIComponent(s.slug)}`,
+      lastModified: s.updatedAt,
+      changeFrequency: "daily" as const,
+      priority: 0.8,
+    })),
   ];
 }

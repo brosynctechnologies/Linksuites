@@ -66,7 +66,7 @@ export function CartView({ store }: { store: PublicStoreDto }) {
           const atStockLimit = stock != null && qty >= stock;
           return (
             <li key={`${l.productId}:${l.variantId ?? ""}`} className="flex gap-3 py-4">
-              <Link href={`/${slug}/p/${l.productSlug}`} className="shrink-0 rounded-control" tabIndex={-1} aria-hidden="true">
+              <Link href={`/${slug}/p/${s?.productSlug ?? l.productSlug}`} className="shrink-0 rounded-control" tabIndex={-1} aria-hidden="true">
                 {l.imageUrl ? (
                   <img src={l.imageUrl} alt="" className="h-20 w-20 rounded-control bg-paper object-cover" />
                 ) : (
@@ -76,7 +76,7 @@ export function CartView({ store }: { store: PublicStoreDto }) {
               <div className="flex min-w-0 flex-1 flex-col">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <Link href={`/${slug}/p/${l.productSlug}`} className="block truncate font-medium text-ink hover:underline">
+                    <Link href={`/${slug}/p/${s?.productSlug ?? l.productSlug}`} className="block truncate font-medium text-ink hover:underline">
                       {l.name}
                     </Link>
                     {l.variantTitle && <p className="text-xs text-muted">{l.variantTitle}</p>}

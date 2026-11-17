@@ -32,6 +32,25 @@ public sealed class StorefrontService(
             store.Currency, store.ThemeColor, store.IsOpen, zones, categories, showBranding, hasDiscounts);
     }
 
+    /// <summary>
+    /// Slugs of the stores anyone can browse, for the sitemap: the business is active and the store has at least one
+    /// product for sale. Paged, newest first by last change.
+    /// </summary>
+    public async Task<Paged<PublicSlugDto>> ListStoresAsync(int page, int pageSize, CancellationToken ct)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 1000);
+        var query = db.Stores.IgnoreQueryFilters().AsNoTracking()
+            .Where(s => db.Tenants.Any(t => t.Id == s.TenantId && t.Status == TenantStatus.Active))
+            .Where(s => db.Products.IgnoreQueryFilters().Any(p => p.StoreId == s.Id && p.IsActive));
+        var total = await query.CountAsync(ct);
+        var items = await query.OrderBy(s => s.Slug)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(s => new PublicSlugDto(s.Slug, s.UpdatedAt ?? s.CreatedAt))
+            .ToListAsync(ct);
+        return new Paged<PublicSlugDto>(items, page, pageSize, total);
+    }
+
     public async Task<IReadOnlyList<PublicProductDto>> GetProductsAsync(string slug, CancellationToken ct)
     {
         await ResolveAsync(slug, ct);
@@ -168,7 +187,8 @@ public sealed class StorefrontService(
             order.Fulfilment,
             order.Items.Select(i => new PublicOrderItemDto(i.NameSnapshot, i.VariantSnapshot, i.Quantity, i.LineTotalMinor)).ToList(),
             order.SubtotalMinor, order.DeliveryFeeMinor, order.DiscountMinor, order.TotalMinor, order.Currency,
-            order.CreatedAt, WhatsAppMessage.Link(store.WhatsappNumber, order.WhatsappMessage), showBranding);
+            order.CreatedAt, WhatsAppMessage.Link(store.WhatsappNumber, order.WhatsappMessage), showBranding,
+            order.Fulfilment == Fulfilment.Delivery && order.DeliveryZoneId is null && order.DeliveryFeeMinor == 0);
     }
 
     /// <summary>Finds the store by slug and scopes the rest of the request to its tenant.</summary>
@@ -198,7 +218,8 @@ public sealed class StorefrontService(
         long TotalMinor)
     {
         public QuoteDto ToDto(string currency) => new(
-            Lines.Select(l => new QuoteLineDto(l.ProductId, l.VariantId, l.Name, l.Variant, l.UnitPriceMinor, l.Quantity, l.LineTotalMinor, l.StockQty)).ToList(),
+            Lines.Select(l => new QuoteLineDto(l.ProductId, l.VariantId, l.Name, l.Variant, l.UnitPriceMinor, l.Quantity, l.LineTotalMinor, l.StockQty,
+                Products[l.ProductId].Slug)).ToList(),
             SubtotalMinor, DeliveryFeeMinor, Discount.AmountMinor, TotalMinor, currency, Discount.Message);
     }
 

@@ -90,9 +90,26 @@ public class CourseMoneyTests
         Assert.Equal(900_000, ledger.PendingMinor);
         Assert.Equal(300_000, ledger.AvailableMinor); // 1,000,000 matured - 700,000 requested or paid
         Assert.Equal(LedgerRules.EarningState.PaidOut, ledger.States[old1.Id]);
-        Assert.Equal(LedgerRules.EarningState.Available, ledger.States[old2.Id]);
+        Assert.Equal(LedgerRules.EarningState.PartlyAvailable, ledger.States[old2.Id]); // 100,000 of it is in the requested payout
         Assert.Equal(LedgerRules.EarningState.Pending, ledger.States[fresh.Id]);
         Assert.Equal(LedgerRules.EarningState.Reversed, ledger.States[refunded.Id]);
+    }
+
+    [Fact]
+    public void Ledger_marks_earnings_in_a_requested_payout_and_none_available_when_nothing_is()
+    {
+        var a = new LedgerRules.LedgerEntry(Guid.NewGuid(), 500_000, Now.AddDays(-10), false, Now.AddDays(-17));
+        var b = new LedgerRules.LedgerEntry(Guid.NewGuid(), 300_000, Now.AddDays(-5), false, Now.AddDays(-12));
+
+        var requested = LedgerRules.Balance([a, b], requestedOrPaidMinor: 800_000, paidMinor: 0, Now);
+        Assert.Equal(0, requested.AvailableMinor);
+        Assert.Equal(LedgerRules.EarningState.Requested, requested.States[a.Id]);
+        Assert.Equal(LedgerRules.EarningState.Requested, requested.States[b.Id]);
+        Assert.DoesNotContain(requested.States.Values, s => s is LedgerRules.EarningState.Available or LedgerRules.EarningState.PartlyAvailable);
+
+        var mixed = LedgerRules.Balance([a, b], requestedOrPaidMinor: 800_000, paidMinor: 500_000, Now);
+        Assert.Equal(LedgerRules.EarningState.PaidOut, mixed.States[a.Id]);
+        Assert.Equal(LedgerRules.EarningState.Requested, mixed.States[b.Id]);
     }
 
     [Theory]

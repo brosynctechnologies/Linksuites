@@ -61,6 +61,8 @@ export const PAYOUT_STATUS: Map = {
 export const EARNING_STATUS: Map = {
   Pending: { label: "Pending", tone: "ochre" },
   Available: { label: "Available", tone: "seal" },
+  PartlyAvailable: { label: "Partly available", tone: "seal" },
+  Requested: { label: "In payout", tone: "ochre" },
   PaidOut: { label: "Paid out", tone: "neutral" },
   Reversed: { label: "Refunded", tone: "brick" },
 };

@@ -78,6 +78,8 @@ const STAMPS: Record<string, StampKind> = {
   Overdue: "Overdue",
   Void: "Void",
   Accepted: "Accepted",
+  // The PDF stamps a converted quote "ACCEPTED" too.
+  Converted: "Accepted",
   Declined: "Declined",
   Expired: "Expired",
 };

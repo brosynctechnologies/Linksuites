@@ -84,6 +84,9 @@ public static class OrderSystemEndpoints
         api.MapGet("/dashboard", (OrderAdminService s, CancellationToken ct) => s.DashboardAsync(ct)).WithTags("Orders");
 
         var pub = app.MapGroup("/api/public").WithTags("Storefront");
+        // Store slugs for the sitemap (active businesses with something for sale).
+        pub.MapGet("/stores", (int? page, int? pageSize, StorefrontService s, CancellationToken ct) =>
+            s.ListStoresAsync(page ?? 1, pageSize ?? 500, ct));
         pub.MapGet("/stores/{slug}", (string slug, StorefrontService s, CancellationToken ct) => s.GetStoreAsync(slug, ct));
         pub.MapGet("/stores/{slug}/products", (string slug, StorefrontService s, CancellationToken ct) => s.GetProductsAsync(slug, ct));
         pub.MapGet("/stores/{slug}/products/{productSlug}", (string slug, string productSlug, StorefrontService s, CancellationToken ct) =>

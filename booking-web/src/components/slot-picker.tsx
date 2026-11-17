@@ -23,8 +23,8 @@ import { ErrorBox, Skeleton } from "./ui";
 
 /** Where availability comes from: the public booking page, or the signed-in business (/api/availability). */
 export type SlotSource =
-  | { kind: "public"; slug: string; serviceId: string; staffId: string | null }
-  | { kind: "app"; serviceId: string; staffId: string | null };
+  | { kind: "public"; slug: string; serviceId: string; staffId: string | null; /** Manage token of a booking being moved. */ excludeToken?: string }
+  | { kind: "app"; serviceId: string; staffId: string | null; /** Booking being moved: its own time doesn't block. */ excludeBookingId?: string };
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -68,7 +68,7 @@ export function DateSlotPicker({
 
   const daysPath =
     source.kind === "public"
-      ? `/api/public/book/${encodeURIComponent(source.slug)}/days${qs({ serviceId: source.serviceId, staffId: source.staffId, month })}`
+      ? `/api/public/book/${encodeURIComponent(source.slug)}/days${qs({ serviceId: source.serviceId, staffId: source.staffId, month, excludeToken: source.excludeToken })}`
       : null;
   const days = useApi<DayAvailability[]>(daysPath, { auth: false, nonce: refreshKey });
   const dayMap = useMemo(() => {
@@ -94,13 +94,18 @@ export function DateSlotPicker({
 
   const slotsPath = date
     ? source.kind === "public"
-      ? `/api/public/book/${encodeURIComponent(source.slug)}/availability${qs({ serviceId: source.serviceId, staffId: source.staffId, date })}`
-      : `/api/availability${qs({ serviceId: source.serviceId, staffId: source.staffId, date })}`
+      ? `/api/public/book/${encodeURIComponent(source.slug)}/availability${qs({ serviceId: source.serviceId, staffId: source.staffId, date, excludeToken: source.excludeToken })}`
+      : `/api/availability${qs({ serviceId: source.serviceId, staffId: source.staffId, date, excludeBookingId: source.excludeBookingId })}`
     : null;
   const slots = useApi<AvailabilityDto>(slotsPath, { auth: source.kind === "app", nonce: refreshKey });
   const tz = slots.data?.timezone || timezone;
   const list = useMemo(
-    () => (slots.data && !slots.loading ? slots.data.slots.filter((s) => s.startsAt !== excludeStartsAt) : []),
+    // Compare instants, not strings: slots carry the business offset, the booking's time comes back in UTC.
+    () => {
+      if (!slots.data || slots.loading) return [];
+      const current = excludeStartsAt ? Date.parse(excludeStartsAt) : NaN;
+      return slots.data.slots.filter((s) => Date.parse(s.startsAt) !== current);
+    },
     [slots.data, slots.loading, excludeStartsAt],
   );
   const groups = useMemo(() => groupByDayPart(list, tz), [list, tz]);

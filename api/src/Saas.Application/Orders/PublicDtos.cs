@@ -40,7 +40,7 @@ public sealed record PlaceOrderRequest : QuoteRequest
 
 public sealed record QuoteLineDto(
     Guid ProductId, Guid? VariantId, string Name, string? Variant, long UnitPriceMinor, int Quantity, long LineTotalMinor,
-    int? StockQty = null);
+    int? StockQty = null, string? ProductSlug = null);
 
 public sealed record QuoteDto(
     IReadOnlyList<QuoteLineDto> Lines, long SubtotalMinor, long DeliveryFeeMinor, long DiscountMinor,
@@ -53,7 +53,8 @@ public sealed record PublicOrderItemDto(string Name, string? Variant, int Quanti
 public sealed record PublicOrderDto(
     string Code, long Number, string StoreName, string StoreSlug, OrderStatus Status, OrderPaymentStatus PaymentStatus,
     Fulfilment Fulfilment, IReadOnlyList<PublicOrderItemDto> Items, long SubtotalMinor, long DeliveryFeeMinor,
-    long DiscountMinor, long TotalMinor, string Currency, DateTimeOffset CreatedAt, string WhatsappUrl, bool ShowBranding);
+    long DiscountMinor, long TotalMinor, string Currency, DateTimeOffset CreatedAt, string WhatsappUrl, bool ShowBranding,
+    bool DeliveryToBeAgreed = false);
 
 public sealed class QuoteRequestValidator : AbstractValidator<QuoteRequest>
 {
@@ -84,3 +85,6 @@ public sealed class PlaceOrderRequestValidator : AbstractValidator<PlaceOrderReq
         RuleFor(x => x.Note).MaximumLength(500);
     }
 }
+
+/// <summary>A public page's slug and when it last changed, for sitemaps.</summary>
+public sealed record PublicSlugDto(string Slug, DateTimeOffset UpdatedAt);

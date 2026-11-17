@@ -62,7 +62,7 @@ export default function CustomersPage() {
                   <span className="block truncate text-sm text-muted">{c.phone}</span>
                 </span>
                 <span className="hidden text-sm sm:block">
-                  {c.bookingsCount} visit{c.bookingsCount === 1 ? "" : "s"}
+                  {c.completedCount} visit{c.completedCount === 1 ? "" : "s"}
                   {c.noShowCount > 0 && (
                     <span className="block font-semibold text-brick">
                       {c.noShowCount} no-show{c.noShowCount === 1 ? "" : "s"}

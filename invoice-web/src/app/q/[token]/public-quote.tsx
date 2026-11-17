@@ -37,8 +37,11 @@ export function PublicQuote() {
     setBusy(action);
     setActionError(null);
     try {
-      setData(await api<PublicQuoteDto>(`${base}/${action}`, { method: "POST", auth: false }));
-      setDone(action === "accept" ? "Thanks — you accepted this quote. The sender has been notified." : "You declined this quote. The sender has been notified.");
+      const result = await api<PublicQuoteDto>(`${base}/${action}`, { method: "POST", auth: false });
+      setData(result);
+      // Only say the sender was told when the server actually emailed them.
+      const told = result.senderNotified ? " The sender has been notified." : "";
+      setDone(action === "accept" ? `Thanks — you accepted this quote.${told}` : `You declined this quote.${told}`);
     } catch (e) {
       setActionError(toApiError(e));
     } finally {

@@ -5,7 +5,11 @@ public static class LedgerRules
 {
     public const long MinimumPayoutMinor = 500_000;
 
-    public enum EarningState { Pending, Available, PaidOut, Reversed }
+    /// <summary>
+    /// <c>Requested</c>: wholly covered by payouts (at least partly one still waiting to be paid). <c>PartlyAvailable</c>:
+    /// some of it is covered by payouts, the rest can still be requested.
+    /// </summary>
+    public enum EarningState { Pending, Available, PaidOut, Reversed, Requested, PartlyAvailable }
 
     public sealed record LedgerEntry(Guid Id, long NetMinor, DateTimeOffset AvailableAt, bool Reversed, DateTimeOffset CreatedAt);
 
@@ -20,14 +24,22 @@ public static class LedgerRules
         var states = new Dictionary<Guid, EarningState>();
         var pending = 0L;
         var matured = 0L;
-        var toCover = paidMinor;
+        // Paid payouts cover the oldest earnings first, then payouts still waiting cover the next ones.
+        var paidLeft = paidMinor;
+        var requestedLeft = Math.Max(0, requestedOrPaidMinor - paidMinor);
         foreach (var e in earnings.OrderBy(e => e.AvailableAt).ThenBy(e => e.CreatedAt))
         {
             if (e.Reversed) { states[e.Id] = EarningState.Reversed; continue; }
             if (e.AvailableAt > now) { states[e.Id] = EarningState.Pending; pending += e.NetMinor; continue; }
             matured += e.NetMinor;
-            if (toCover >= e.NetMinor) { states[e.Id] = EarningState.PaidOut; toCover -= e.NetMinor; }
-            else { states[e.Id] = EarningState.Available; toCover = 0; }
+            if (paidLeft >= e.NetMinor) { states[e.Id] = EarningState.PaidOut; paidLeft -= e.NetMinor; continue; }
+            var need = e.NetMinor - paidLeft;
+            var coveredByPaid = paidLeft;
+            paidLeft = 0;
+            if (requestedLeft >= need) { states[e.Id] = EarningState.Requested; requestedLeft -= need; continue; }
+            var covered = coveredByPaid + requestedLeft;
+            requestedLeft = 0;
+            states[e.Id] = covered > 0 ? EarningState.PartlyAvailable : EarningState.Available;
         }
         return new Ledger(pending, Math.Max(0, matured - requestedOrPaidMinor), paidMinor, states);
     }

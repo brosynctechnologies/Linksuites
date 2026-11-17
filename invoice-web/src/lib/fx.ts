@@ -27,10 +27,10 @@ export function parseRate(s: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-/** A rate as an input string (up to 6 decimals, no trailing zeros). */
+/** A rate as an input string with the API's precision (up to 8 decimals, no trailing zeros), so a saved rate round-trips unchanged. */
 export function rateInput(rate: number | null | undefined): string {
   if (!rate || !Number.isFinite(rate)) return "";
-  return String(Number(rate.toFixed(6)));
+  return String(Number(rate.toFixed(8)));
 }
 
 /** Convert minor units of a foreign currency to base minor units. */

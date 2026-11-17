@@ -30,7 +30,9 @@ export function ProductPurchase({
 
   const unitPrice = variant?.priceMinor ?? product.priceMinor;
   const inStock = product.inStock && (!variant || variant.inStock) && !comboMissing;
-  const showCompare = !variant?.priceMinor && product.compareAtPriceMinor != null && product.compareAtPriceMinor > product.priceMinor;
+  // A variant's price is always filled (it falls back to the product price), so compare the
+  // price actually shown with the product price rather than checking for an empty variant price.
+  const showCompare = unitPrice === product.priceMinor && product.compareAtPriceMinor != null && product.compareAtPriceMinor > product.priceMinor;
 
   /** Is there any in-stock variant that matches the current selection with `value` at option `index`? */
   function available(index: number, value: string) {

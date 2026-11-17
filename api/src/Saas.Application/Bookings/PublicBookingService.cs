@@ -18,6 +18,23 @@ public sealed class PublicBookingService(
     ISecretProtector secrets,
     ILogger<PublicBookingService> logger)
 {
+    /// <summary>
+    /// Slugs of the booking pages anyone can open, for the sitemap: the business is active and takes bookings online.
+    /// Paged, ordered by slug.
+    /// </summary>
+    public async Task<Paged<Saas.Application.Orders.PublicSlugDto>> ListPagesAsync(int page, int pageSize, CancellationToken ct)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 1000);
+        var query = db.BookingBusinesses.IgnoreQueryFilters().AsNoTracking()
+            .Where(b => b.BookingEnabled && db.Tenants.Any(t => t.Id == b.TenantId && t.Status == TenantStatus.Active));
+        var total = await query.CountAsync(ct);
+        var items = await query.OrderBy(b => b.Slug).Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(b => new Saas.Application.Orders.PublicSlugDto(b.Slug, b.UpdatedAt ?? b.CreatedAt))
+            .ToListAsync(ct);
+        return new Paged<Saas.Application.Orders.PublicSlugDto>(items, page, pageSize, total);
+    }
+
     public async Task<PublicBookingPageDto> PageAsync(string slug, CancellationToken ct)
     {
         var b = await ResolveAsync(slug, ct);
@@ -41,30 +58,42 @@ public sealed class PublicBookingService(
             hours);
     }
 
-    public async Task<AvailabilityDto> AvailabilityAsync(string slug, Guid serviceId, Guid? staffId, DateOnly date, CancellationToken ct)
+    public async Task<AvailabilityDto> AvailabilityAsync(string slug, Guid serviceId, Guid? staffId, DateOnly date, CancellationToken ct,
+        string? excludeToken = null)
     {
         var b = await ResolveAsync(slug, ct);
         var service = await ActiveServiceAsync(serviceId, ct);
-        var slots = b.BookingEnabled ? await core.SlotsAsync(b, service, staffId, date, forPublic: true, ignoreHours: false, null, ct) : [];
+        var exclude = await ExcludedBookingAsync(excludeToken, ct);
+        var slots = b.BookingEnabled ? await core.SlotsAsync(b, service, staffId, date, forPublic: true, ignoreHours: false, exclude, ct) : [];
         return new AvailabilityDto(date, b.Timezone, slots.Select(s => new SlotDto(s.StartsAt, s.EndsAt, s.StaffIds)).ToList());
     }
 
-    public async Task<IReadOnlyList<DayAvailabilityDto>> DaysAsync(string slug, Guid serviceId, Guid? staffId, string month, CancellationToken ct)
+    public async Task<IReadOnlyList<DayAvailabilityDto>> DaysAsync(string slug, Guid serviceId, Guid? staffId, string month, CancellationToken ct,
+        string? excludeToken = null)
     {
         if (!DateOnly.TryParseExact($"{month}-01", "yyyy-MM-dd", out var first)) throw BadRequestException.Field("month", "Use YYYY-MM.");
         var b = await ResolveAsync(slug, ct);
         var service = await ActiveServiceAsync(serviceId, ct);
         var zone = AvailabilityEngine.Zone(b.Timezone);
         var today = AvailabilityEngine.LocalDate(core.Now, zone);
+        var exclude = await ExcludedBookingAsync(excludeToken, ct);
         var result = new List<DayAvailabilityDto>();
         for (var d = first; d.Month == first.Month; d = d.AddDays(1))
         {
             var open = b.BookingEnabled && d >= today && d <= today.AddDays(b.MaxDaysAhead)
-                && (await core.SlotsAsync(b, service, staffId, d, forPublic: true, ignoreHours: false, null, ct)).Count > 0;
+                && (await core.SlotsAsync(b, service, staffId, d, forPublic: true, ignoreHours: false, exclude, ct)).Count > 0;
             result.Add(new DayAvailabilityDto(d, open));
         }
         return result;
     }
+
+    /// <summary>
+    /// The booking a customer is moving, from their manage token, so its own time doesn't block the new one. Scoped to this
+    /// business (the tenant is already set from the slug); an unknown token excludes nothing.
+    /// </summary>
+    private async Task<Guid?> ExcludedBookingAsync(string? token, CancellationToken ct) =>
+        string.IsNullOrWhiteSpace(token) ? null
+            : await db.Bookings.AsNoTracking().Where(x => x.ManageToken == token).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct);
 
     public async Task<PublicBookResult> BookAsync(string slug, PublicBookRequest r, CancellationToken ct)
     {

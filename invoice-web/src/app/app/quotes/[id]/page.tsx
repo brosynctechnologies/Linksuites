@@ -157,7 +157,7 @@ export default function QuotePage() {
         </div>
 
         <div className="min-w-0 lg:col-start-1 lg:row-span-2 lg:row-start-1">
-          {business ? <InvoicePreview doc={previewFromDoc(quote, business)} /> : <DocumentSkeleton />}
+          {business ? <InvoicePreview doc={previewFromDoc(quote, business, quote.showBranding ?? false)} /> : <DocumentSkeleton />}
         </div>
 
         <aside className={cx(panelClass, "divide-y divide-rule-soft lg:col-start-2 lg:row-start-2")} aria-label="Total and activity">

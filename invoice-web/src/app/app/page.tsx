@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
+import { todayISO } from "@/lib/dates";
 import { useCan } from "@/lib/permissions";
 import { formatMoney } from "@/lib/money";
 import { useApi } from "@/lib/use-api";
@@ -9,6 +10,12 @@ import type { InvoiceDashboardDto } from "@/lib/types";
 import { InvoiceList } from "@/components/doc-rows";
 import { ApiErrorView, EmptyState, PageHeader, PageLoader, SummaryStrip, buttonClass, cx, linkClass, panelClass } from "@/components/ui";
 import { InvoiceIcon, PlusIcon } from "@/components/icons";
+
+/** The invoice list filtered to payments dated this month, matching the "Paid this month" figure. */
+function paidThisMonthHref() {
+  const today = todayISO();
+  return `/app/invoices?paidFrom=${today.slice(0, 8)}01&paidTo=${today}`;
+}
 
 export default function DashboardPage() {
   const auth = useAuth();
@@ -45,7 +52,8 @@ export default function DashboardPage() {
                 tone: data.overdueCount > 0 ? "red" : undefined,
                 href: "/app/invoices?status=Overdue",
               },
-              { label: "Paid this month", value: formatMoney(data.paidThisMonthMinor, data.currency), tone: "green", href: "/app/invoices?status=Paid" },
+              // Payments dated this month, part payments included: open the invoices those payments are on.
+              { label: "Paid this month", value: formatMoney(data.paidThisMonthMinor, data.currency), tone: "green", href: paidThisMonthHref() },
               { label: "Drafts", value: String(data.draftCount), sub: "Not sent yet", href: "/app/invoices?status=Draft" },
             ]}
           />

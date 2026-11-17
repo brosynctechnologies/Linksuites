@@ -178,7 +178,7 @@ export function toPreviewRequest(d: GeneratorDraft): PreviewRequest {
     items: d.lines
       .filter((l) => !isBlankLine(l))
       .map((l) => ({
-        description: l.description.trim(),
+        description: clip(l.description, MAX.description),
         quantity: parseNumber(l.quantity),
         unitPriceMinor: toMinor(l.unitPrice) ?? 0,
         discountPercent: Math.min(100, Math.max(0, parseNumber(l.discountPercent))),
@@ -193,6 +193,29 @@ export function toPreviewRequest(d: GeneratorDraft): PreviewRequest {
 const blank = (v: string | null | undefined) => !v || !v.trim();
 
 /**
+ * The API's length limits (InvoiceDtos.cs validators). The generator doesn't enforce them, so a long field is cut here
+ * rather than failing the whole import with a 400.
+ */
+const MAX = {
+  legalName: 120, address: 300, phone: 30, taxId: 50, bankDetails: 300, notes: 1000, terms: 2000,
+  tagline: 100, registrationNumber: 40, signature: 80, footer: 160, clientName: 120, company: 120, description: 500,
+} as const;
+const clip = (v: string | null | undefined, max: number) => (v == null ? v : v.trim().slice(0, max)) as string;
+const clipOrNull = (v: string | null | undefined, max: number) => (blank(v) ? null : clip(v, max));
+
+/**
+ * The generator's invoice number ("INV-0042") as the account's prefix and next number, so the saved invoice keeps the
+ * number already on the PDF the client has. Null when it doesn't fit the account's rules (prefix of letters, digits,
+ * - / _ up to 12 characters, then a number).
+ */
+export function splitInvoiceNumber(number: string | null | undefined): { prefix: string; next: number } | null {
+  const m = /^([A-Za-z0-9/_-]*?)(\d{1,8})$/.exec((number ?? "").trim());
+  if (!m || m[1].length > 12) return null;
+  const next = Number(m[2]);
+  return next >= 1 ? { prefix: m[1], next } : null;
+}
+
+/**
  * Turn the generator draft into real records for the signed-in account:
  * fills empty business settings, maps tax % to (new or existing) tax rates,
  * creates the client and a draft invoice. Returns the new invoice.
@@ -205,29 +228,31 @@ export async function importDraft(d: GeneratorDraft, onStep?: (label: string) =>
   // The letterhead was never customised while the slogan and registration number are still empty
   // and the line under the name is still the default (a deliberate "Nothing" is kept).
   const fresh = blank(business.tagline) && blank(business.registrationNumber) && business.headerLine === "address";
+  // A new account (no invoice numbered yet) takes the draft's number, so the saved invoice matches the PDF already sent.
+  const numbering = business.nextInvoiceNumber === 1 ? splitInvoiceNumber(d.number) : null;
   // PUT /api/business keeps letterhead text sent as null and clears it on "", so every field is sent explicitly.
   const update: UpdateBusinessRequest = {
-    legalName: blank(business.legalName) ? b.name.trim() : business.legalName,
-    address: blank(business.address) ? b.address : business.address,
+    legalName: blank(business.legalName) ? clip(b.name, MAX.legalName) : business.legalName,
+    address: blank(business.address) ? clip(b.address, MAX.address) : business.address,
     email: blank(business.email) ? b.email : business.email,
-    phone: blank(business.phone) ? b.phone : business.phone,
-    taxId: blank(business.taxId) ? b.taxId : business.taxId,
-    bankDetails: blank(business.bankDetails) ? b.bankDetails : business.bankDetails,
+    phone: blank(business.phone) ? clip(b.phone, MAX.phone) : business.phone,
+    taxId: blank(business.taxId) ? clip(b.taxId, MAX.taxId) : business.taxId,
+    bankDetails: blank(business.bankDetails) ? clip(b.bankDetails, MAX.bankDetails) : business.bankDetails,
     currency: business.currency || d.currency,
     paymentTermsDays: business.paymentTermsDays,
-    invoicePrefix: business.invoicePrefix,
-    nextInvoiceNumber: business.nextInvoiceNumber,
+    invoicePrefix: numbering ? numbering.prefix : business.invoicePrefix,
+    nextInvoiceNumber: numbering ? numbering.next : business.nextInvoiceNumber,
     quotePrefix: business.quotePrefix,
     nextQuoteNumber: business.nextQuoteNumber,
     defaultTemplate: business.defaultTemplate,
     brandColor: blank(business.brandColor) || business.brandColor === DEFAULT_ACCENT ? b.brandColor || business.brandColor : business.brandColor,
-    defaultNotes: blank(business.defaultNotes) ? d.notes : business.defaultNotes,
-    defaultTerms: blank(business.defaultTerms) ? d.terms : business.defaultTerms,
+    defaultNotes: blank(business.defaultNotes) ? clip(d.notes, MAX.notes) : business.defaultNotes,
+    defaultTerms: blank(business.defaultTerms) ? clip(d.terms, MAX.terms) : business.defaultTerms,
     remindersEnabled: business.remindersEnabled,
     reminderDaysBefore: business.reminderDaysBefore,
     reminderDaysAfter: business.reminderDaysAfter ?? [],
-    tagline: keep(business.tagline, b.tagline),
-    registrationNumber: keep(business.registrationNumber, b.registrationNumber),
+    tagline: keep(business.tagline, clip(b.tagline, MAX.tagline)),
+    registrationNumber: keep(business.registrationNumber, clip(b.registrationNumber, MAX.registrationNumber)),
     headerLine: fresh ? b.headerLine : business.headerLine,
     secondaryColor: business.secondaryColor ?? secondaryColorValue(b.secondaryColor),
     logoSize: business.logoSize,
@@ -237,9 +262,9 @@ export async function importDraft(d: GeneratorDraft, onStep?: (label: string) =>
     showRegistrationNumber: business.showRegistrationNumber,
     showBankDetails: business.showBankDetails,
     showSignature: business.showSignature || b.showSignature,
-    signatureName: keep(business.signatureName, b.signatureName),
-    signatureRole: keep(business.signatureRole, b.signatureRole),
-    footerText: keep(business.footerText, b.footerText),
+    signatureName: keep(business.signatureName, clip(b.signatureName, MAX.signature)),
+    signatureRole: keep(business.signatureRole, clip(b.signatureRole, MAX.signature)),
+    footerText: keep(business.footerText, clip(b.footerText, MAX.footer)),
   };
   await api<BusinessDto>("/api/business", { method: "PUT", body: update });
 
@@ -265,11 +290,11 @@ export async function importDraft(d: GeneratorDraft, onStep?: (label: string) =>
   const client = await api<ClientDto>("/api/clients", {
     method: "POST",
     body: {
-      name: c.name.trim() || c.company.trim() || "Client",
-      company: c.company || null,
+      name: clip(c.name.trim() || c.company.trim() || "Client", MAX.clientName),
+      company: clipOrNull(c.company, MAX.company),
       email: c.email || null,
-      phone: c.phone || null,
-      address: c.address || null,
+      phone: clipOrNull(c.phone, MAX.phone),
+      address: clipOrNull(c.address, MAX.address),
       taxId: null,
       notes: null,
     },
@@ -284,15 +309,15 @@ export async function importDraft(d: GeneratorDraft, onStep?: (label: string) =>
     template: d.template,
     items: lines.map((l) => ({
       itemId: null,
-      description: l.description.trim(),
+      description: clip(l.description, MAX.description),
       quantity: parseNumber(l.quantity),
       unitPriceMinor: toMinor(l.unitPrice) ?? 0,
       discountPercent: Math.min(100, Math.max(0, parseNumber(l.discountPercent))),
       taxRateId: rateIds.get(parseNumber(l.taxPercent)) ?? null,
     })),
     shippingMinor: toMinor(d.shipping) ?? 0,
-    notes: d.notes || null,
-    terms: d.terms || null,
+    notes: clipOrNull(d.notes, MAX.notes),
+    terms: clipOrNull(d.terms, MAX.terms),
   };
   const invoice = await api<InvoiceDto>("/api/invoices", { method: "POST", body });
   clearDraft();
