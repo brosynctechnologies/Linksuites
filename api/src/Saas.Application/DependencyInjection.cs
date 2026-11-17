@@ -25,6 +25,7 @@ public static class DependencyInjection
         services.AddScoped<InAppNotifications>();
         services.AddScoped<BillingService>();
         services.AddScoped<PlanPaymentJobs>();
+        services.AddScoped<PlanReminderJobs>();
         services.AddSingleton<PaymentSettingsCache>();
         services.AddScoped<PaymentSettings>();
 

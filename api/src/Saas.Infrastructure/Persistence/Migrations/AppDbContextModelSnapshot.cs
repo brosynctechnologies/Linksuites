@@ -4296,6 +4296,14 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("current_period_start");
 
+                    b.Property<int?>("EndingNoticeDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("ending_notice_days");
+
+                    b.Property<DateTimeOffset?>("EndingNoticeFor")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ending_notice_for");
+
                     b.PrimitiveCollection<List<string>>("Features")
                         .HasColumnType("text[]")
                         .HasColumnName("features");

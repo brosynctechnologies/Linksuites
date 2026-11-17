@@ -37,6 +37,10 @@ public class Subscription : TenantEntity
     public string? ProviderRef { get; set; }
     public DateTimeOffset? CancelAt { get; set; }
 
+    /// <summary>The period end the last "your plan ends soon" email was about, and how many days ahead it was (7 or 1).</summary>
+    public DateTimeOffset? EndingNoticeFor { get; set; }
+    public int? EndingNoticeDays { get; set; }
+
     // What the business bought, frozen when the period was paid (or comped). Plan edits reach it at the next renewal.
     public long? PriceMinor { get; set; }
     public string? Currency { get; set; }

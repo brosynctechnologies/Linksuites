@@ -129,6 +129,9 @@ public static class EmailTemplates
             "plan.transfer_confirmed" => ($"Your {P("plan")} plan is active",
                 $"Hi {P("name")},\n\nWe received your bank transfer of {P("amount")} (reference {P("reference")}). " +
                 $"{P("business")} is now on the {P("plan")} plan{(P("until").Length > 0 ? $" until {P("until")}" : "")}.\n\nSee your plan: {P("link")}"),
+            "plan.ending" => (P("days") == "1" ? $"Your {P("plan")} plan ends tomorrow" : $"Your {P("plan")} plan ends in {P("days")} days",
+                $"Hi {P("name")},\n\n{P("business")}'s {P("plan")} plan on {P("productName")} ends on {P("date")}. Plans don't renew by themselves: " +
+                $"after that date the business moves to the free plan and its limits.\n\nTo keep the {P("plan")} plan, extend it here: {P("link")}"),
             "plan.transfer_rejected" => ("We couldn't confirm your bank transfer",
                 $"Hi {P("name")},\n\nWe couldn't confirm your bank transfer of {P("amount")} for the {P("plan")} plan (reference {P("reference")}), " +
                 $"so your plan hasn't changed.\n\nReason: {P("reason")}\n\n" +
@@ -264,6 +267,11 @@ public static class EmailTemplates
                 $"{P("reason")}, so we've refunded {P("amount")} for {P("listing")}, {P("dates")}. Refunds usually reach your account within 5 to 10 working days.\n\n{P("link")}"),
             "stay.payment_mismatch" => ($"Your payment for {P("listing")} didn't match",
                 $"We received {P("paid")} for {P("listing")}, but the stay costs {P("expected")}, so it isn't booked yet. Our team will contact you to refund or settle the difference. Reference: {P("reference")}.\n\n{P("link")}"),
+            "plan.payment_mismatch" => ($"Your payment for the {P("plan")} plan didn't match",
+                $"Hi {P("name")},\n\nWe received {P("paid")} for {P("business")}'s {P("plan")} plan, but the plan costs {P("expected")}, so it hasn't started. " +
+                $"Our team will contact you to refund or settle the difference. Reference: {P("reference")}.\n\nYour plan page: {P("link")}"),
+            "boost.payment_mismatch" => ($"Your boost payment for {P("listing")} didn't match",
+                $"We received {P("paid")} for a boost on {P("listing")}, but the boost costs {P("expected")}, so it isn't on yet. Our team will contact you to refund or settle the difference. Reference: {P("reference")}.\n\n{P("link")}"),
             "payments.mismatch" => ($"Payment mismatch: {P("kind")} {P("reference")}",
                 $"A {P("kind")} payment didn't match. Paid {P("paid")}, expected {P("expected")}, for {P("listing")}. Reference {P("reference")}. Check it in Paystack and refund or settle it."),
             "stay.cancelled" => ($"Stay cancelled: {P("listing")}, {P("dates")}",

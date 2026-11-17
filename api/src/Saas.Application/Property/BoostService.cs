@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Saas.Application.Billing;
 using Saas.Application.Common;
+using Saas.Domain.Core;
 using Saas.Domain.Property;
 
 namespace Saas.Application.Property;
@@ -14,7 +15,8 @@ public sealed record BoostDto(Guid Id, Guid ListingId, string ListingTitle, stri
     DateTimeOffset? PaidAt, DateTimeOffset? EndsAt, DateTimeOffset CreatedAt);
 
 /// <summary>Paid placement: featured for 7 or 30 days, or top of search for 7 days. Paid to the platform's Paystack.</summary>
-public sealed class BoostService(IAppDbContext db, ICurrentUser user, PropertyCore core, IPaymentGateway gateway, PaymentSettings payments, ILogger<BoostService> logger)
+public sealed class BoostService(IAppDbContext db, ICurrentUser user, PropertyCore core, IPaymentGateway gateway, PaymentSettings payments, NotificationQueue notifications, Saas.Application.Auth.PlatformOptions platform,
+    ILogger<BoostService> logger)
 {
     public static readonly IReadOnlyList<BoostOptionDto> Options =
     [
@@ -54,6 +56,40 @@ public sealed class BoostService(IAppDbContext db, ICurrentUser user, PropertyCo
     }
 
     /// <summary>
+    /// A payment that doesn't match the boost: the buyer is told the boost isn't on yet, and Finance is asked to refund or settle it.
+    /// Sent once per boost, however many times the return page or webhook repeats the same payment.
+    /// </summary>
+    private async Task AlertMismatchAsync(Boost boost, long paidMinor, string paidCurrency, CancellationToken ct)
+    {
+        // Earlier alerts for this business (buyer's carries the tenant; Finance's the reference only, so both are checked by reference).
+        var earlier = await db.Notifications.IgnoreQueryFilters().AsNoTracking()
+            .Where(n => (n.TemplateKey == "boost.payment_mismatch" && n.TenantId == boost.TenantId) || (n.TemplateKey == "payments.mismatch" && n.TenantId == null))
+            .Where(n => n.CreatedAt > core.Now.AddDays(-30)).Select(n => n.Payload).ToListAsync(ct);
+        var already = earlier.Count(p => p is not null && p.TryGetValue("reference", out var r) && r == boost.Reference);
+        if (already > 0) return;
+        var title = await db.Listings.IgnoreQueryFilters().Where(l => l.Id == boost.ListingId).Select(l => l.Title).FirstOrDefaultAsync(ct) ?? "a listing";
+        var paid = Money.Format(paidMinor, paidCurrency.ToUpperInvariant());
+        var expected = Money.Format(boost.AmountMinor, boost.Currency);
+        var buyer = boost.BuyerUserId is { } buyerId ? await db.Users.Where(u => u.Id == buyerId).Select(u => u.Email).FirstOrDefaultAsync(ct) : null;
+        if (buyer is not null)
+            notifications.Email(buyer, "boost.payment_mismatch", new()
+            {
+                ["listing"] = title, ["paid"] = paid, ["expected"] = expected, ["reference"] = boost.Reference, ["link"] = $"{core.Web}/studio/boosts/{boost.Id}",
+            }, boost.TenantId, boost.BuyerUserId);
+        var finance = await (from a in db.PlatformAdmins join u in db.Users on a.UserId equals u.Id
+                             where a.RemovedAt == null && (a.Role == PlatformRole.Finance || a.Role == PlatformRole.SuperAdmin) && u.Email != null
+                             select u.Email!).Distinct().ToListAsync(ct);
+        if (finance.Count == 0) // nobody in Finance yet: the configured platform addresses, so the money is never missed
+            finance = platform.AdminEmails.Select(e => e.Trim()).Where(e => e.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        foreach (var email in finance)
+            notifications.Email(email, "payments.mismatch", new()
+            {
+                ["kind"] = "Listing boost", ["listing"] = title, ["paid"] = paid, ["expected"] = expected, ["reference"] = boost.Reference,
+            });
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
     /// Activates a paid boost (return page or webhook). The status flip is a single conditional update, so a race between
     /// the two extends the listing only once. The amount and currency must match.
     /// </summary>
@@ -64,6 +100,7 @@ public sealed class BoostService(IAppDbContext db, ICurrentUser user, PropertyCo
         if (amountMinor != boost.AmountMinor || !string.Equals(currency, boost.Currency, StringComparison.OrdinalIgnoreCase))
         {
             logger.LogWarning("Boost {Reference}: paid {Amount} {Currency}, expected {Total} {Expected}", reference, amountMinor, currency, boost.AmountMinor, boost.Currency);
+            await AlertMismatchAsync(boost, amountMinor, currency, ct);
             return;
         }
         core.UseTenantOf(boost.TenantId);

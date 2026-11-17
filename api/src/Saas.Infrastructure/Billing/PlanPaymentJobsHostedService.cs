@@ -8,12 +8,14 @@ using Saas.Infrastructure.Persistence;
 namespace Saas.Infrastructure.Billing;
 
 /// <summary>
-/// Runs <see cref="PlanPaymentJobs"/> every minute (each payment is still asked about at most every 10 minutes). A PostgreSQL advisory
+/// Runs <see cref="PlanPaymentJobs"/> every minute (each payment is still asked about at most every 10 minutes) and
+/// <see cref="PlanReminderJobs"/> ("your plan ends soon") once an hour. A PostgreSQL advisory
 /// lock keeps it to one API instance at a time. Off with <c>Jobs:BillingEnabled=false</c> (tests run it by hand).
 /// </summary>
 public sealed class PlanPaymentJobsHostedService(IServiceScopeFactory scopes, ILogger<PlanPaymentJobsHostedService> logger) : BackgroundService
 {
     private const long LockKey = 0x1_1A5_0008;
+    private DateTimeOffset _remindersRanAt = DateTimeOffset.MinValue;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -42,6 +44,11 @@ public sealed class PlanPaymentJobsHostedService(IServiceScopeFactory scopes, IL
         try
         {
             await scope.ServiceProvider.GetRequiredService<PlanPaymentJobs>().RunOnceAsync(DateTimeOffset.UtcNow, ct);
+            if (DateTimeOffset.UtcNow - _remindersRanAt >= TimeSpan.FromHours(1))
+            {
+                _remindersRanAt = DateTimeOffset.UtcNow;
+                await scope.ServiceProvider.GetRequiredService<PlanReminderJobs>().RunOnceAsync(DateTimeOffset.UtcNow, ct);
+            }
         }
         finally
         {

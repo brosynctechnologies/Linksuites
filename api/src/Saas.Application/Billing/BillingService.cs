@@ -394,6 +394,35 @@ public sealed class BillingService(
     }
 
     /// <summary>
+    /// A plan payment whose amount or currency doesn't match: the payer is told the plan didn't start and that we'll be in touch,
+    /// and Finance is asked to refund or settle it with the provider.
+    /// </summary>
+    private async Task AlertPlanMismatchAsync(Payment row, long paidMinor, string paidCurrency, CancellationToken ct)
+    {
+        var business = await db.Tenants.IgnoreQueryFilters().Where(t => t.Id == row.TenantId).Select(t => new { t.Name, t.Product }).FirstAsync(ct);
+        var plan = Guid.TryParse(row.Metadata.GetValueOrDefault("planId"), out var planId)
+            ? await db.Plans.Where(p => p.Id == planId).Select(p => p.Name).FirstOrDefaultAsync(ct)
+            : null;
+        plan ??= row.Metadata.GetValueOrDefault("planName") ?? row.Metadata.GetValueOrDefault("planCode") ?? "plan";
+        var paid = Money.Format(paidMinor, paidCurrency.ToUpperInvariant());
+        var expected = Money.Format(row.AmountMinor, row.Currency);
+        if (row.PayerUserId is { } payerId
+            && await db.Users.Where(u => u.Id == payerId).Select(u => new { u.Email, u.FullName }).FirstOrDefaultAsync(ct) is { Email: { } payerEmail } payer)
+            notifications.Email(payerEmail, "plan.payment_mismatch", new()
+            {
+                ["name"] = payer.FullName, ["business"] = business.Name, ["plan"] = plan, ["paid"] = paid, ["expected"] = expected,
+                ["reference"] = row.ProviderRef, ["link"] = $"{urls.Web(business.Product)}{BillingPath(business.Product)}",
+            }, row.TenantId, payerId);
+        foreach (var email in await FinanceAdminEmailsAsync(ct))
+            notifications.Email(email, "payments.mismatch", new()
+            {
+                ["kind"] = "Plan payment", ["listing"] = $"{business.Name} ({Products.Brand(business.Product)}, {plan} plan, {row.Provider})",
+                ["paid"] = paid, ["expected"] = expected, ["reference"] = row.ProviderRef,
+            });
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
     /// Who is told about a transfer claim: every active super admin and finance admin. With none, the configured platform emails
     /// (<c>Platform:AdminEmails</c>), logged as an error, so a claim never goes unseen.
     /// </summary>
@@ -625,8 +654,10 @@ public sealed class BillingService(
         {
             logger.LogWarning("Payment {Reference} amount mismatch: expected {Expected} {Currency}, got {Actual} {ActualCurrency}",
                 reference, row.AmountMinor, row.Currency, amountMinor, currency);
-            await open.ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, PaymentStatus.Failed).SetProperty(p => p.UpdatedAt, now), ct);
+            var failed = await open.ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, PaymentStatus.Failed).SetProperty(p => p.UpdatedAt, now), ct);
             await tx.CommitAsync(ct);
+            // Only the call that marked it failed alerts, so a repeated return check or callback never emails twice.
+            if (failed > 0) await AlertPlanMismatchAsync(row, amountMinor, currency, ct);
             return false;
         }
 

@@ -193,6 +193,26 @@ public sealed class OpayBillingTests(ApiFixture api)
     }
 
     [Fact]
+    public async Task A_mismatched_plan_payment_alerts_finance_and_the_payer_once()
+    {
+        var (owner, _) = await BusinessAsync("Opay Alerted", api.OpayHost);
+        var reference = await CheckoutAsync(owner);
+        api.Opay.Report(reference, "SUCCESS", total: 150_000);
+
+        await VerifyAsync(owner, reference);
+        await VerifyAsync(owner, reference); // the return check again: no second alert
+
+        var alerts = await api.WithDbAsync(db => db.Notifications.IgnoreQueryFilters().AsNoTracking()
+            .Where(n => n.TemplateKey == "payments.mismatch" || n.TemplateKey == "plan.payment_mismatch").ToListAsync(Ct));
+        var mine = alerts.Where(n => n.Payload is { } p && p.TryGetValue("reference", out var r) && r == reference).ToList();
+        Assert.Single(mine, n => n.TemplateKey == "plan.payment_mismatch");
+        var finance = mine.Where(n => n.TemplateKey == "payments.mismatch").ToList();
+        Assert.NotEmpty(finance);
+        Assert.Equal(finance.Count, finance.Select(n => n.Recipient).Distinct().Count());
+        Assert.Equal("Plan payment", finance[0].Payload!["kind"]);
+    }
+
+    [Fact]
     public async Task Opay_reporting_a_failed_payment_reads_as_failed()
     {
         var (owner, _) = await BusinessAsync("Opay Failed", api.OpayHost);

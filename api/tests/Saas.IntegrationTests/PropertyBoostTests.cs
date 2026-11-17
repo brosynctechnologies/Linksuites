@@ -81,6 +81,27 @@ public sealed class PropertyBoostTests(ApiFixture api)
     }
 
     [Fact]
+    public async Task A_wrong_amount_boost_payment_tells_the_buyer_and_finance_once()
+    {
+        var agency = await kit.AgencyAsync("Mismatch Booster", verified: true);
+        var id = await kit.LiveListingAsync(agency.Client, await kit.ListingBodyAsync());
+        var purchase = await BuyAsync(agency.Client, id, "top-7");
+        var reference = await api.WithDbAsync(db => db.Boosts.IgnoreQueryFilters().Where(b => b.ListingId == id).Select(b => b.Reference).SingleAsync(Ct));
+
+        await PayAsync(agency.Client, purchase, 1_000);
+        using (var scope = api.Services.CreateScope()) // the webhook for the same payment arrives too
+            await scope.ServiceProvider.GetRequiredService<BoostService>().ConfirmAsync(reference, 1_000, "NGN", Ct);
+
+        var alerts = await api.WithDbAsync(db => db.Notifications.IgnoreQueryFilters().AsNoTracking()
+            .Where(n => n.TemplateKey == "boost.payment_mismatch" || n.TemplateKey == "payments.mismatch").ToListAsync(Ct));
+        var mine = alerts.Where(n => n.Payload is { } p && p.TryGetValue("reference", out var r) && r == reference).ToList();
+        Assert.Single(mine, n => n.TemplateKey == "boost.payment_mismatch"); // the buyer, once
+        Assert.Contains(mine, n => n.TemplateKey == "payments.mismatch"); // finance
+        Assert.Equal(mine.Count(n => n.TemplateKey == "payments.mismatch"), mine.Where(n => n.TemplateKey == "payments.mismatch").Select(n => n.Recipient).Distinct().Count());
+        Assert.Null(await TopUntilAsync(id)); // still not boosted
+    }
+
+    [Fact]
     public async Task Only_live_listings_can_be_boosted_and_only_by_owners()
     {
         var agency = await kit.AgencyAsync("Draft Booster");
