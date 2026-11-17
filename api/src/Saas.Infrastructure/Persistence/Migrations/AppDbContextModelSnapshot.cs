@@ -7984,6 +7984,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("listing_id");
 
+                    b.Property<DateTimeOffset?>("MismatchAlertedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("mismatch_alerted_at");
+
                     b.Property<DateTimeOffset?>("PaidAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("paid_at");
@@ -8349,6 +8353,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)")
                         .HasColumnName("status");
+
+                    b.Property<DateTimeOffset?>("SubmittedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("submitted_at");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")

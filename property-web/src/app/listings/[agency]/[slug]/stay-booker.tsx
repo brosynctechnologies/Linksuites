@@ -53,7 +53,8 @@ export function StayBooker({
   const pathname = usePathname();
   const today = lagosToday();
   const [month, setMonth] = useState(today.slice(0, 7));
-  const [avail, setAvail] = useState<AvailabilityDto | null>(null);
+  // What the server said, and for which days ([from, to)): nights outside it are unknown, never assumed free.
+  const [avail, setAvail] = useState<(AvailabilityDto & { from: string; to: string }) | null>(null);
   const [availNonce, setAvailNonce] = useState(0);
   const [checkIn, setCheckIn] = useState<string | null>(null);
   const [checkOut, setCheckOut] = useState<string | null>(null);
@@ -64,13 +65,16 @@ export function StayBooker({
   const [bookError, setBookError] = useState<ApiError | null>(null);
   const [askLogin, setAskLogin] = useState(false);
 
-  const from = monthStart(month);
+  // The two visible months, reaching back to the check-in month while a check-out is being chosen, so every night between the two
+  // days is known even after paging forward (a booking in a month no longer on screen still blocks the range).
+  const viewFrom = monthStart(month);
+  const from = checkIn && !checkOut && checkIn < viewFrom ? monthStart(checkIn.slice(0, 7)) : viewFrom;
   const to = monthStart(nextMonth(month, 2));
 
   useEffect(() => {
     const ctrl = new AbortController();
     api<AvailabilityDto>(`/api/listings/${listingId}/availability?from=${from}&to=${to}`, { auth: signedIn, signal: ctrl.signal }).then(
-      (a) => setAvail({ booked: a?.booked ?? [], blocked: a?.blocked ?? [] }),
+      (a) => setAvail({ booked: a?.booked ?? [], blocked: a?.blocked ?? [], from, to }),
       () => {},
     );
     return () => ctrl.abort();
@@ -88,7 +92,10 @@ export function StayBooker({
   }, [listingId, checkIn, checkOut, guests, quoteKey, signedIn]);
 
   const taken = (day: string) => !!avail && (inRanges(day, avail.booked) || inRanges(day, avail.blocked));
+  // Whether every night from a up to b was in the last answer (false while a wider range is still loading).
+  const known = (a: string, b: string) => !!avail && a >= avail.from && b <= avail.to;
   const nightsFree = (a: string, b: string) => {
+    if (!known(a, b)) return false;
     for (let d = a; d < b; d = addDays(d, 1)) if (taken(d)) return false;
     return true;
   };
@@ -100,6 +107,7 @@ export function StayBooker({
       setCheckOut(null);
       return;
     }
+    if (!known(checkIn, day)) return; // still loading the nights in between: the day stays disabled until they arrive
     if (!nightsFree(checkIn, day)) {
       setCheckIn(taken(day) ? null : day);
       setCheckOut(null);
@@ -141,8 +149,10 @@ export function StayBooker({
     const selected = day === checkIn || day === checkOut;
     const inRange = !!checkIn && !!checkOut && day > checkIn && day < checkOut;
     // While choosing check-out, a booked night can still be the morning you leave.
-    const canBeCheckout = !!checkIn && !checkOut && day > checkIn && daysBetween(checkIn, day) <= MAX_NIGHTS && nightsFree(checkIn, day);
-    return { disabled: past || (isTaken && !canBeCheckout), struck: isTaken, selected, inRange };
+    const choosingCheckout = !!checkIn && !checkOut && day > checkIn;
+    const canBeCheckout = choosingCheckout && daysBetween(checkIn, day) <= MAX_NIGHTS && nightsFree(checkIn, day);
+    const pending = choosingCheckout && !known(checkIn, day);
+    return { disabled: past || pending || (isTaken && !canBeCheckout), struck: isTaken, selected, inRange };
   };
 
   return (
@@ -163,6 +173,8 @@ export function StayBooker({
         totalLabel="Total"
         totalMinor={q ? q.totalMinor : null}
         totalPlaceholder={checkIn && !checkOut ? "Pick your check-out day" : "Pick your dates"}
+        // Booked and paid here, so the rent-and-sale "never pay before inspecting" line would contradict the button below.
+        safety="Pay only through PropertyLink. Never send money to a host directly."
         footnote={
           q && checkIn && checkOut ? `${formatDay(checkIn)} to ${formatDay(checkOut)}, ${guests} guest${guests === 1 ? "" : "s"}. Paid securely; the host is paid after check-in.` : undefined
         }

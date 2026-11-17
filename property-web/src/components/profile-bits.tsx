@@ -26,8 +26,8 @@ export function ProfileContact({ phone, whatsApp, name }: { phone: string | null
         </a>
       )}
       {phone && (
-        <a href={`tel:+${phoneDigits(phone)}`} className={buttonClass("secondary")}>
-          <PhoneIcon className="h-4 w-4" /> Call {phone}
+        <a href={`tel:+${phoneDigits(phone)}`} className={buttonClass("secondary", "min-w-0 flex-wrap")}>
+          <PhoneIcon className="h-4 w-4" /> <span>Call</span> <span>{phone}</span>
         </a>
       )}
     </div>

@@ -113,7 +113,8 @@ function ListingDetail({ m }: { m: ModerationItemDto }) {
             <dd className={cx("tnum", m.openReports > 0 && "font-semibold text-stop")}>{m.openReports}</dd>
             <dt className="text-muted">Host cancellations</dt>
             <dd className={cx("tnum", m.hostCancellations > 0 && "font-semibold text-stop")}>{m.hostCancellations}</dd>
-            <dt className="text-muted">Submitted</dt>
+            {/* When it entered the queue (sent for review, or hidden); edits while it waits don't change it. */}
+            <dt className="text-muted">{m.status === "Hidden" ? "Hidden" : "Submitted"}</dt>
             <dd>{stamp(m.submittedAt)}</dd>
             <dt className="text-muted">Listing id</dt>
             <dd className="font-mono text-xs break-all">{m.listingId}</dd>

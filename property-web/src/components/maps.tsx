@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_CENTER, MAP_STYLE } from "@/lib/config";
 import { listingPath } from "@/lib/format";
-import { shortMoney } from "@/lib/money";
+import { periodSuffix as suffixFor, shortMoney } from "@/lib/money";
 import type { MapPin } from "@/lib/types";
 import { cx } from "./styles";
 import { SearchIcon } from "./icons";
@@ -170,7 +170,10 @@ export function SearchMap({
           if (!markerMap.has(id)) {
             // A real link to the listing page, so Enter, new-tab and middle-click all work. Plain clicks navigate in-app.
             const href = props.slug && props.agencySlug ? listingPath(String(props.agencySlug), String(props.slug)) : null;
-            const label = shortMoney(Number(props.price));
+            // Each pin carries its own period: a monthly rent among yearly ones says so ("₦1.5m/mo"), and its label reads "/month".
+            const pinPeriod = props.period ? String(props.period) : null;
+            const label = shortMoney(Number(props.price)) + (pinPeriod === "Month" ? "/mo" : "");
+            const suffix = pinPeriod ? suffixFor(pinPeriod) : periodSuffix;
             let el: HTMLElement;
             if (href) {
               const a = document.createElement("a");
@@ -189,7 +192,7 @@ export function SearchMap({
             }
             el.className = "map-pin";
             el.textContent = label;
-            el.setAttribute("aria-label", `${label}${periodSuffix}. ${href ? "Open this home" : "Show this home"}`);
+            el.setAttribute("aria-label", `${shortMoney(Number(props.price))}${suffix}. ${href ? "Open this home" : "Show this home"}`);
             el.dataset.selected = String(selectedRef.current === id);
             el.addEventListener("mouseenter", () => onSelectRef.current(id));
             el.addEventListener("focus", () => onSelectRef.current(id));
@@ -229,7 +232,7 @@ export function SearchMap({
       markers.current.clear();
       src.setData({
         type: "FeatureCollection",
-        features: pins.map((p) => ({ type: "Feature", geometry: { type: "Point", coordinates: [p.lng, p.lat] }, properties: { id: p.id, price: p.priceMinor, slug: p.slug, agencySlug: p.agencySlug } })),
+        features: pins.map((p) => ({ type: "Feature", geometry: { type: "Point", coordinates: [p.lng, p.lat] }, properties: { id: p.id, price: p.priceMinor, period: p.pricePeriod, slug: p.slug, agencySlug: p.agencySlug } })),
       });
       const fit = parseBbox(bbox);
       const duration = reducedMotion() ? 0 : 500;

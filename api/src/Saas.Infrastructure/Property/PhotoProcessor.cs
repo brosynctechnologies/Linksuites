@@ -144,6 +144,7 @@ public sealed class PhotoProcessor(IServiceScopeFactory scopes, ILogger<PhotoPro
         if (listing.Status == ListingStatus.Active)
         {
             listing.Status = ListingStatus.Pending;
+            listing.SubmittedAt = DateTimeOffset.UtcNow;
             listing.ModerationNote = "A photo matches another agency's listing. A moderator will check it.";
         }
     }

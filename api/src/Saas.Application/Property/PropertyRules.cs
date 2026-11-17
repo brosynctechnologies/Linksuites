@@ -6,6 +6,7 @@ public sealed record StayQuote(int Nights, long SubtotalMinor, long CleaningMino
 
 public sealed record ListingRankInput(DateTimeOffset? TopUntil, DateTimeOffset? FeaturedUntil, bool Verified, DateTimeOffset PublishedAt);
 
+/// <param name="PriceMinor">The price the filter compares: a monthly rent counts as twelve months (<see cref="PropertyRules.FilterPrice"/>).</param>
 public sealed record ListingMatchInput(ListingPurpose Purpose, Guid LocationId, string TypeSlug, long PriceMinor, int Bedrooms,
     IReadOnlySet<string> AmenitySlugs, bool Verified, double Lat, double Lng);
 
@@ -13,6 +14,13 @@ public sealed record ListingMatchInput(ListingPurpose Purpose, Guid LocationId, 
 public static class PropertyRules
 {
     public const int CommissionPercent = 10;
+
+    /// <summary>
+    /// The price that search filters and price sorting compare. Rent can be asked per month or per year, so a monthly rent counts as
+    /// twelve months: ₦1.5m a month is ₦18m on the "max price" scale, beside a yearly rent. Keep in step with
+    /// <c>PropertySearchService</c>, which applies the same rule in SQL.
+    /// </summary>
+    public static long FilterPrice(long priceMinor, PricePeriod period) => period == PricePeriod.Month ? priceMinor * 12 : priceMinor;
     public static readonly TimeSpan StayHold = TimeSpan.FromMinutes(15);
     public static readonly TimeSpan FreeCancellation = TimeSpan.FromHours(48);
     public static readonly TimeSpan HostPayoutDelay = TimeSpan.FromHours(24);

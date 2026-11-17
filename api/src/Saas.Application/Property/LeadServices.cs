@@ -50,7 +50,7 @@ public sealed class LeadService(IAppDbContext db, ICurrentUser user, PropertyCor
                 ["message"] = enquiry.Message, ["link"] = $"{core.Web}/studio/enquiries",
             }, listing.TenantId);
         await db.SaveChangesAsync(ct);
-        await db.AddListingStatAsync(listing.TenantId, listing.Id, DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime), "enquiries", ct);
+        await db.AddListingStatAsync(listing.TenantId, listing.Id, StayService.Today(clock.GetUtcNow()), "enquiries", ct); // Lagos day
     }
 
     public async Task<IReadOnlyList<EnquiryDto>> InboxAsync(EnquiryStatus? status, CancellationToken ct) =>

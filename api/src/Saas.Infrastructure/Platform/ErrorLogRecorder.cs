@@ -12,7 +12,8 @@ namespace Saas.Infrastructure.Platform;
 
 /// <summary>
 /// Stores errors in <c>error_events</c>, one row per kind of error, in its own database scope (the request's own context may be
-/// broken by the very error being recorded). The first time a new error appears, super and support admins get an email, at most
+/// broken by the very error being recorded). The first time a new error appears, and when an API error marked fixed comes back,
+/// super and support admins get an email, at most
 /// <see cref="MaxAlertsPerHour"/> an hour on this server so a crash loop can't flood their inboxes. Browser reports never email.
 /// </summary>
 public sealed class ErrorLogRecorder(IServiceScopeFactory scopes, TimeProvider clock, PlatformOptions platform, AppUrls urls,
@@ -34,9 +35,10 @@ public sealed class ErrorLogRecorder(IServiceScopeFactory scopes, TimeProvider c
         {
             source = ErrorRules.Cap(source, ErrorRules.MaxSource);
             kind = ErrorRules.Cap(kind, ErrorRules.MaxKind);
-            message = ErrorRules.Cap(message, ErrorRules.MaxMessage);
-            var cleanPath = ErrorRules.StripQuery(path) is { Length: > 0 } p ? ErrorRules.Cap(p, ErrorRules.MaxPath) : null;
-            var cleanStack = string.IsNullOrEmpty(stack) ? null : ErrorRules.Cap(stack, ErrorRules.MaxStack);
+            // Secrets (bearer tokens, secret keys, password= and key=/token= values) never reach the table or the alert email.
+            message = ErrorRules.Cap(ErrorRules.Redact(message), ErrorRules.MaxMessage);
+            var cleanPath = ErrorRules.StripQuery(path) is { Length: > 0 } p ? ErrorRules.Cap(ErrorRules.Redact(p), ErrorRules.MaxPath) : null;
+            var cleanStack = string.IsNullOrEmpty(stack) ? null : ErrorRules.Cap(ErrorRules.Redact(stack), ErrorRules.MaxStack);
             var fingerprint = ErrorRules.Fingerprint(source, kind, message, cleanPath);
             var now = clock.GetUtcNow();
 
@@ -56,6 +58,11 @@ public sealed class ErrorLogRecorder(IServiceScopeFactory scopes, TimeProvider c
                     return;
                 }
             }
+            // An API error marked fixed that comes back is news, like a new one. Reopening is a conditional update (row-locked), so of
+            // two servers seeing it at once only one counts it as reopened. A browser report never reopens (anyone can send one).
+            var reopened = !fromBrowser && await db.ErrorEvents
+                .Where(e => e.Fingerprint == fingerprint && e.ResolvedAt != null)
+                .ExecuteUpdateAsync(s => s.SetProperty(e => e.ResolvedAt, (DateTimeOffset?)null), ct) > 0;
             // One statement, so two servers seeing the same error at once still make one row. xmax = 0 only for a fresh insert.
             var isNew = await db.Database.SqlQuery<bool>($"""
                 INSERT INTO error_events (id, fingerprint, source, kind, message, path, stack, count, first_seen_at, last_seen_at)
@@ -68,12 +75,12 @@ public sealed class ErrorLogRecorder(IServiceScopeFactory scopes, TimeProvider c
             // A browser report can't reopen an error marked fixed (anyone can send one); an API error that comes back does.
             if (isNew && fromBrowser) CountReporterAdd(reporter, now);
 
-            if (!isNew || fromBrowser || !TakeAlert(now)) return;
+            if (!(isNew || reopened) || fromBrowser || !TakeAlert(now)) return; // reopened errors share the hourly cap
             var notifications = scope.ServiceProvider.GetRequiredService<NotificationQueue>();
             var payload = new Dictionary<string, string>
             {
                 ["source"] = source, ["kind"] = kind, ["message"] = message, ["path"] = cleanPath ?? "",
-                ["link"] = $"{urls.Web("admin")}/errors",
+                ["link"] = $"{urls.Web("admin")}/errors", ["reopened"] = reopened && !isNew ? "true" : "false",
             };
             foreach (var email in await RecipientsAsync(db, ct)) notifications.Email(email, "platform.error_new", new(payload));
             await db.SaveChangesAsync(ct);

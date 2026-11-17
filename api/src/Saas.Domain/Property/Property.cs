@@ -125,6 +125,11 @@ public class Listing : TenantEntity
     public string? VideoUrl { get; set; }
     public ListingStatus Status { get; set; } = ListingStatus.Draft;
     public string? ModerationNote { get; set; }
+    /// <summary>
+    /// When the listing last went into the moderation queue (Pending or Hidden). Edits while it waits don't move it, so the queue
+    /// keeps its order; null for listings that never waited.
+    /// </summary>
+    public DateTimeOffset? SubmittedAt { get; set; }
     public DateTimeOffset? PublishedAt { get; set; }
     /// <summary>When the listing first went live; alerts fire once, at this moment.</summary>
     public DateTimeOffset? FirstPublishedAt { get; set; }
@@ -304,6 +309,8 @@ public class Boost : TenantEntity
     public Guid? BuyerUserId { get; set; }
     public DateTimeOffset? PaidAt { get; set; }
     public DateTimeOffset? EndsAt { get; set; }
+    /// <summary>When the wrong-amount alert went out. Claimed with a conditional update, so the webhook and the return page can't both send it.</summary>
+    public DateTimeOffset? MismatchAlertedAt { get; set; }
 }
 
 /// <summary>Dates a host closes for a short-let. <see cref="End"/> is exclusive.</summary>

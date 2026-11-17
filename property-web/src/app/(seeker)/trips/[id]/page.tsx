@@ -182,10 +182,11 @@ export default function TripPage() {
             lines={[...priceLines, ...(stay.refundMinor > 0 ? [{ key: "refund", label: "Refunded", amountMinor: -stay.refundMinor }] : [])]}
             totalLabel={stay.refundMinor > 0 ? "Net paid" : "Total"}
             totalMinor={stay.totalMinor - stay.refundMinor}
+            safety={false}
           />
         ) : (
           // Nothing was paid (still waiting for payment, or cancelled before paying), so this is the price, not a receipt.
-          <Ledger title="Price" currency={stay.currency} lines={priceLines} totalLabel="Total" totalMinor={stay.totalMinor} />
+          <Ledger title="Price" currency={stay.currency} lines={priceLines} totalLabel="Total" totalMinor={stay.totalMinor} safety={false} />
         )}
       </div>
     </div>

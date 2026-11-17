@@ -110,7 +110,7 @@ public sealed class SearchAlerts(IAppDbContext db, LocationTree locations, Notif
         var amenityIds = await db.ListingAmenities.IgnoreQueryFilters().Where(a => a.ListingId == l.Id).Select(a => a.AmenityId).ToListAsync(ct);
         var amenities = await db.Amenities.Where(a => amenityIds.Contains(a.Id)).Select(a => a.Slug).ToListAsync(ct);
         var verified = await db.AgencyProfiles.IgnoreQueryFilters().AnyAsync(a => a.TenantId == l.TenantId && a.VerifiedAt != null, ct);
-        return new ListingMatchInput(l.Purpose, l.LocationId, type, l.PriceMinor, l.Bedrooms, amenities.ToHashSet(), verified, l.Point.Y, l.Point.X);
+        return new ListingMatchInput(l.Purpose, l.LocationId, type, PropertyRules.FilterPrice(l.PriceMinor, l.PricePeriod), l.Bedrooms, amenities.ToHashSet(), verified, l.Point.Y, l.Point.X);
     }
 
     public async Task<bool> MatchesAsync(SavedSearch s, ListingMatchInput input, CancellationToken ct)

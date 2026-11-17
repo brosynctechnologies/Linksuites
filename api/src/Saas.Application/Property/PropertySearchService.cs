@@ -12,7 +12,7 @@ public sealed record LocationDto(Guid Id, string Name, string Slug, LocationKind
 public sealed record ListingCardDto(Guid Id, string Title, string Slug, string AgencySlug, string AgencyName, bool Verified, ListingPurpose Purpose,
     string TypeName, long PriceMinor, string Currency, PricePeriod PricePeriod, int Bedrooms, int Bathrooms, int? SizeSqm, string AreaName,
     string? CityName, string? CoverUrl, int PhotoCount, bool Featured, bool Top, double Lat, double Lng, DateTimeOffset? PublishedAt);
-public sealed record MapPinDto(Guid Id, double Lat, double Lng, long PriceMinor, string Slug, string AgencySlug);
+public sealed record MapPinDto(Guid Id, double Lat, double Lng, long PriceMinor, string Slug, string AgencySlug, PricePeriod PricePeriod);
 public sealed record SearchResultDto(Paged<ListingCardDto> Items, IReadOnlyList<MapPinDto> Pins, LocationDto? Location);
 
 public sealed record PhotoDto(string? ThumbUrl, string? CardUrl, string? FullUrl, int Width, int Height);
@@ -56,6 +56,10 @@ public sealed class PropertySearchService(IAppDbContext db, LocationTree locatio
         public required AgencyProfile A { get; init; }
     }
 
+    /// <summary><see cref="PropertyRules.FilterPrice"/> in SQL: a monthly rent sorts as twelve months beside yearly ones.</summary>
+    private static readonly System.Linq.Expressions.Expression<Func<Row, long>> FilterPriceOf =
+        x => x.L.PricePeriod == PricePeriod.Month ? x.L.PriceMinor * 12 : x.L.PriceMinor;
+
     private IQueryable<Row> Live() =>
         from l in db.Listings.IgnoreQueryFilters().AsNoTracking()
         join a in db.AgencyProfiles.IgnoreQueryFilters().AsNoTracking() on l.TenantId equals a.TenantId
@@ -89,17 +93,17 @@ public sealed class PropertySearchService(IAppDbContext db, LocationTree locatio
         var ordered = f.Sort switch
         {
             "newest" => rows.OrderByDescending(x => x.L.PublishedAt),
-            "price_asc" => rows.OrderBy(x => x.L.PriceMinor).ThenByDescending(x => x.L.PublishedAt),
-            "price_desc" => rows.OrderByDescending(x => x.L.PriceMinor).ThenByDescending(x => x.L.PublishedAt),
+            "price_asc" => rows.OrderBy(FilterPriceOf).ThenByDescending(x => x.L.PublishedAt),
+            "price_desc" => rows.OrderByDescending(FilterPriceOf).ThenByDescending(x => x.L.PublishedAt),
             _ => Recommended(rows, now),
         };
         var page = Math.Max(1, q.Page);
         var pageSize = Math.Clamp(q.PageSize, 1, 48);
         var total = await rows.CountAsync(ct);
         var items = await ordered.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
-        var pins = await rows.OrderByDescending(x => x.L.PublishedAt).Take(MaxPins).Select(x => new { x.L.Id, x.L.Point, x.L.PriceMinor, x.L.Slug, AgencySlug = x.A.Slug }).ToListAsync(ct);
+        var pins = await rows.OrderByDescending(x => x.L.PublishedAt).Take(MaxPins).Select(x => new { x.L.Id, x.L.Point, x.L.PriceMinor, x.L.PricePeriod, x.L.Slug, AgencySlug = x.A.Slug }).ToListAsync(ct);
         return new SearchResultDto(new Paged<ListingCardDto>(await CardsAsync(items, tree, ct), page, pageSize, total),
-            pins.Select(p => new MapPinDto(p.Id, p.Point.Y, p.Point.X, p.PriceMinor, p.Slug, p.AgencySlug)).ToList(), location is null ? null : ToDto(location, tree));
+            pins.Select(p => new MapPinDto(p.Id, p.Point.Y, p.Point.X, p.PriceMinor, p.Slug, p.AgencySlug, p.PricePeriod)).ToList(), location is null ? null : ToDto(location, tree));
     }
 
     /// <summary>How many featured listings the home page shows at once.</summary>
@@ -133,8 +137,9 @@ public sealed class PropertySearchService(IAppDbContext db, LocationTree locatio
                 ?? throw BadRequestException.Field("type", "Unknown property type.");
             rows = rows.Where(x => x.L.PropertyTypeId == typeId);
         }
-        if (f.MinPrice is { } min) rows = rows.Where(x => x.L.PriceMinor >= min);
-        if (f.MaxPrice is { } max) rows = rows.Where(x => x.L.PriceMinor <= max);
+        // Rent is asked per month or per year: the filter compares on a yearly basis (PropertyRules.FilterPrice).
+        if (f.MinPrice is { } min) rows = rows.Where(x => (x.L.PricePeriod == PricePeriod.Month ? x.L.PriceMinor * 12 : x.L.PriceMinor) >= min);
+        if (f.MaxPrice is { } max) rows = rows.Where(x => (x.L.PricePeriod == PricePeriod.Month ? x.L.PriceMinor * 12 : x.L.PriceMinor) <= max);
         if (f.MinBeds is { } beds) rows = rows.Where(x => x.L.Bedrooms >= beds);
         if (f.Amenities is { Length: > 0 } slugs)
         {

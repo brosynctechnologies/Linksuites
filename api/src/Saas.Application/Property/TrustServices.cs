@@ -39,6 +39,7 @@ public sealed class ReportService(IAppDbContext db, ICurrentUser user, PropertyC
         if (open >= HideAfter)
         {
             listing.Status = ListingStatus.Hidden;
+            listing.SubmittedAt = core.Now;
             listing.ModerationNote = "Hidden after several reports while a moderator checks it.";
             if (await core.OwnerEmailAsync(listing.TenantId, ct) is { } owner)
                 notifications.Email(owner, "listing.hidden", new() { ["listing"] = listing.Title, ["link"] = $"{core.Web}/studio/listings/{listing.Id}" }, listing.TenantId);

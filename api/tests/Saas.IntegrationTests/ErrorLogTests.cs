@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Saas.Application.Platform;
 using Saas.Domain.Core;
 
@@ -152,6 +153,63 @@ public sealed class ErrorLogTests(ApiFixture api)
         var row = await api.WithDbAsync(db => db.ErrorEvents.AsNoTracking().SingleAsync(e => e.Message.Contains(marker), Ct));
         Assert.NotNull(row.ResolvedAt);
         Assert.Equal(2, row.Count);
+    }
+
+    // Wave 2
+
+    private Task<int> AlertsForKindAsync(string kind) => api.WithDbAsync(async db =>
+        (await db.Notifications.AsNoTracking().Where(n => n.TemplateKey == "platform.error_new").Select(n => n.Payload).ToListAsync(Ct))
+            .Count(p => p is not null && p.TryGetValue("kind", out var k) && k == kind));
+
+    [Fact]
+    public async Task An_api_error_that_comes_back_after_being_fixed_emails_again()
+    {
+        var kind = $"ReopenTest{Guid.NewGuid():N}"[..20];
+        var log = api.Services.GetRequiredService<IErrorLog>();
+        await log.RecordAsync("api", kind, "Object reference not set", "GET /api/orders/{id}", "at Orders.Get()", Ct);
+        var first = await AlertsForKindAsync(kind);
+        Assert.True(first >= 1, "a new API error emails the team");
+
+        await log.RecordAsync("api", kind, "Object reference not set", "GET /api/orders/{id}", null, Ct);
+        Assert.Equal(first, await AlertsForKindAsync(kind)); // a repeat while open stays quiet
+
+        await api.WithDbAsync(db => db.ErrorEvents.Where(e => e.Kind == kind)
+            .ExecuteUpdateAsync(s => s.SetProperty(e => e.ResolvedAt, DateTimeOffset.UtcNow), Ct));
+        await log.RecordAsync("api", kind, "Object reference not set", "GET /api/orders/{id}", null, Ct);
+
+        var row = await api.WithDbAsync(db => db.ErrorEvents.AsNoTracking().SingleAsync(e => e.Kind == kind, Ct));
+        Assert.Null(row.ResolvedAt);
+        Assert.Equal(3, row.Count);
+        Assert.Equal(2 * first, await AlertsForKindAsync(kind)); // it came back after being fixed: the team hears about it like a new one
+    }
+
+    [Fact]
+    public async Task Secrets_are_taken_out_of_stored_messages_and_stacks()
+    {
+        var kind = $"SecretTest{Guid.NewGuid():N}"[..20];
+        var message = "Call failed: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl with sk_live_abcDEF1234567890 "
+            + "at https://api.example.com/v1/charge?key=AIzaSyA-secret-value&token=tok_987654&page=2 password=hunter22";
+        var stack = "System.Exception: Host=db;Username=app;Password=SuperSecret99;Database=saas\n   at Pay(String sk_test_zyx987654321)\n"
+            + "   body {\"password\":\"opensesame\",\"secret\":\"s3cr3t\"} client_secret=cs_abc";
+        await api.Services.GetRequiredService<IErrorLog>().RecordAsync("api", kind, message, "POST /api/pay?token=abc", stack, Ct);
+
+        var row = await api.WithDbAsync(db => db.ErrorEvents.AsNoTracking().SingleAsync(e => e.Kind == kind, Ct));
+        foreach (var secret in new[] { "eyJhbGciOiJIUzI1NiJ9", "abcDEF1234567890", "AIzaSyA-secret-value", "tok_987654", "hunter22", "SuperSecret99",
+                     "zyx987654321", "opensesame", "s3cr3t", "cs_abc" })
+        {
+            Assert.DoesNotContain(secret, row.Message);
+            Assert.DoesNotContain(secret, row.Stack!);
+        }
+        Assert.Contains("Bearer [redacted]", row.Message);
+        Assert.Contains("page=2", row.Message); // ordinary query values stay
+        Assert.Contains("Username=app", row.Stack!);
+    }
+
+    [Fact]
+    public void Redaction_leaves_ordinary_words_alone()
+    {
+        Assert.Equal("monkey=banana keyboard=1", ErrorRules.Redact("monkey=banana keyboard=1"));
+        Assert.Equal("api_key=[redacted]&id=4", ErrorRules.Redact("api_key=abc123&id=4"));
     }
 
     [Fact]

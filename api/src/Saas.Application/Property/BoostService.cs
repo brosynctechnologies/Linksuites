@@ -61,12 +61,11 @@ public sealed class BoostService(IAppDbContext db, ICurrentUser user, PropertyCo
     /// </summary>
     private async Task AlertMismatchAsync(Boost boost, long paidMinor, string paidCurrency, CancellationToken ct)
     {
-        // Earlier alerts for this business (buyer's carries the tenant; Finance's the reference only, so both are checked by reference).
-        var earlier = await db.Notifications.IgnoreQueryFilters().AsNoTracking()
-            .Where(n => (n.TemplateKey == "boost.payment_mismatch" && n.TenantId == boost.TenantId) || (n.TemplateKey == "payments.mismatch" && n.TenantId == null))
-            .Where(n => n.CreatedAt > core.Now.AddDays(-30)).Select(n => n.Payload).ToListAsync(ct);
-        var already = earlier.Count(p => p is not null && p.TryGetValue("reference", out var r) && r == boost.Reference);
-        if (already > 0) return;
+        // Claim the alert with a conditional update: of a webhook and a return page arriving together, only one gets the row.
+        var now = core.Now;
+        var claimed = await db.Boosts.IgnoreQueryFilters().Where(b => b.Id == boost.Id && b.MismatchAlertedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(b => b.MismatchAlertedAt, now), ct);
+        if (claimed == 0) return;
         var title = await db.Listings.IgnoreQueryFilters().Where(l => l.Id == boost.ListingId).Select(l => l.Title).FirstOrDefaultAsync(ct) ?? "a listing";
         var paid = Money.Format(paidMinor, paidCurrency.ToUpperInvariant());
         var expected = Money.Format(boost.AmountMinor, boost.Currency);
