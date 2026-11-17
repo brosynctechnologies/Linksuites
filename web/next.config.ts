@@ -16,11 +16,11 @@ const nextConfig: NextConfig = {
       },
     },
   },
-  // Images are rendered with plain <img> tags (smaller bundles, no optimizer
-  // round-trip). These patterns are here in case next/image is adopted later.
+  // Storefront product photos use next/image when they come from the API's own /uploads (components/upload-image.tsx);
+  // that host is read from NEXT_PUBLIC_API_URL at build time. Other images stay plain <img> tags.
   images: {
     remotePatterns: [
-      { protocol: "http", hostname: "localhost", port: "5080" },
+      new URL(`${(process.env.NEXT_PUBLIC_API_URL || "http://localhost:5080").replace(/\/+$/, "")}/uploads/**`),
       { protocol: "https", hostname: "*.r2.dev" },
     ],
   },

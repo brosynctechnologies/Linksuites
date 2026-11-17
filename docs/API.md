@@ -117,6 +117,7 @@ Order `status`: `New`, `Confirmed`, `Paid`, `Delivered`, `Cancelled`. `fulfilmen
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
+| GET | `/api/public/stores?page=1&pageSize=500` | — | `Paged<{ slug, updatedAt }>` — stores for the sitemap: active businesses with at least one product for sale, ordered by slug; `pageSize` up to 1000 |
 | GET | `/api/public/stores/{slug}` | — | `PublicStoreDto` |
 | GET | `/api/public/stores/{slug}/products` | — | `PublicProductDto[]` (active only) |
 | GET | `/api/public/stores/{slug}/products/{productSlug}` | — | `PublicProductDto` |
@@ -127,10 +128,11 @@ Order `status`: `New`, `Confirmed`, `Paid`, `Delivered`, `Cancelled`. `fulfilmen
 `PublicStoreDto = { name, slug, description, logoUrl, coverUrl, currency, themeColor, isOpen, deliveryZones: [{ id, name, feeMinor, etaText }], categories: [{ id, name }], showBranding, hasDiscounts }`
 `PublicProductDto = { id, slug, name, description, priceMinor, compareAtPriceMinor, inStock, categoryId, images: [{ url }], options: [{ name, values }], variants: [{ id, optionValues, title, priceMinor, inStock }] }`
 `QuoteRequest = { items: [{ productId, variantId, quantity }], fulfilment, deliveryZoneId, discountCode }`
-`QuoteDto = { lines: [{ productId, variantId, name, variant, unitPriceMinor, quantity, lineTotalMinor }], subtotalMinor, deliveryFeeMinor, discountMinor, totalMinor, currency, discountMessage }`
+`QuoteDto = { lines: [{ productId, variantId, name, variant, unitPriceMinor, quantity, lineTotalMinor, stockQty, productSlug }], subtotalMinor, deliveryFeeMinor, discountMinor, totalMinor, currency, discountMessage }`
 `PlaceOrderRequest = QuoteRequest & { customerName, phone, address, note }` — `address` required for `Delivery`; `deliveryZoneId` required for `Delivery` when the store has zones.
 After placing an order, send the browser to `whatsappUrl` (a `https://wa.me/...` link with the order pre-filled). The order is already saved, so the seller has a record even if the customer never presses send.
-`PublicOrderDto = { code, number, storeName, storeSlug, status, paymentStatus, fulfilment, items: [{ name, variant, quantity, lineTotalMinor }], subtotalMinor, deliveryFeeMinor, discountMinor, totalMinor, currency, createdAt, whatsappUrl }`
+`PublicOrderDto = { code, number, storeName, storeSlug, status, paymentStatus, fulfilment, items: [{ name, variant, quantity, lineTotalMinor }], subtotalMinor, deliveryFeeMinor, discountMinor, totalMinor, currency, createdAt, whatsappUrl, showBranding, deliveryToBeAgreed }`
+A quote line's `productSlug` is the product's current slug: carts link with it, so a renamed product's cart link still works. `deliveryToBeAgreed` is true for a delivery order placed while the store had no delivery zones (no fee): the WhatsApp message says "Delivery - to be agreed" instead of a ₦0 fee.
 
 ## Reserved store slugs
 

@@ -11,6 +11,11 @@ const nextConfig: NextConfig = {
   async redirects() {
     return [{ source: "/pricing", destination: "/teach#plans", permanent: true }];
   },
+  // Course thumbnails use next/image when they come from the API's own /uploads (components/upload-image.tsx);
+  // that host is read from NEXT_PUBLIC_API_URL at build time. Other images stay plain <img> tags.
+  images: {
+    remotePatterns: [new URL(`${(process.env.NEXT_PUBLIC_API_URL || "http://localhost:5080").replace(/\/+$/, "")}/uploads/**`)],
+  },
   turbopack: {
     rules: {
       "*.css": {

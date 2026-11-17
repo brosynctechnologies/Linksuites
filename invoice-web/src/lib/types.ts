@@ -360,6 +360,8 @@ export interface QuoteDto {
   baseCurrency: string;
   exchangeRate: number;
   totalBaseMinor: number;
+  /** True when the PDF prints "Made with InvoiceLink" (plans without branding removal). */
+  showBranding?: boolean;
 }
 
 // ---- Recurring ----

@@ -71,7 +71,7 @@ New businesses start with one staff member (the owner) working the business hour
 
 | Method | Path | Returns |
 |---|---|---|
-| GET | `/api/availability?serviceId=&staffId=&date=` | `AvailabilityDto` (ignores min notice, still respects hours and other bookings) |
+| GET | `/api/availability?serviceId=&staffId=&date=&excludeBookingId=` | `AvailabilityDto` (ignores min notice, still respects hours and other bookings; `excludeBookingId` = the booking being moved, so its own time and buffers don't block) |
 
 `AvailabilityDto = { date, timezone, slots: [{ startsAt, endsAt, staffIds }] }` — `staffIds` lists who can take that slot; when `staffId` is omitted every eligible staff member is considered.
 
@@ -84,7 +84,7 @@ New businesses start with one staff member (the owner) working the business hour
 | POST | `/api/bookings` | `CreateBookingRequest` | `BookingDto` (402 when the monthly limit is reached; 409 slot taken) |
 | PATCH | `/api/bookings/{id}` | `{ startsAt, staffId, notes }` (reschedule; any omitted field is kept) | `BookingDto` |
 | POST | `/api/bookings/{id}/status` | `{ status, note }` (`Confirmed`, `Completed`, `Cancelled`, `NoShow`) | `BookingDto` |
-| POST | `/api/bookings/{id}/payments` | `{ amountMinor, type, method, reference }` | `BookingDto` |
+| POST | `/api/bookings/{id}/payments` | `{ amountMinor, type, method, reference }` | `BookingDto`; a Pending booking is confirmed by a `Deposit` payment, or by any payment that brings what was paid up to the deposit (e.g. a cash `Balance`) |
 | POST | `/api/bookings/{id}/refund` | `{ amountMinor }` (online deposit back through Paystack) | `BookingDto` |
 | GET | `/api/calendar?from=&to=&staffId=` | | `CalendarDto` |
 
@@ -123,8 +123,9 @@ Revenue = payments received (deposits + balances − refunds) in the period. `no
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/api/public/book/{slug}` | | `PublicBookingPageDto` |
-| GET | `/api/public/book/{slug}/days?serviceId=&staffId=&month=YYYY-MM` | | `[{ date, available }]` for that month |
-| GET | `/api/public/book/{slug}/availability?serviceId=&staffId=&date=` | | `AvailabilityDto` |
+| GET | `/api/public/book?page=1&pageSize=500` | | `Paged<{ slug, updatedAt }>`: booking pages for the sitemap (active businesses with online booking on), ordered by slug; `pageSize` up to 1000 |
+| GET | `/api/public/book/{slug}/days?serviceId=&staffId=&month=YYYY-MM&excludeToken=` | | `[{ date, available }]` for that month |
+| GET | `/api/public/book/{slug}/availability?serviceId=&staffId=&date=&excludeToken=` | | `AvailabilityDto`; `excludeToken` = the manage token of the booking being rescheduled, whose own slot then doesn't block |
 | POST | `/api/public/book/{slug}/bookings` | `PublicBookRequest` | `{ booking: PublicBookingDto, authorizationUrl, manageUrl }` |
 | GET | `/api/public/bookings/{token}` | | `PublicBookingDto` |
 | POST | `/api/public/bookings/{token}/pay` | `{ email }` | `{ authorizationUrl }` (while the hold is still valid) |

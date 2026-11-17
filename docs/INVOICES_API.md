@@ -38,6 +38,7 @@ All `/api/...` routes below except `/api/public/...` and `/api/auth/...` need a 
 | DELETE | `/api/business/paystack` | → `BusinessDto` |
 
 `PUT /api/business` and the six image routes need the **Owner** or **Admin** role; the Paystack routes need the Owner.
+Replacing or removing an image deletes the old file after the save; if storage refuses, the old file is left orphaned and logged, and the request still succeeds. In PDFs the stamp image prints like ink, as in the preview (90% opacity, multiply): its white is made transparent before it is drawn.
 
 `BusinessDto = { legalName, logoUrl, address, email, phone, taxId, bankDetails, currency, country, paymentTermsDays, invoicePrefix, nextInvoiceNumber, quotePrefix, nextQuoteNumber, defaultTemplate, brandColor, defaultNotes, defaultTerms, remindersEnabled, reminderDaysBefore, reminderDaysAfter: number[], paystackConnected, tagline, registrationNumber, headerLine, secondaryColor, logoSize, fontStyle, documentTitle, showTaxId, showRegistrationNumber, showBankDetails, showSignature, signatureName, signatureRole, signatureImageUrl, stampImageUrl, footerText, brandImagesAvailable }`
 `UpdateBusinessRequest` = the same fields minus `logoUrl`, `signatureImageUrl`, `stampImageUrl`, `country`, `paystackConnected`, `brandImagesAvailable`.
@@ -141,7 +142,7 @@ Deleting a client keeps its invoices (they store a copy of the client's details)
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | `/api/invoices?status=&clientId=&q=&page=1&pageSize=20` | | `Paged<InvoiceSummaryDto>` |
+| GET | `/api/invoices?status=&clientId=&q=&paidFrom=&paidTo=&page=1&pageSize=20` | | `Paged<InvoiceSummaryDto>`; `paidFrom`/`paidTo` (dates, inclusive) keep invoices with a payment dated in the period, part payments included: the dashboard's "Paid this month" links here |
 | GET | `/api/invoices/{id}` | | `InvoiceDto` |
 | POST | `/api/invoices` | `SaveInvoiceRequest` | `InvoiceDto` (402 when the monthly invoice limit is reached) |
 | PUT | `/api/invoices/{id}` | `SaveInvoiceRequest` | `InvoiceDto` (not allowed for `Void`) |
@@ -182,7 +183,8 @@ balance      = total - amountPaid
 `round` = round half away from zero to a whole minor unit.
 
 `InvoiceSummaryDto = { id, number, clientName, issueDate, dueDate, currency, totalMinor, balanceMinor, status, createdAt }`
-`InvoiceDto = { id, number, status, client: ClientSnapshot, issueDate, dueDate, currency, template, items: [LineDto], subtotalMinor, discountTotalMinor, taxTotalMinor, taxes: [{ name, ratePercent, amountMinor }], shippingMinor, totalMinor, amountPaidMinor, balanceMinor, notes, terms, publicUrl, whatsappShareUrl, sentAt, viewedAt, paidAt, quoteId, recurringScheduleId, payments: [PaymentDto], events: [{ type, note, createdAt }], createdAt }`
+`InvoiceDto = { id, number, status, client: ClientSnapshot, issueDate, dueDate, currency, template, items: [LineDto], subtotalMinor, discountTotalMinor, taxTotalMinor, taxes: [{ name, ratePercent, amountMinor }], shippingMinor, totalMinor, amountPaidMinor, balanceMinor, notes, terms, publicUrl, whatsappShareUrl, sentAt, viewedAt, paidAt, quoteId, recurringScheduleId, payments: [PaymentDto], events: [{ type, note, createdAt }], createdAt, showBranding }`
+`showBranding` is true when the PDF prints "Made with InvoiceLink" (plans without branding removal); in-app previews pass it on so they match the PDF.
 `ClientSnapshot = { id, name, company, email, phone, address, taxId }` (`id` null if the client was deleted)
 `LineDto = { id, itemId, description, quantity, unitPriceMinor, discountPercent, taxRateId, taxName, taxRatePercent, lineTotalMinor }`
 `PaymentDto = { id, amountMinor, method, reference, paidAt, receiptNumber, note, online }`
@@ -205,6 +207,7 @@ Quote `status`: `Draft`, `Sent`, `Accepted`, `Declined`, `Converted`, `Expired` 
 `SaveQuoteRequest = { clientId, issueDate, expiryDate, currency, template, items: [LineRequest], shippingMinor, notes, terms }`
 `QuoteSummaryDto = { id, number, clientName, issueDate, expiryDate, currency, totalMinor, status, createdAt }`
 `QuoteDto` = `InvoiceDto` fields without `dueDate`, payments, balance and `recurringScheduleId`, plus `expiryDate`, `convertedInvoiceId`.
+A quote's `events` are rebuilt from its dates (quotes keep no event rows): `Created`, `Sent`, `Viewed`, `Accepted` or `Declined` (the client's reply), and `Converted` (its note is the invoice number). A converted quote prints the ACCEPTED stamp, in the PDF and the preview.
 
 ## Recurring invoices (Pro)
 
@@ -235,7 +238,7 @@ Quote `status`: `Draft`, `Sent`, `Accepted`, `Declined`, `Converted`, `Expired` 
 
 After Paystack checkout the payer returns to `{web}/i/{token}?reference=...`; the page should call `/verify` with that reference.
 `PublicInvoiceDto = { number, status, business: PublicBusinessDto, client: ClientSnapshot, issueDate, dueDate, currency, template, items: [LineDto], subtotalMinor, discountTotalMinor, taxTotalMinor, taxes, shippingMinor, totalMinor, amountPaidMinor, balanceMinor, notes, terms, canPayOnline, payments: [{ id, amountMinor, method, paidAt, receiptNumber }], showBranding }`
-`PublicQuoteDto` = same shape for quotes with `expiryDate` instead of `dueDate`, no payments, plus `canRespond`.
+`PublicQuoteDto` = same shape for quotes with `expiryDate` instead of `dueDate`, no payments, plus `canRespond`, and on the accept/decline response `senderNotified` (true only when the business has an email address and was emailed the reply).
 `PublicBusinessDto = { name, logoUrl, address, email, phone, taxId, bankDetails, brandColor, tagline, registrationNumber, headerLine, secondaryColor, logoSize, fontStyle, documentTitle, showTaxId, showRegistrationNumber, showBankDetails, showSignature, signatureName, signatureRole, signatureImageUrl, stampImageUrl, footerText }`
 In `PublicBusinessDto`, `logoUrl`, `signatureImageUrl` and `stampImageUrl` are null unless the business's plan has `brand_images`,
 and hidden values are null (see "Show switches"), so the public pages render what they are given.

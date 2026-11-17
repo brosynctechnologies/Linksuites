@@ -53,7 +53,6 @@ function PrivateReceipt({ path, isPdf }: { path: string; isPdf: boolean }) {
         </span>
       ) : (
         // A blob URL from the private API route: next/image can't optimise it.
-        // eslint-disable-next-line @next/next/no-img-element
         <img src={current.url} alt="Receipt" className="h-16 w-16 rounded-control border border-rule object-cover" />
       )}
       {current?.url && (

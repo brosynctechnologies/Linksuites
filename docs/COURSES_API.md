@@ -92,7 +92,8 @@ Question `type`: `SingleChoice`, `MultipleChoice`, `TrueFalse`, `ShortAnswer`. `
 
 `CouponDto = { id, code, courseId, discountType, value, maxUses, uses, expiresAt, isActive }` (`courseId` null = all courses; `discountType` `Percent` or `Fixed`)
 `PayoutDto = { id, amountMinor, status, bankName, accountNumber, accountName, reference, requestedAt, paidAt, note }`; `status`: `Requested`, `Paid`, `Rejected`.
-Earning `status`: `Pending` (in the 7-day window), `Available`, `PaidOut`, `Reversed`. `channel`: `Marketplace` or `Academy`.
+Earning `status`: `Pending` (in the 7-day window), `Available`, `PartlyAvailable` (part of it is in a payout, the rest can be requested), `Requested` (wholly in a payout request not yet paid), `PaidOut`, `Reversed`. Paid payouts cover the oldest earnings first, then requested ones. `channel`: `Marketplace` or `Academy`.
+`enrolmentsThisMonth` and `revenueThisMonthMinor` count from midnight on the 1st in Africa/Lagos; refunded (revoked) enrolments are not counted. A learner who re-enrols after a refund is counted in the course's student count again.
 `QuestionDto = { id, courseId, courseTitle, lessonId, lessonTitle, authorName, body, createdAt, answers: [{ id, authorName, isTutor, body, createdAt }] }`
 
 ## Public catalogue (no sign-in)
@@ -122,7 +123,7 @@ Earning `status`: `Pending` (in the 7-day window), `Available`, `PaidOut`, `Reve
 | GET | `/api/learn/enrollments` | | `[MyCourseDto]` |
 | GET | `/api/learn/courses/{courseId}` | | `LearnCourseDto` (403 if not enrolled) |
 | GET | `/api/learn/lessons/{lessonId}` | | `LessonPlaybackDto` |
-| PUT | `/api/learn/lessons/{lessonId}/progress` | `{ positionSec, completed }` | `{ progressPercent, courseCompleted, certificateCode }` |
+| PUT | `/api/learn/lessons/{lessonId}/progress` | `{ positionSec, completed, mediaDurationSec? }` | `{ progressPercent, courseCompleted, certificateCode }`; a video lesson the server couldn't measure learns its length from `mediaDurationSec` (the length the player read), never from `positionSec` |
 | GET / PUT | `/api/learn/lessons/{lessonId}/note` | `{ body }` | `{ body, updatedAt }` |
 | GET / POST | `/api/learn/lessons/{lessonId}/questions` | `{ body }` | `QuestionDto[]` / `QuestionDto` |
 | POST | `/api/learn/questions/{id}/answers` | `{ body }` | `QuestionDto` |
