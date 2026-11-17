@@ -49,7 +49,7 @@ public sealed record DischargePdfData(
     string ClinicName, string? Address, string? Phone, byte[]? Logo, string PatientName, string PatientNumber, string Sex, int AgeYears,
     string AdmittedOn, string? DischargedOn, string? WardName, string? DischargeType, string? DeathTime, string? DeathCause,
     string Diagnoses, string Treatment, string Condition, string TakeHome, string? FollowUp, string DoctorName, string? DoctorTitle,
-    string? LicenceNumber, string SignedOn, bool ShowBranding);
+    string? LicenceNumber, string SignedOn, bool ShowBranding, byte[]? Signature = null);
 
 /// <summary>
 /// Discharge (Task 10).
@@ -417,7 +417,7 @@ public sealed class DischargeService(
             admission.DeathTime is { } died ? died.ToOffset(CareCalendar.LagosOffset).ToString("d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture) : null,
             admission.DeathCause, summary.Diagnoses ?? "", summary.Treatment ?? "", summary.Condition ?? "", summary.TakeHome ?? "",
             summary.FollowUp?.ToString("d MMMM yyyy", CultureInfo.InvariantCulture), summary.DoctorName, staff?.Title, staff?.LicenceNumber,
-            Day(signedAt), !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct));
+            Day(signedAt), !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct), await CareBrandingService.SignatureBytesAsync(db, storage, summary.DoctorUserId, ct));
         var stamp = CareCalendar.Today(admission.DischargedAt ?? signedAt);
         return (await pdf.DischargeAsync(data, ct), $"discharge-{patient.Number}-{stamp:yyyyMMdd}.pdf");
     }

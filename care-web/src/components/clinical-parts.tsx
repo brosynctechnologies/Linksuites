@@ -24,6 +24,7 @@ import type {
   TestRequestDto,
   TestResultDto,
   TestReviewDto,
+  TestSupersededDto,
   VitalSignsDto,
 } from "@/lib/types/clinical";
 import { useCare } from "@/lib/care-me";
@@ -501,9 +502,13 @@ const kindLabel = (k: TestKind) => TEST_KINDS.find((x) => x.value === k)?.label 
  * "Review result" (`POST /api/care/tests/{id}/review`), which releases it to the patient's portal and tells the patient; then
  * "Reviewed by {name}".
  */
-export function TestRow({ test, run, canRecord, onResulted }: { test: TestRequestDto; run: ClinicalRun; canRecord: boolean; onResulted: (r: TestResultDto) => void }) {
+export function TestRow({ test: given, run, canRecord, onResulted }: { test: TestRequestDto; run: ClinicalRun; canRecord: boolean; onResulted: (r: TestResultDto) => void }) {
   const { access } = useCare();
+  // Wave 1: after a correction the row shows the corrected result (awaiting review again) and the one it replaced.
+  const [corrected, setCorrected] = useState<TestRequestDto | null>(null);
+  const test = corrected ?? given;
   const [entering, setEntering] = useState(false);
+  const [amending, setAmending] = useState(false);
   const [link, setLink] = useState<TestFileLinkDto | null>(null);
   const [review, setReview] = useState<TestReviewDto | null>(null);
   const file = useAction();
@@ -565,6 +570,56 @@ export function TestRow({ test, run, canRecord, onResulted }: { test: TestReques
             ))}
           {link && <p className="text-xs text-muted">The link works for two minutes. Opening it is logged.</p>}
           <ErrorBox error={file.error} />
+          {test.amendedAt && <p className="text-xs text-muted">Corrected {formatStamp(test.amendedAt)}. The earlier result was entered in error.</p>}
+          {test.superseded.length > 0 && <SupersededResults items={test.superseded} />}
+          {canRecord &&
+            (amending ? (
+              <ResultForm
+                testId={test.id}
+                run={run}
+                amend={{ hasFile: test.hasFile }}
+                onCancel={() => setAmending(false)}
+                onDone={(r, reason, keptFile) => {
+                  setAmending(false);
+                  setLink(null);
+                  setReview(null);
+                  setCorrected({
+                    ...test,
+                    resultText: r.resultText,
+                    hasFile: r.hasFile,
+                    resultedBy: r.resultedBy,
+                    resultedByName: "you",
+                    resultedAt: r.resultedAt,
+                    reviewedBy: null,
+                    reviewedByName: null,
+                    reviewedAt: null,
+                    amendedAt: r.resultedAt,
+                    superseded: [
+                      {
+                        id: `local-${r.resultedAt}`,
+                        resultText: test.resultText,
+                        hasFile: test.hasFile && !keptFile,
+                        resultedBy: test.resultedBy,
+                        resultedByName: test.resultedByName,
+                        resultedAt: test.resultedAt,
+                        reviewedBy: test.reviewedBy,
+                        reviewedByName: reviewedByName ?? null,
+                        reviewedAt: reviewedAt ?? null,
+                        supersededBy: r.resultedBy ?? "",
+                        supersededByName: "you",
+                        supersededAt: r.resultedAt ?? new Date().toISOString(),
+                        reason,
+                      },
+                      ...test.superseded,
+                    ],
+                  });
+                }}
+              />
+            ) : (
+              <Button variant="ghost" className="min-h-10 px-2.5" onClick={() => setAmending(true)}>
+                Correct the result
+              </Button>
+            ))}
         </div>
       )}
       {test.status === "Requested" &&
@@ -588,14 +643,58 @@ export function TestRow({ test, run, canRecord, onResulted }: { test: TestReques
   );
 }
 
+/** Wave 1: earlier results of a test that were entered in error, newest first, with who recorded them and who corrected them, when and why. */
+function SupersededResults({ items }: { items: TestSupersededDto[] }) {
+  return (
+    <details className="rounded-control border border-dashed border-rule px-3 py-2">
+      <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+        {items.length === 1 ? "1 earlier result entered in error" : `${items.length} earlier results entered in error`}
+      </summary>
+      <ul className="mt-2 space-y-2">
+        {items.map((s) => (
+          <li key={s.id} className="text-xs">
+            <Badge tone="arterial">Entered in error</Badge>
+            {s.resultText && <p className="mt-1 whitespace-pre-wrap text-slate-700 line-through decoration-slate-400">{s.resultText}</p>}
+            {s.hasFile && <p className="mt-1 text-muted">It had a result file, kept on record.</p>}
+            <p className="mt-1 text-muted">
+              Recorded by {s.resultedByName ?? "staff"}, {formatStamp(s.resultedAt)}. Marked entered in error by {s.supersededByName ?? "staff"},{" "}
+              {formatStamp(s.supersededAt)}.
+            </p>
+            <p className="text-slate-700">Reason: {s.reason}</p>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 const ACCEPT = "application/pdf,image/jpeg,image/png,image/webp";
 
-/** Result entry: typed text, a file (PDF, JPEG, PNG or WebP, at most 10 MB), or both. A test takes one result. */
-function ResultForm({ testId, run, onCancel, onDone }: { testId: string; run: ClinicalRun; onCancel: () => void; onDone: (r: TestResultDto) => void }) {
+/**
+ * Result entry: typed text, a file (PDF, JPEG, PNG or WebP, at most 10 MB), or both. A test takes one result. With `amend` (Wave 1) it
+ * corrects a result entered in error instead: a reason is required, the current file can be kept, and the original stays on record.
+ */
+function ResultForm({
+  testId,
+  run,
+  amend,
+  onCancel,
+  onDone,
+}: {
+  testId: string;
+  run: ClinicalRun;
+  amend?: { hasFile: boolean };
+  onCancel: () => void;
+  onDone: (r: TestResultDto, reason: string, keptFile: boolean) => void;
+}) {
   const [text, setText] = useState("");
+  const [reason, setReason] = useState("");
+  const [keepFile, setKeepFile] = useState(!!amend?.hasFile);
   const [file, setFile] = useState<File | null>(null);
   const [tooBig, setTooBig] = useState(false);
   const { busy, error, run: act } = useAction();
+  const path = `/api/care/tests/${testId}/${amend ? "amend" : "result"}`;
+  const keeping = !!amend?.hasFile && keepFile && !file;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -605,17 +704,31 @@ function ResultForm({ testId, run, onCancel, onDone }: { testId: string; run: Cl
           const fd = new FormData();
           fd.append("file", file);
           fd.append("text", text);
-          return api<TestResultDto>(`/api/care/tests/${testId}/result`, { method: "POST", body: fd, headers });
+          if (amend) fd.append("reason", reason);
+          return api<TestResultDto>(path, { method: "POST", body: fd, headers });
         }
-        return api<TestResultDto>(`/api/care/tests/${testId}/result`, { method: "POST", body: { text }, headers });
+        return api<TestResultDto>(path, { method: "POST", body: amend ? { text, reason, keepFile: keeping } : { text }, headers });
       }),
     );
-    if (res.ok) onDone(res.data);
+    if (res.ok) onDone(res.data, reason.trim(), keeping);
   }
 
   return (
     <form onSubmit={submit} className="mt-2 space-y-3 rounded-control border border-scrub-line bg-scrub-wash/40 p-3">
-      <Textarea label="Result" rows={4} maxLength={10000} value={text} onChange={(e) => setText(e.target.value)} error={error?.field("text")} />
+      {amend && (
+        <Textarea
+          label="Why the recorded result was wrong"
+          rows={2}
+          maxLength={500}
+          required
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          error={error?.field("reason")}
+          hint="For example: the sample was another patient's. Kept with the original result, which stays on record marked as entered in error."
+        />
+      )}
+      <Textarea label={amend ? "Corrected result" : "Result"} rows={4} maxLength={10000} value={text} onChange={(e) => setText(e.target.value)} error={error?.field("text")} />
+      {amend?.hasFile && !file && <Checkbox checked={keepFile} onChange={setKeepFile} label="Keep the current result file" />}
       <div className="space-y-1.5">
         <label htmlFor={`file-${testId}`} className="block text-sm font-medium text-slate-700">
           Result file
@@ -637,13 +750,14 @@ function ResultForm({ testId, run, onCancel, onDone }: { testId: string; run: Cl
         {!tooBig && !error?.field("file") && <p className="text-xs text-muted">A PDF, or a JPEG, PNG or WebP photo. Images are re-saved without their metadata.</p>}
       </div>
       <Notice>
-        The patient sees the result only after a doctor reviews it; their portal then says only that a new result is ready. A result can&apos;t be
-        changed after saving.
+        {amend
+          ? "The corrected result waits for a doctor's review again before the patient sees it; their portal then shows only the corrected result, marked as corrected."
+          : "The patient sees the result only after a doctor reviews it; their portal then says only that a new result is ready. To change it later, correct it: the original stays on record."}
       </Notice>
-      <ErrorBox error={error && !["text", "file"].some((f) => error.field(f)) ? error : null} />
+      <ErrorBox error={error && !["text", "file", "reason"].some((f) => error.field(f)) ? error : null} />
       <div className="flex gap-2">
-        <Button type="submit" loading={busy} disabled={tooBig || (!text.trim() && !file)}>
-          Save the result
+        <Button type="submit" loading={busy} disabled={tooBig || (!text.trim() && !file && !keeping) || (!!amend && !reason.trim())}>
+          {amend ? "Save the correction" : "Save the result"}
         </Button>
         <Button variant="ghost" onClick={onCancel}>
           Cancel

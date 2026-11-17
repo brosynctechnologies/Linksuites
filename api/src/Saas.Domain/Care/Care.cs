@@ -493,6 +493,35 @@ public class TestRequest : TenantEntity
     /// </summary>
     public Guid? ReviewedBy { get; set; }
     public DateTimeOffset? ReviewedAt { get; set; }
+    /// <summary>
+    /// Wave 1: when the current result last replaced one entered in error (null for a result never amended). The replaced results are
+    /// kept as <see cref="TestResultAmendment"/> rows; the portal notes that the result was corrected.
+    /// </summary>
+    public DateTimeOffset? AmendedAt { get; set; }
+}
+
+/// <summary>
+/// Wave 1: a test result that was entered in error and replaced by a corrected one. The original result (text through <c>ClinicalText</c>,
+/// the private file key, who recorded and reviewed it, and when) is kept as it was, with who replaced it, when and why (<see cref="Reason"/>,
+/// clinical free text through <c>ClinicalText</c>). Never edited or deleted; staff read it in the record, the portal never does.
+/// Not [Audited]: an explicit audit row (ids only) is written.
+/// </summary>
+public class TestResultAmendment : TenantEntity
+{
+    public Guid TestRequestId { get; set; }
+    public Guid PatientId { get; set; }
+    public string? ResultText { get; set; }
+    /// <summary>The original file stays in private storage under its key (the corrected result may keep the same file).</summary>
+    public string? ResultFileKey { get; set; }
+    public string? ResultFileType { get; set; }
+    public Guid? ResultedBy { get; set; }
+    public DateTimeOffset? ResultedAt { get; set; }
+    public Guid? ReviewedBy { get; set; }
+    public DateTimeOffset? ReviewedAt { get; set; }
+    /// <summary>Who marked it entered in error, when, and the reason they gave.</summary>
+    public Guid SupersededBy { get; set; }
+    public DateTimeOffset SupersededAt { get; set; }
+    public string Reason { get; set; } = "";
 }
 
 /// <summary>What kind of ward it is (for the bed board and reports).</summary>
@@ -630,7 +659,13 @@ public class CarePayment : TenantEntity
     /// <summary>True when recorded as an admission deposit.</summary>
     public bool IsDeposit { get; set; }
     public Guid? RecordedByUserId { get; set; }
+    /// <summary>
+    /// When the clinic took the money: the desk's time, or for an online payment the time CareLink confirmed it (Wave 1: a late
+    /// confirmation counts on the day it arrives, so a reconciled day's takings never change). Takings count by this Lagos day.
+    /// </summary>
     public DateTimeOffset PaidAt { get; set; }
+    /// <summary>Online: the time Paystack says the patient paid (kept for reference; may be days before <see cref="PaidAt"/>).</summary>
+    public DateTimeOffset? ProviderPaidAt { get; set; }
     /// <summary>A desk payment's idempotency key (unique per clinic): the same key returns the same payment and records nothing new.</summary>
     public string? IdempotencyKey { get; set; }
     /// <summary>Online: the Paystack reference care_{billId}_{random} (unique per clinic).</summary>

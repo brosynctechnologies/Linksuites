@@ -63,10 +63,18 @@ public static class CarePortalEndpoints
             .RequireRateLimiting(RateLimits.PublicWrite);
         me.MapPost("/patients/{id:guid}/appointments/{appointmentId:guid}/cancel", (Guid id, Guid appointmentId, PortalService s, CancellationToken ct) =>
             s.CancelAsync(id, appointmentId, ct)).RequireRateLimiting(RateLimits.PublicWrite);
+        // Wave 1: move a booked appointment to another open slot (the booking rules), at least 2 hours before it starts.
+        me.MapPost("/patients/{id:guid}/appointments/{appointmentId:guid}/reschedule", (Guid id, Guid appointmentId, RescheduleRequest r, PortalService s,
+            CancellationToken ct) => s.RescheduleAsync(id, appointmentId, r, ct)).RequireRateLimiting(RateLimits.PublicWrite);
 
-        // The patient's own contact details, and the patient's notices at this clinic.
+        // The patient's own contact details, and the patient's notices at this clinic (Wave 1: the contact read and the unread count).
+        me.MapGet("/patients/{id:guid}/contact", (Guid id, PortalService s, CancellationToken ct) => s.ContactAsync(id, ct));
         me.MapPut("/patients/{id:guid}/contact", (Guid id, PortalContactRequest r, PortalService s, CancellationToken ct) => s.UpdateContactAsync(id, r, ct))
             .RequireRateLimiting(RateLimits.PublicWrite);
         me.MapGet("/patients/{id:guid}/notifications", (Guid id, PortalService s, CancellationToken ct) => s.NoticesAsync(id, ct));
+        me.MapGet("/patients/{id:guid}/notifications/unread-count", (Guid id, PortalService s, CancellationToken ct) => s.UnreadCountAsync(id, ct));
+
+        // Wave 1: reviewed results only (a portal read, logged like the record).
+        me.MapGet("/patients/{id:guid}/results", (Guid id, PortalService s, CancellationToken ct) => s.ResultsAsync(id, ct));
     }
 }

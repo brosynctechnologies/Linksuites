@@ -28,6 +28,9 @@ public sealed record PatientSummaryDto(
 
 public sealed record RegisterPatientResult(PatientDto Patient, IReadOnlyList<PatientSummaryDto> PossibleDuplicates);
 
+/// <summary>Wave 1: what the registration form has so far, to check for the same person before saving.</summary>
+public sealed record DuplicateCheckRequest(string? FirstName, string? LastName, DateOnly? DateOfBirth, string? Phone);
+
 public sealed record SavePatientRequest(
     string? FirstName, string? MiddleName, string? LastName, PatientSex? Sex, DateOnly? DateOfBirth, string? Phone, string? Email, string? Address,
     string? NextOfKinName, string? NextOfKinPhone, string? NextOfKinRelationship);
@@ -93,6 +96,27 @@ public sealed class PatientService(
     {
         var patient = await db.Patients.AsNoTracking().FirstOrDefaultAsync(p => p.Id == patientId, ct) ?? throw new NotFoundException("Patient");
         return new PatientClinicalFacts(Read(patient.Allergies), Read(patient.Conditions), patient.BloodGroup, patient.Genotype);
+    }
+
+    /// <summary>
+    /// Wave 1 (ledger gap): the registration form's duplicate check, before anything is saved. Front desk and above (the cashier gets 403).
+    /// The same rule as <see cref="RegisterAsync"/>'s warning: the same first and last name (any case) and date of birth, or the same phone
+    /// (normalised). Demographics only, at most 10. Sent in the body, so names never travel in an address.
+    /// </summary>
+    public async Task<IReadOnlyList<PatientSummaryDto>> DuplicatesAsync(DuplicateCheckRequest r, CancellationToken ct)
+    {
+        EnsureDesk(await access.CallerAsync(ct));
+        var first = r.FirstName?.Trim().ToLower();
+        var last = r.LastName?.Trim().ToLower();
+        var byName = !string.IsNullOrEmpty(first) && !string.IsNullOrEmpty(last) && r.DateOfBirth is not null;
+        var phone = StudentService.TryNormalisePhone(r.Phone, out var p) ? p : null;
+        if (!byName && phone is null) return [];
+        var dob = r.DateOfBirth ?? default;
+        return await db.Patients.AsNoTracking()
+            .Where(x => (byName && x.FirstName.ToLower() == first && x.LastName.ToLower() == last && x.DateOfBirth == dob) || (phone != null && x.Phone == phone))
+            .OrderBy(x => x.Number).Take(10)
+            .Select(x => new PatientSummaryDto(x.Id, x.Number, x.FirstName + " " + x.LastName, x.Sex, x.DateOfBirth, x.Phone, x.Status))
+            .ToListAsync(ct);
     }
 
     // ---------- Writes ----------

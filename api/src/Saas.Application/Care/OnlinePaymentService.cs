@@ -430,14 +430,18 @@ public sealed class OnlinePaymentService(
             return;
         }
 
+        // Wave 1 (final review 7): the payment counts on the day the clinic learns of it, so a late webhook or a checkout confirmed days later
+        // never changes a day's takings that were already reconciled. Paystack's own time is kept beside it.
+        var paidAt = now.AddTicks(-(now.Ticks % 10)); // Postgres keeps microseconds
         var claimed = await open.ExecuteUpdateAsync(s => s
             .SetProperty(p => p.Status, CarePaymentStatus.Succeeded)
-            .SetProperty(p => p.PaidAt, charge.PaidAt)
+            .SetProperty(p => p.PaidAt, paidAt)
+            .SetProperty(p => p.ProviderPaidAt, (DateTimeOffset?)charge.PaidAt)
             .SetProperty(p => p.UpdatedAt, now), ct);
         if (claimed == 0) return; // the other caller got here first
         db.ChangeTracker.Clear();
         var payment = await db.CarePayments.FirstAsync(p => p.Id == row.Id, ct);
-        payment.ReceiptNumber = await desk.NextReceiptAsync(charge.PaidAt, ct);
+        payment.ReceiptNumber = await desk.NextReceiptAsync(paidAt, ct);
         var tracked = await db.PatientBills.FirstAsync(b => b.Id == row.BillId, ct);
         var paid = await db.PatientBills.AsNoTracking().Where(b => b.Id == row.BillId).Select(b => b.PaidMinor).FirstAsync(ct);
         tracked.PaidMinor = checked(paid + payment.AmountMinor);

@@ -24,6 +24,7 @@ import {
   PageHeader,
   PageLoader,
   Select,
+  WhatsAppLink,
   Wristband,
   buttonClass,
   cx,
@@ -258,6 +259,11 @@ function AppointmentCard({ appointment: a, isToday, doctors, onChanged }: { appo
           <Button variant="secondary" className="min-h-10 px-3" onClick={() => setMoving(true)}>
             Move
           </Button>
+          {a.whatsAppUrl && (
+            <WhatsAppLink href={a.whatsAppUrl} className="min-h-10 px-3">
+              Remind
+            </WhatsAppLink>
+          )}
           <Button variant="ghost" className="min-h-10 px-3" loading={cancel.busy} onClick={doCancel}>
             Cancel
           </Button>

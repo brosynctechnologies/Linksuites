@@ -32,8 +32,14 @@ public sealed record PortalPrescriptionItemDto(
 
 public sealed record PortalPrescriptionDto(Guid Id, string DoctorName, DateTimeOffset CreatedAt, IReadOnlyList<PortalPrescriptionItemDto> Items);
 
-/// <summary>A test with its result. Results on file are seen at the clinic (no file link in the portal at this stage).</summary>
-public sealed record PortalResultDto(Guid Id, TestKind Kind, string Description, string? ResultText, bool HasFile, DateTimeOffset? ResultedAt);
+/// <summary>
+/// A test with its result. Results on file are seen at the clinic (no file link in the portal at this stage). <see cref="Corrected"/>: the
+/// result replaced one entered in error (Wave 1); the replaced result is never shown here.
+/// </summary>
+public sealed record PortalResultDto(Guid Id, TestKind Kind, string Description, string? ResultText, bool HasFile, DateTimeOffset? ResultedAt, bool Corrected = false);
+
+/// <summary>Wave 1: unread notices for one patient at one clinic.</summary>
+public sealed record PortalUnreadDto(int Count);
 
 public sealed record PortalVitalsDto(
     DateTimeOffset TakenAt, decimal? TemperatureC, int? Systolic, int? Diastolic, int? Pulse, int? RespRate, int? SpO2, decimal? WeightKg,
@@ -126,6 +132,7 @@ public sealed class PortalService(
         [RecordGuard.Areas.Fluids] = "The fluid chart",
         [RecordGuard.Areas.WardRounds] = "Ward rounds",
         [RecordGuard.Areas.MedicationChart] = "The medication chart",
+        [RecordGuard.Areas.WardVitals] = "Vital signs on the ward",
         [RecordGuard.Areas.Bills] = "Your bills",
     };
 
@@ -147,8 +154,7 @@ public sealed class PortalService(
         var prescriptions = await PrescriptionService.ReadManyAsync(db, text, db.Prescriptions.AsNoTracking().Where(p => p.PatientId == patientId
             && (p.ConsultationId == null || db.Consultations.Any(c => c.Id == p.ConsultationId && c.Status == NoteStatus.Signed))), ct);
         // Results once a doctor has reviewed them (post-build user decision; the patient was told "a new result is ready" at the review).
-        var tests = await TestService.ReadManyAsync(db, text,
-            db.TestRequests.AsNoTracking().Where(t => t.PatientId == patientId && t.Status == TestStatus.Resulted && t.ReviewedAt != null), ct);
+        var tests = await ReviewedResultsAsync(patientId, ct);
         var vitals = await db.VitalSigns.AsNoTracking().Where(v => v.PatientId == patientId).OrderBy(v => v.TakenAt).ThenBy(v => v.Id).ToListAsync(ct);
         var admissions = await AdmissionService.ReadManyAsync(db, text, db.Admissions.AsNoTracking().Where(a => a.PatientId == patientId), clock, ct);
         var rounds = await WardCareService.ReadRoundsAsync(db, text,
@@ -166,7 +172,7 @@ public sealed class PortalService(
             prescriptions.Select(p => new PortalPrescriptionDto(p.Id, p.DoctorName, p.CreatedAt,
                 p.Items.Select(i => new PortalPrescriptionItemDto(i.Drug, i.Strength, i.Dose, i.Frequency, i.DurationDays, i.Quantity, i.Route, i.Instructions)).ToList()))
                 .ToList(),
-            tests.Select(t => new PortalResultDto(t.Id, t.Kind, t.Description, t.ResultText, t.HasFile, t.ResultedAt)).ToList(),
+            tests.Select(ToPortal).ToList(),
             vitals.Select(v => new PortalVitalsDto(v.TakenAt, v.TemperatureC, v.Systolic, v.Diastolic, v.Pulse, v.RespRate, v.SpO2, v.WeightKg, v.HeightCm,
                 v.Bmi, v.Flags)).ToList(),
             admissions.Select(a => new PortalAdmissionDto(a.Id, a.AdmittedAt, a.WardName, a.DoctorName, a.Reason, a.AdmittingDiagnosis, a.Status,
@@ -302,10 +308,27 @@ public sealed class PortalService(
         return ToDto(await appointments.CancelForPortalAsync(patientId, appointmentId, ct));
     }
 
+    /// <summary>
+    /// Wave 1: moves the patient's own booked appointment to another open slot (optionally with another doctor) under the booking rules,
+    /// at least 2 hours before it starts (<see cref="AppointmentService.RescheduleForPortalAsync"/>).
+    /// </summary>
+    public async Task<PortalAppointmentDto> RescheduleAsync(Guid patientId, Guid appointmentId, RescheduleRequest r, CancellationToken ct)
+    {
+        await portal.RequirePatientAsync(patientId, ct);
+        return ToDto(await appointments.RescheduleForPortalAsync(patientId, appointmentId, r, ct));
+    }
+
     private PortalAppointmentDto ToDto(AppointmentDto a) =>
         new(a.Id, a.DoctorUserId, a.DoctorName, a.Start, a.End, a.Reason, a.Status, a.Source, appointments.PortalCanCancel(a.Status, a.Start));
 
     // ---------- Contact details ----------
+
+    /// <summary>Wave 1: the patient's own phone, email and address as stored (what the contact form edits).</summary>
+    public async Task<PortalContactDto> ContactAsync(Guid patientId, CancellationToken ct)
+    {
+        await portal.RequirePatientAsync(patientId, ct);
+        return await db.Patients.AsNoTracking().Where(p => p.Id == patientId).Select(p => new PortalContactDto(p.Phone, p.Email, p.Address)).FirstAsync(ct);
+    }
 
     /// <summary>
     /// Replaces the patient's own phone, email and address, validated as on the patient screen. Nothing else on the patient changes. Audited
@@ -348,12 +371,44 @@ public sealed class PortalService(
     public async Task<IReadOnlyList<PortalNoticeDto>> NoticesAsync(Guid patientId, CancellationToken ct)
     {
         var who = await portal.RequirePatientAsync(patientId, ct);
-        var userId = portal.CustomerUserId();
-        var marker = $"?patient={patientId}";
-        return await db.UserNotifications.AsNoTracking()
-            .Where(n => n.UserId == userId && n.Product == Products.Care && n.TenantId == who.ClinicId && n.Link.EndsWith(marker))
+        return await PatientNotices(who, patientId)
             .OrderByDescending(n => n.CreatedAt).ThenByDescending(n => n.Id).Take(50)
             .Select(n => new PortalNoticeDto(n.Id, n.Kind, n.Title, n.Body, n.Link, n.CreatedAt, n.ReadAt))
             .ToListAsync(ct);
     }
+
+    /// <summary>Wave 1: how many of the account's notices for this patient at this clinic are unread (all of them, not only the newest 50).</summary>
+    public async Task<PortalUnreadDto> UnreadCountAsync(Guid patientId, CancellationToken ct)
+    {
+        var who = await portal.RequirePatientAsync(patientId, ct);
+        return new PortalUnreadDto(await PatientNotices(who, patientId).CountAsync(n => n.ReadAt == null, ct));
+    }
+
+    private IQueryable<UserNotification> PatientNotices(PortalPatientRef who, Guid patientId)
+    {
+        var userId = portal.CustomerUserId();
+        var marker = $"?patient={patientId}";
+        return db.UserNotifications.AsNoTracking()
+            .Where(n => n.UserId == userId && n.Product == Products.Care && n.TenantId == who.ClinicId && n.Link.EndsWith(marker));
+    }
+
+    // ---------- Results ----------
+
+    /// <summary>
+    /// Wave 1: the patient's reviewed results only (newest first), without the rest of the record. A portal read like the record (a
+    /// <see cref="RecordAccess"/> row, area result). A corrected result is marked; the result it replaced is never shown.
+    /// </summary>
+    public async Task<IReadOnlyList<PortalResultDto>> ResultsAsync(Guid patientId, CancellationToken ct)
+    {
+        var who = await portal.RequirePatientAsync(patientId, ct);
+        await RecordGuard.LogPortalReadAsync(db, who, portal.CustomerUserId(), RecordGuard.Areas.Result, clock.GetUtcNow(), ct);
+        return (await ReviewedResultsAsync(patientId, ct)).Select(ToPortal).ToList();
+    }
+
+    private Task<List<TestRequestDto>> ReviewedResultsAsync(Guid patientId, CancellationToken ct) =>
+        TestService.ReadManyAsync(db, text,
+            db.TestRequests.AsNoTracking().Where(t => t.PatientId == patientId && t.Status == TestStatus.Resulted && t.ReviewedAt != null), ct);
+
+    private static PortalResultDto ToPortal(TestRequestDto t) =>
+        new(t.Id, t.Kind, t.Description, t.ResultText, t.HasFile, t.ResultedAt, t.AmendedAt is not null);
 }

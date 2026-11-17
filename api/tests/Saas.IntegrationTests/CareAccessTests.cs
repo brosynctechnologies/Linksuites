@@ -89,6 +89,8 @@ public sealed partial class CareAccessTests(ApiFixture api)
         ("fluids", $"/api/care/admissions/{admissionId}/fluids"),
         ("ward-round", $"/api/care/admissions/{admissionId}/ward-rounds"),
         ("medication", $"/api/care/admissions/{admissionId}/medication-chart"),
+        // Wave 1: the ward's vital signs chart.
+        ("vitals", $"/api/care/admissions/{admissionId}/vitals"),
         // Task 10: the discharge summary and its PDF.
         ("discharge", $"/api/care/admissions/{admissionId}/discharge-summary"),
         ("pdf", $"/api/care/admissions/{admissionId}/discharge.pdf"),
@@ -588,6 +590,10 @@ public sealed partial class CareAccessTests(ApiFixture api)
         ["GET /api/care/admissions/{id:guid}/fluids"] = w => $"/api/care/admissions/{w.Ids["admission"]}/fluids",
         ["GET /api/care/admissions/{id:guid}/ward-rounds"] = w => $"/api/care/admissions/{w.Ids["admission"]}/ward-rounds",
         ["GET /api/care/admissions/{id:guid}/medication-chart"] = w => $"/api/care/admissions/{w.Ids["admission"]}/medication-chart",
+        // Wave 1: the ward's vital signs (clinical); the clinic logo (every member, see NonClinicalFiles) and the caller's own signature.
+        ["GET /api/care/admissions/{id:guid}/vitals"] = w => $"/api/care/admissions/{w.Ids["admission"]}/vitals",
+        ["GET /api/care/settings/logo"] = _ => "/api/care/settings/logo",
+        ["GET /api/care/staff/me/signature"] = _ => "/api/care/staff/me/signature",
         // Task 10: the admissions list (leadership and clinical staff; demographics, bed and status for non-clinical callers); the
         // discharge summary and its PDF are clinical reads.
         ["GET /api/care/admissions"] = _ => "/api/care/admissions",
@@ -629,7 +635,14 @@ public sealed partial class CareAccessTests(ApiFixture api)
         // Import templates hold headings and fill-in notes only (list kinds: no rows). The CSV one is scanned like the reports.
         ["GET /api/care/imports/{kind}/template.xlsx"] = "an empty import template: headings and fill-in notes, no patient rows",
         ["GET /api/care/imports/{kind}/template.csv"] = "an empty import template: the heading line only",
+        // Wave 1: branding images, re-encoded WebP with no metadata.
+        ["GET /api/care/settings/logo"] = "the clinic's logo image (the walk's clinic has one), printed on every letterhead",
+        ["GET /api/care/staff/me/signature"] = "the caller's own signature image (404 when they have none); nobody reads another member's",
     };
+
+    /// <summary>Wave 1: routes answering a picture (WebP) rather than JSON, and those that answer 404 when the caller has none.</summary>
+    private static readonly HashSet<string> ImageRoutes = new(StringComparer.Ordinal) { "GET /api/care/settings/logo", "GET /api/care/staff/me/signature" };
+    private static readonly HashSet<string> OwnImageRoutes = new(StringComparer.Ordinal) { "GET /api/care/staff/me/signature" };
 
     private const string XlsxType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -640,6 +653,15 @@ public sealed partial class CareAccessTests(ApiFixture api)
     internal async Task<WalkWorld> SeedWalkAsync()
     {
         var clinic = await kit.ClinicAsync("Route Walk Clinic");
+        // Wave 1: the clinic has a logo, so every member's read of it answers the image.
+        using (var bitmap = new SkiaSharp.SKBitmap(40, 40))
+        {
+            bitmap.Erase(SkiaSharp.SKColors.SteelBlue);
+            using var png = SkiaSharp.SKImage.FromBitmap(bitmap).Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+            var file = new ByteArrayContent(png.ToArray());
+            file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+            (await clinic.Owner.PutAsync("/api/care/settings/logo", new MultipartFormDataContent { { file, "file", "logo" } }, Ct)).EnsureSuccessStatusCode();
+        }
         var ids = new Dictionary<string, Guid>();
         var patientId = (await kit.PatientAsync(clinic, "Walk", "Patient")).GetProperty("id").GetGuid();
         ids["patient"] = patientId;
@@ -943,12 +965,14 @@ public sealed partial class CareAccessTests(ApiFixture api)
         if (billItemNames && !PriceListRoutes.Contains(route))
             foreach (var marker in BillItemMarkers.Where(m => body.Contains(m, StringComparison.OrdinalIgnoreCase)))
                 failures.Add($"{role} {route} → bill item name {marker}");
+        if (OwnImageRoutes.Contains(route) && response.StatusCode == HttpStatusCode.NotFound) return;
         if (!response.IsSuccessStatusCode)
         {
             failures.Add($"{role} {route} → {(int)response.StatusCode} (expected 403 or a body): {body}");
             return;
         }
         if (NonClinicalFiles.ContainsKey(route) && response.Content.Headers.ContentType?.MediaType is "application/pdf" or XlsxType) return;
+        if (ImageRoutes.Contains(route) && response.Content.Headers.ContentType?.MediaType == "image/webp") return;
         if (NonClinicalFiles.ContainsKey(route) && response.Content.Headers.ContentType?.MediaType == "text/csv")
         {
             var headings = body.TrimStart('﻿').Split("\r\n")[0].Split(',').Select(h => h.Trim('"'));

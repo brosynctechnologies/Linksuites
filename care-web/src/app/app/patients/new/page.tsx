@@ -6,34 +6,19 @@ import { api } from "@/lib/api";
 import { useCare } from "@/lib/care-me";
 import { age, formatDay } from "@/lib/format";
 import { useAction } from "@/lib/mutate";
-import { qs } from "@/lib/use-api";
 import type { PatientSummaryDto, RegisterPatientResult, SavePatientRequest } from "@/lib/types";
 import { Button, CaseSheet, NoAccess, Notice, PageHeader, PatientStatusBadge, Wristband, buttonClass, linkClass } from "@/components/ui";
 import { PatientForm, emptyPatient } from "../patient-form";
 
-/** Last ten digits, so 0803… and +234803… compare equal. */
-function phoneKey(phone: string | null | undefined): string | null {
-  const digits = (phone ?? "").replace(/\D/g, "");
-  return digits.length >= 7 ? digits.slice(-10) : null;
-}
-
 /**
- * The API's duplicate rule, checked before saving: the same first name, last name and date of birth, or the same phone. It uses the
- * ordinary patient search, so nothing is registered until the clerk has seen the possible matches.
+ * The API's duplicate rule, checked before saving (`POST /api/care/patients/duplicates`, Wave 1): the same first name, last name and
+ * date of birth, or the same phone. Names travel in the body, never the address; nothing is registered until the clerk has seen the matches.
  */
-async function findDuplicates(v: SavePatientRequest): Promise<PatientSummaryDto[]> {
-  const searches = [`${v.firstName} ${v.lastName}`];
-  if (v.phone) searches.push(v.phone);
-  const results = await Promise.all(searches.map((q) => api<PatientSummaryDto[]>(`/api/care/patients${qs({ q })}`)));
-  const name = `${v.firstName} ${v.lastName}`.toLowerCase();
-  const phone = phoneKey(v.phone);
-  const seen = new Map<string, PatientSummaryDto>();
-  for (const p of results.flat()) {
-    const sameName = p.fullName.toLowerCase() === name && p.dateOfBirth === v.dateOfBirth;
-    const samePhone = !!phone && phoneKey(p.phone) === phone;
-    if (sameName || samePhone) seen.set(p.id, p);
-  }
-  return [...seen.values()];
+function findDuplicates(v: SavePatientRequest): Promise<PatientSummaryDto[]> {
+  return api<PatientSummaryDto[]>("/api/care/patients/duplicates", {
+    method: "POST",
+    body: { firstName: v.firstName, lastName: v.lastName, dateOfBirth: v.dateOfBirth, phone: v.phone },
+  });
 }
 
 function DuplicateList({ rows, label }: { rows: PatientSummaryDto[]; label: string }) {

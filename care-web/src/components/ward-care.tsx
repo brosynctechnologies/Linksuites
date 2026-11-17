@@ -21,8 +21,10 @@ import type {
   MedicationDoseDto,
   NursingNoteDto,
 } from "@/lib/types/inpatient";
+import type { PrescriptionItemDto, VitalSignsDto, VitalsInput } from "@/lib/types/clinical";
 import { lagosTime } from "./check-in";
-import type { ClinicalRun } from "./clinical-parts";
+import { VitalsLine, type ClinicalRun } from "./clinical-parts";
+import { VitalsChart } from "./vitals-chart";
 import { ChevronLeftIcon, ChevronRightIcon } from "./icons";
 import { ApiErrorView, Badge, Button, ErrorBox, Input, PageLoader, SectionTitle, Segmented, Select, Textarea, cx } from "./ui";
 
@@ -67,8 +69,8 @@ const freqShort = (f: string) => FREQUENCIES.find((x) => x.value === f)?.value ?
 
 /**
  * One Lagos day of the medication chart. Due doses (and Missed ones, which may still be given late) get Given, Held and Refused buttons
- * with an optional note; Stopped doses (the course ended, or the patient left) have none. As-needed (PRN) drugs are listed: they have
- * no scheduled doses and no record route yet.
+ * with an optional note; Stopped doses (the course ended, or the patient left) have none. As-needed (PRN) drugs are listed with their
+ * own buttons: each records a dose given now (Wave 1), which then shows on today's chart.
  */
 export function MedicationChart({ admissionId, run, canRecord }: { admissionId: string; run: ClinicalRun; canRecord: boolean }) {
   const [day, setDay] = useState(lagosToday());
@@ -111,25 +113,79 @@ export function MedicationChart({ admissionId, run, canRecord }: { admissionId: 
       {data && data.asNeeded.length > 0 && (
         <div className="rounded-control border border-rule p-3 text-sm">
           <p className="font-bold text-ink">As needed (PRN)</p>
-          <ul className="mt-1 space-y-1">
+          <ul className="mt-1 divide-y divide-rule-soft">
             {data.asNeeded.map((i) => (
-              <li key={i.id}>
-                <span className="font-bold text-ink">
-                  {i.drug}
-                  {i.strength && ` ${i.strength}`}
-                </span>{" "}
-                <span className="text-slate-700">
-                  {i.dose}
-                  {i.route ? `, ${i.route}` : ""}
-                </span>
-                {i.instructions && <span className="block text-xs text-muted">{i.instructions}</span>}
-              </li>
+              <AsNeededRow
+                key={i.id}
+                admissionId={admissionId}
+                item={i}
+                canRecord={canRecord}
+                onRecorded={() => (day === lagosToday() ? chart.reload() : setDay(lagosToday()))}
+              />
             ))}
           </ul>
-          <p className="mt-2 text-xs text-muted">As-needed doses aren&apos;t scheduled. Record them in a nursing note.</p>
+          <p className="mt-2 text-xs text-muted">As-needed doses aren&apos;t scheduled. Record each one when you give it: it shows on today&apos;s chart.</p>
         </div>
       )}
     </div>
+  );
+}
+
+/** Wave 1: one as-needed drug, with Given, Held and Refused buttons that record a dose now (`POST /api/care/admissions/{id}/prn-doses`). */
+function AsNeededRow({ admissionId, item: i, canRecord, onRecorded }: { admissionId: string; item: PrescriptionItemDto; canRecord: boolean; onRecorded: () => void }) {
+  const [note, setNote] = useState("");
+  const [noting, setNoting] = useState(false);
+  const { busy, error, run } = useAction();
+
+  async function record(status: DoseStatus) {
+    const res = await run(() =>
+      api<DoseRecordedDto>(`/api/care/admissions/${admissionId}/prn-doses`, { method: "POST", body: { prescriptionItemId: i.id, status, note: note.trim() || null } }),
+    );
+    if (res.ok) {
+      setNote("");
+      setNoting(false);
+      onRecorded();
+    }
+  }
+
+  return (
+    <li className="space-y-2 py-2">
+      <p>
+        <span className="font-bold text-ink">
+          {i.drug}
+          {i.strength && ` ${i.strength}`}
+        </span>{" "}
+        <span className="text-slate-700">
+          {i.dose}
+          {i.route ? `, ${i.route}` : ""}
+        </span>
+        {i.instructions && <span className="block text-xs text-muted">{i.instructions}</span>}
+      </p>
+      {canRecord && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button className="min-h-10" loading={busy} onClick={() => record("Given")}>
+            Given now
+          </Button>
+          <Button variant="secondary" className="min-h-10" disabled={busy} onClick={() => record("Held")}>
+            Held
+          </Button>
+          <Button variant="secondary" className="min-h-10" disabled={busy} onClick={() => record("Refused")}>
+            Refused
+          </Button>
+          {!noting && (
+            <Button variant="ghost" className="min-h-10 px-2.5" onClick={() => setNoting(true)}>
+              Add a note
+            </Button>
+          )}
+          {noting && (
+            <div className="w-full max-w-md">
+              <Input label={`Note for ${i.drug}`} srLabel placeholder="Why it was given, held or refused" maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} error={error?.field("note")} />
+            </div>
+          )}
+        </div>
+      )}
+      <ErrorBox error={error && !error.field("note") ? error : null} />
+    </li>
   );
 }
 
@@ -262,6 +318,102 @@ export function NursingNotes({ admissionId, run, canWrite }: { admissionId: stri
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+// ---------- Ward vital signs (Wave 1) ----------
+
+type VitalField = keyof VitalsInput;
+const VITAL_FIELDS: { key: VitalField; label: string; step: string; inputMode: "decimal" | "numeric" }[] = [
+  { key: "temperatureC", label: "Temperature (°C)", step: "0.1", inputMode: "decimal" },
+  { key: "systolic", label: "Systolic (mmHg)", step: "1", inputMode: "numeric" },
+  { key: "diastolic", label: "Diastolic (mmHg)", step: "1", inputMode: "numeric" },
+  { key: "pulse", label: "Pulse (per minute)", step: "1", inputMode: "numeric" },
+  { key: "respRate", label: "Respiratory rate (per minute)", step: "1", inputMode: "numeric" },
+  { key: "spO2", label: "SpO2 (%)", step: "1", inputMode: "numeric" },
+  { key: "weightKg", label: "Weight (kg)", step: "0.1", inputMode: "decimal" },
+];
+const NO_VITALS: Record<VitalField, string> = { temperatureC: "", systolic: "", diastolic: "", pulse: "", respRate: "", spO2: "", weightKg: "", heightCm: "" };
+
+function vitalNumber(s: string): number | null {
+  const t = s.trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * The ward's vital signs chart (`GET /api/care/admissions/{id}/vitals`, a logged open): the trend and every set, newest first. Ward staff
+ * add a set with the same checks and flags as triage; a critical reading tells the admitting doctor (no value in the notice).
+ */
+export function WardVitals({ admissionId, run, canWrite }: { admissionId: string; run: ClinicalRun; canWrite: boolean }) {
+  const chart = useWardRead<VitalSignsDto[]>(run, `/api/care/admissions/${admissionId}/vitals`);
+  const [values, setValues] = useState(NO_VITALS);
+  const { busy, error, run: act } = useAction();
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const vitals: VitalsInput = {
+      temperatureC: vitalNumber(values.temperatureC),
+      systolic: vitalNumber(values.systolic),
+      diastolic: vitalNumber(values.diastolic),
+      pulse: vitalNumber(values.pulse),
+      respRate: vitalNumber(values.respRate),
+      spO2: vitalNumber(values.spO2),
+      weightKg: vitalNumber(values.weightKg),
+      heightCm: null,
+    };
+    const res = await act(() => api<VitalSignsDto>(`/api/care/admissions/${admissionId}/vitals`, { method: "POST", body: { vitals } }));
+    if (res.ok) {
+      setValues(NO_VITALS);
+      chart.setState((s) => (s?.data ? { ...s, data: [...s.data, res.data] } : s));
+    }
+  }
+
+  const rows = chart.data ?? [];
+  // A reading's own error shows under its input; anything else (such as "Record at least one vital sign.") shows below the form.
+  const inputFields = VITAL_FIELDS.map((f) => `vitals.${f.key}`);
+  return (
+    <div className="space-y-3">
+      <SectionTitle>Vital signs</SectionTitle>
+      {chart.error && <ApiErrorView error={chart.error} onRetry={chart.reload} />}
+      {chart.loading && !chart.data && <PageLoader label="Loading vital signs…" />}
+      {chart.data && rows.length > 1 && <VitalsChart vitals={rows} />}
+      {chart.data && rows.length === 0 && <p className="text-sm text-muted">No vital signs taken on the ward yet.</p>}
+      {rows.length > 0 && (
+        <ul className="divide-y divide-rule-soft rounded-control border border-rule bg-surface text-sm">
+          {[...rows].reverse().map((v) => (
+            <li key={v.id} className="px-3 py-2">
+              <VitalsLine vitals={v} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {canWrite && (
+        <form onSubmit={submit} className="space-y-3 rounded-control border border-scrub-line bg-scrub-wash/40 p-3">
+          <p className="text-sm font-bold text-ink">Take a set of vital signs</p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {VITAL_FIELDS.map((f) => (
+              <Input
+                key={f.key}
+                label={f.label}
+                type="number"
+                step={f.step}
+                inputMode={f.inputMode}
+                value={values[f.key]}
+                onChange={(e) => setValues((s) => ({ ...s, [f.key]: e.target.value }))}
+                error={error?.field(`vitals.${f.key}`)}
+                className="tnum"
+              />
+            ))}
+          </div>
+          <ErrorBox error={error && !inputFields.some((f) => error.field(f)) ? error : null} />
+          <Button type="submit" loading={busy} disabled={Object.values(values).every((v) => !v.trim())}>
+            Save the readings
+          </Button>
+        </form>
       )}
     </div>
   );

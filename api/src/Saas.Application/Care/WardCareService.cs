@@ -14,6 +14,9 @@ public sealed record WardRoundRequest(string? Note);
 
 public sealed record RecordDoseRequest(DoseStatus? Status, string? Note);
 
+/// <summary>Wave 1: one dose of an as-needed (PRN) drug on this admission, given (held or refused) now.</summary>
+public sealed record RecordAsNeededDoseRequest(Guid? PrescriptionItemId, DoseStatus? Status, string? Note);
+
 /// <summary>A nursing note, for clinical staff only.</summary>
 public sealed record NursingNoteDto(Guid Id, Guid AdmissionId, Guid AuthorUserId, string AuthorName, string Note, DateTimeOffset At);
 
@@ -62,7 +65,7 @@ public sealed record DoseRecordedDto(Guid Id, DoseStatus Status, Guid RecordedBy
 /// </list>
 /// </summary>
 public sealed class WardCareService(
-    IAppDbContext db, ITenantContext tenant, CareAccess access, RecordGuard guard, ClinicalText text, ICurrentUser user, TimeProvider clock)
+    IAppDbContext db, ITenantContext tenant, CareAccess access, RecordGuard guard, ClinicalText text, ICurrentUser user, CareNotices notices, TimeProvider clock)
 {
     public const string NotOnWard = "This patient isn't on your ward.";
     public const string DoseRecorded = "This dose is already recorded.";
@@ -380,6 +383,88 @@ public sealed class WardCareService(
         }
         if (tx is not null) await tx.CommitAsync(ct);
         return new DoseRecordedDto(doseId, status, caller.UserId, now, note);
+    }
+
+    public const string NotAsNeeded = "Choose an as-needed (PRN) drug prescribed on this admission.";
+
+    /// <summary>
+    /// Wave 1 (ledger gap): records one dose of an as-needed (PRN) drug, given (or held, or refused) now: a new medication-chart row due and
+    /// recorded at this moment, so it shows on today's chart with who and when. Same rules as <see cref="RecordDoseAsync"/>: 400
+    /// <c>status</c> unless given, held or refused; 400 <c>note</c> over 500 characters; 404 for an unknown or another clinic's admission;
+    /// 409 discharged; 403 not on the ward; then 400 <c>prescriptionItemId</c> unless it is a PRN item of a prescription on this admission.
+    /// </summary>
+    public async Task<DoseRecordedDto> RecordAsNeededDoseAsync(Guid admissionId, RecordAsNeededDoseRequest r, CancellationToken ct)
+    {
+        var caller = await access.CallerAsync(ct);
+        access.EnsureClinical(caller);
+        if (r.Status is not ({ } status and (DoseStatus.Given or DoseStatus.Held or DoseStatus.Refused)))
+            throw BadRequestException.Field("status", "Choose given, held or refused.");
+        var note = CareOrders.Optional("note", r.Note, MaxDoseNoteLength);
+        var now = Now();
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        var patientId = await LockForWriteAsync(caller, admissionId, now, ct);
+        var item = r.PrescriptionItemId is { } itemId
+            ? await (from i in db.PrescriptionItems.AsNoTracking()
+                     join p in db.Prescriptions.AsNoTracking() on i.PrescriptionId equals p.Id
+                     where i.Id == itemId && p.AdmissionId == admissionId && i.Frequency == DoseFrequency.PRN
+                     select new { i.Id, i.PrescriptionId }).FirstOrDefaultAsync(ct)
+            : null;
+        if (item is null) throw BadRequestException.Field("prescriptionItemId", NotAsNeeded);
+        var dose = new MedicationDose
+        {
+            TenantId = TenantId, AdmissionId = admissionId, PatientId = patientId, PrescriptionId = item.PrescriptionId, PrescriptionItemId = item.Id,
+            DueAt = now, Status = status, RecordedByUserId = caller.UserId, RecordedAt = now, Note = note is null ? null : text.Protect(note),
+        };
+        db.MedicationDoses.Add(dose);
+        await db.SaveChangesAsync(ct);
+        if (tx is not null) await tx.CommitAsync(ct);
+        return new DoseRecordedDto(dose.Id, status, caller.UserId, now, note);
+    }
+
+    // ---------- Ward vital signs (Wave 1) ----------
+
+    /// <summary>
+    /// Records a set of vital signs on the ward: nurses, doctors and the director with a care relationship to the admission (the same write
+    /// rules as nursing notes: 404, 409 discharged, 403 not on the ward), checked and flagged exactly as at triage (400 <c>vitals</c> and
+    /// <c>vitals.{name}</c>). A critical reading tells the admitting doctor in-app with no value, unless they took it. A write, not a record
+    /// open: the answer echoes the caller's own readings.
+    /// </summary>
+    public async Task<VitalSignsDto> AddVitalsAsync(Guid admissionId, WardVitalsRequest r, CancellationToken ct)
+    {
+        var caller = await access.CallerAsync(ct);
+        access.EnsureClinical(caller);
+        var input = VisitService.ValidateVitals(r.Vitals);
+        var now = Now();
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        var patientId = await LockForWriteAsync(caller, admissionId, now, ct);
+        var vitals = new VitalSigns
+        {
+            TenantId = TenantId, PatientId = patientId, AdmissionId = admissionId, TakenBy = caller.UserId, TakenAt = now,
+            TemperatureC = input.TemperatureC, Systolic = input.Systolic, Diastolic = input.Diastolic, Pulse = input.Pulse,
+            RespRate = input.RespRate, SpO2 = input.SpO2, WeightKg = input.WeightKg, HeightCm = input.HeightCm,
+            Bmi = Vitals.Bmi(input.WeightKg, input.HeightCm),
+        };
+        vitals.Flags = Vitals.Flag(vitals);
+        db.VitalSigns.Add(vitals);
+        if (Vitals.IsCritical(vitals.Flags))
+        {
+            var doctorId = await db.Admissions.AsNoTracking().Where(a => a.Id == admissionId).Select(a => a.AdmittingDoctorUserId).FirstAsync(ct);
+            if (doctorId != caller.UserId) notices.CriticalVitalFor(doctorId);
+        }
+        await db.SaveChangesAsync(ct);
+        if (tx is not null) await tx.CommitAsync(ct);
+        var names = await ConsultationService.NamesAsync(db, [caller.UserId], ct);
+        return VisitService.ToDto(vitals, names.GetValueOrDefault(caller.UserId, ""));
+    }
+
+    /// <summary>The admission's ward vital signs, oldest first (at most 500). A clinical open (area vitals).</summary>
+    public async Task<IReadOnlyList<VitalSignsDto>> VitalsAsync(Guid admissionId, string? reason, CancellationToken ct)
+    {
+        await OpenAsync(admissionId, RecordGuard.Areas.WardVitals, reason, ct);
+        var rows = await db.VitalSigns.AsNoTracking().Where(v => v.AdmissionId == admissionId)
+            .OrderBy(v => v.TakenAt).ThenBy(v => v.Id).Take(500).ToListAsync(ct);
+        var names = await ConsultationService.NamesAsync(db, rows.Select(v => v.TakenBy), ct);
+        return rows.Select(v => VisitService.ToDto(v, names.GetValueOrDefault(v.TakenBy, ""))).ToList();
     }
 
     // ---------- Internals ----------

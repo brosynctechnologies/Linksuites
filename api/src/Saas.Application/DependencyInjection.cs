@@ -105,6 +105,7 @@ public static class DependencyInjection
         services.AddScoped<Care.CareAccess>();
         services.AddScoped<Care.CareSetupService>();
         services.AddScoped<Care.CareStaffService>();
+        services.AddScoped<Care.CareBrandingService>();
         services.AddScoped<Care.PriceListService>();
         services.AddScoped<Care.PatientService>();
         services.AddScoped<Care.BillingService>();

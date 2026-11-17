@@ -10,7 +10,7 @@ public sealed record CareStaffDto(
     string? LicenceNumber, bool HasSignature, bool IsClinical, bool IsYou);
 public sealed record CareStaffMeDto(
     Guid UserId, string FullName, MemberRole MemberRole, ClinicalRole ClinicalRole, string? Title, string? LicenceNumber,
-    bool IsClinical, bool IsLeadership, bool IsCashier);
+    bool IsClinical, bool IsLeadership, bool IsCashier, bool HasSignature = false);
 public sealed record SaveCareStaffRequest(ClinicalRole ClinicalRole, string? Title, string? LicenceNumber);
 
 /// <summary>Clinic staff as the clinic sees them: clinical role, title and licence. Leadership manages them; everyone reads their own.</summary>
@@ -64,10 +64,10 @@ public sealed class CareStaffService(IAppDbContext db, CareAccess access, ICurre
         var caller = await access.CallerAsync(ct);
         var profile = await db.CareStaffProfiles.AsNoTracking()
             .Where(p => p.UserId == caller.UserId && db.Memberships.Any(m => m.Id == p.MembershipId && m.Status == MembershipStatus.Active))
-            .Select(p => new { p.Title, p.LicenceNumber }).FirstOrDefaultAsync(ct);
+            .Select(p => new { p.Title, p.LicenceNumber, HasSignature = p.SignatureKey != null }).FirstOrDefaultAsync(ct);
         var fullName = await db.Users.Where(u => u.Id == caller.UserId).Select(u => u.FullName).FirstOrDefaultAsync(ct) ?? "";
         return new CareStaffMeDto(caller.UserId, fullName, caller.MemberRole, caller.ClinicalRole, profile?.Title, profile?.LicenceNumber,
-            caller.IsClinical, caller.IsLeadership, caller.IsCashier);
+            caller.IsClinical, caller.IsLeadership, caller.IsCashier, profile?.HasSignature ?? false);
     }
 
     private static string? Clean(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

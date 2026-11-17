@@ -1564,6 +1564,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("payer_user_id");
 
+                    b.Property<DateTimeOffset?>("ProviderPaidAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("provider_paid_at");
+
                     b.Property<string>("ProviderRef")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
@@ -2910,6 +2914,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("admission_id");
 
+                    b.Property<DateTimeOffset?>("AmendedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("amended_at");
+
                     b.Property<Guid?>("ConsultationId")
                         .HasColumnType("uuid")
                         .HasColumnName("consultation_id");
@@ -3004,6 +3012,90 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_test_requests_tenant_id_patient_id");
 
                     b.ToTable("test_requests", (string)null);
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.TestResultAmendment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("PatientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("patient_id");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("ResultFileKey")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("result_file_key");
+
+                    b.Property<string>("ResultFileType")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("result_file_type");
+
+                    b.Property<string>("ResultText")
+                        .HasColumnType("text")
+                        .HasColumnName("result_text");
+
+                    b.Property<DateTimeOffset?>("ResultedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resulted_at");
+
+                    b.Property<Guid?>("ResultedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resulted_by");
+
+                    b.Property<DateTimeOffset?>("ReviewedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("reviewed_at");
+
+                    b.Property<Guid?>("ReviewedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reviewed_by");
+
+                    b.Property<DateTimeOffset>("SupersededAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("superseded_at");
+
+                    b.Property<Guid>("SupersededBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("superseded_by");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TestRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("test_request_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_test_result_amendments");
+
+                    b.HasIndex("PatientId")
+                        .HasDatabaseName("ix_test_result_amendments_patient_id");
+
+                    b.HasIndex("TestRequestId")
+                        .HasDatabaseName("ix_test_result_amendments_test_request_id");
+
+                    b.HasIndex("TenantId", "TestRequestId")
+                        .HasDatabaseName("ix_test_result_amendments_tenant_id_test_request_id");
+
+                    b.ToTable("test_result_amendments", (string)null);
                 });
 
             modelBuilder.Entity("Saas.Domain.Care.Visit", b =>
@@ -13391,6 +13483,30 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_test_requests_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.TestResultAmendment", b =>
+                {
+                    b.HasOne("Saas.Domain.Care.Patient", null)
+                        .WithMany()
+                        .HasForeignKey("PatientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_test_result_amendments_patients_patient_id");
+
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_test_result_amendments_tenants_tenant_id");
+
+                    b.HasOne("Saas.Domain.Care.TestRequest", null)
+                        .WithMany()
+                        .HasForeignKey("TestRequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_test_result_amendments_test_requests_test_request_id");
                 });
 
             modelBuilder.Entity("Saas.Domain.Care.Visit", b =>

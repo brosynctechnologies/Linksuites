@@ -37,7 +37,7 @@ public sealed record PrescriptionDto(
 public sealed record PrescriptionPdfData(
     string ClinicName, string? Address, string? Phone, byte[]? Logo, string PatientName, string PatientNumber, string Sex, int AgeYears,
     string Date, string DoctorName, string? DoctorTitle, string? LicenceNumber, bool AllergyAcknowledged, IReadOnlyList<PrescriptionItemDto> Items,
-    bool ShowBranding);
+    bool ShowBranding, byte[]? Signature = null);
 
 /// <summary>CareLink's PDFs (QuestPDF, in Infrastructure).</summary>
 public interface ICarePdf
@@ -129,6 +129,20 @@ internal static class CareOrders
             throw BadRequestException.Field(field, "That item isn't on the active price list.");
     }
 
+    /// <summary>
+    /// Wave 1 (final review): an order charged to a visit that is already Done (a late prescription or test within the follow-up window)
+    /// tells the patient's portal users the bill is due again, as moving a visit to payment does: the bill number and balance only. Nothing
+    /// for an open visit (it reaches payment later) or an admission. Inside the caller's transaction; saves.
+    /// </summary>
+    public static async Task BillDueIfVisitDoneAsync(IAppDbContext db, CareNotices notices, OrderContext context, Guid billId, CancellationToken ct)
+    {
+        if (context.VisitId is not { } visitId) return;
+        if (!await db.Visits.AsNoTracking().AnyAsync(v => v.Id == visitId && v.Stage == VisitStage.Done, ct)) return;
+        var due = await db.PatientBills.AsNoTracking().Where(b => b.Id == billId).Select(b => new { b.Number, b.BalanceMinor }).FirstAsync(ct);
+        await notices.BillDueAsync(context.PatientId, due.Number, due.BalanceMinor, ct);
+        await db.SaveChangesAsync(ct);
+    }
+
     /// <summary>The bill the order is charged to: the visit's or the admission's (opened on first use).</summary>
     public static async Task<Guid?> BillAsync(BillingService billing, OrderContext context, CancellationToken ct) =>
         context.VisitId is { } visitId ? (await billing.OpenBillForVisitAsync(context.PatientId, visitId, ct)).Id
@@ -156,7 +170,7 @@ internal static class CareOrders
 /// </summary>
 public sealed class PrescriptionService(
     IAppDbContext db, ITenantContext tenant, CareAccess access, RecordGuard guard, ClinicalText text, PatientService patients, BillingService billing,
-    IFileStorage storage, ICarePdf pdf, PlanService plans, ICurrentUser user, TimeProvider clock)
+    IFileStorage storage, ICarePdf pdf, PlanService plans, ICurrentUser user, CareNotices notices, TimeProvider clock)
 {
     public const string DoctorsOnly = "Only doctors can prescribe.";
     public const int MaxItems = 20;
@@ -226,8 +240,11 @@ public sealed class PrescriptionService(
         // Drug lines go on the bill only when the clinic dispenses; the line shows the price item's name, the item id is the clinical reference.
         var dispenses = await db.ClinicProfiles.AsNoTracking().Select(c => c.DispensesDrugs).FirstOrDefaultAsync(ct);
         if (dispenses && prescription.Items.Any(i => i.PriceItemId is not null) && await CareOrders.BillAsync(billing, context, ct) is { } billId)
+        {
             foreach (var item in prescription.Items.Where(i => i.PriceItemId is not null))
                 await billing.AddLineAsync(billId, item.PriceItemId!.Value, item.Quantity ?? 1, item.Id.ToString(), ct);
+            await CareOrders.BillDueIfVisitDoneAsync(db, notices, context, billId, ct);
+        }
         // Task 9: an admission prescription becomes the medication chart's scheduled doses, in the same transaction.
         if (MedicationChart.AddDoses(db, prescription, now) > 0) await db.SaveChangesAsync(ct);
         if (tx is not null) await tx.CommitAsync(ct);
@@ -265,7 +282,7 @@ public sealed class PrescriptionService(
         var data = new PrescriptionPdfData(
             clinic.Name, clinic.Address, clinic.Phone, logo, $"{patient.FirstName} {patient.LastName}", patient.Number, patient.Sex.ToString(), Math.Max(0, age),
             written.ToString("d MMMM yyyy", CultureInfo.InvariantCulture), dto.DoctorName, staff?.Title, staff?.LicenceNumber, dto.AllergyAcknowledged,
-            dto.Items, !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct));
+            dto.Items, !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct), await CareBrandingService.SignatureBytesAsync(db, storage, dto.DoctorUserId, ct));
         return (await pdf.PrescriptionAsync(data, ct), $"prescription-{patient.Number}-{written:yyyyMMdd}.pdf");
     }
 

@@ -8,8 +8,11 @@ using Saas.Domain.Care;
 namespace Saas.Application.Care;
 
 public sealed record MethodTotalDto(PayMethod Method, int Count, long AmountMinor);
-public sealed record TakingsDayDto(DateOnly Date, int Count, long TotalMinor, IReadOnlyList<MethodTotalDto> ByMethod);
-public sealed record TakingsReportDto(DateOnly From, DateOnly To, int Count, long TotalMinor, IReadOnlyList<MethodTotalDto> ByMethod, IReadOnlyList<TakingsDayDto> Days);
+/// <summary>One Lagos day: payments taken by method, and (Wave 1) reversals made that day by method with negative amounts. <c>TotalMinor</c> is net.</summary>
+public sealed record TakingsDayDto(DateOnly Date, int Count, long TotalMinor, IReadOnlyList<MethodTotalDto> ByMethod, IReadOnlyList<MethodTotalDto> Reversals);
+public sealed record TakingsReportDto(
+    DateOnly From, DateOnly To, int Count, long TotalMinor, IReadOnlyList<MethodTotalDto> ByMethod, IReadOnlyList<TakingsDayDto> Days,
+    IReadOnlyList<MethodTotalDto> Reversals);
 
 public sealed record CareDebtorDto(
     Guid PatientId, string PatientNumber, string PatientName, string? Phone, int Bills, long BalanceMinor, DateTimeOffset OldestBillAt, string? WhatsAppUrl);
@@ -43,8 +46,9 @@ public sealed record DepositsReportDto(int Count, long DepositsMinor, long Credi
 /// The cashier's and leadership's reports, each with a CSV. Money only: payment methods, price categories (never an item's name, so no drug or
 /// test names), patient demographics and wards. Nothing clinical.
 /// <list type="bullet">
-/// <item>Takings: Succeeded payments (desk, deposits and online) by Lagos day and method. A reversed payment is left out of every day,
-/// including the day it was taken; pending, mismatched and abandoned checkouts are never takings.</item>
+/// <item>Takings: payments (desk, deposits and online) by Lagos day and method. Wave 1: a reversed payment still counts on the day it was
+/// taken, and its reversal is a negative row on the day it was reversed, so a closed day never changes; an online payment counts on the day
+/// it was confirmed. Pending, mismatched and abandoned checkouts are never takings.</item>
 /// <item>Debtors: patients with bills whose balance is above zero (a bill in credit has balance 0), with a WhatsApp reminder link carrying only
 /// "Hello {name}, you have a balance of {amount} at {clinic}." No link for a patient recorded as deceased, or without a phone.</item>
 /// <item>Revenue: bill lines charged in the range (removed lines left out; a bed line by its <c>ChargeDay</c>) by the price item's category (a line with no item is Other), then the
@@ -125,20 +129,37 @@ public sealed class CareReportService(IAppDbContext db, CareAccess access, ITena
 
     // ---------- Takings ----------
 
+    /// <summary>
+    /// Takings by Lagos day and method. Wave 1 (final review): a day's takings never change once the day is over. A payment counts on the
+    /// day it was taken even if it is reversed later (an online payment on the day CareLink confirmed it), and the reversal is a negative
+    /// row on the day it was made (<c>Reversals</c>, by method, negative amounts). <c>TotalMinor</c> is the money in less the money taken
+    /// back; <c>Count</c> counts payments taken.
+    /// </summary>
     public async Task<TakingsReportDto> TakingsAsync(DateOnly? from, DateOnly? to, CancellationToken ct)
     {
         await EnsureAccessAsync(ct);
         var range = Range(from, to);
         var payments = await db.CarePayments.AsNoTracking()
-            .Where(p => p.Status == CarePaymentStatus.Succeeded && p.PaidAt >= range.Start && p.PaidAt < range.End)
-            .Select(p => new { p.Method, p.AmountMinor, p.PaidAt }).ToListAsync(ct);
-        var days = payments.GroupBy(p => CareCalendar.Today(p.PaidAt)).OrderBy(g => g.Key)
-            .Select(g => new TakingsDayDto(g.Key, g.Count(), g.Sum(p => p.AmountMinor),
-                Methods.Select(m => new MethodTotalDto(m, g.Count(p => p.Method == m), g.Where(p => p.Method == m).Sum(p => p.AmountMinor)))
-                    .Where(m => m.Count > 0).ToList()))
+            .Where(p => (p.Status == CarePaymentStatus.Succeeded || p.Status == CarePaymentStatus.Reversed) && p.PaidAt >= range.Start && p.PaidAt < range.End)
+            .Select(p => new { p.Method, p.AmountMinor, At = p.PaidAt }).ToListAsync(ct);
+        var reversals = await db.CarePayments.AsNoTracking()
+            .Where(p => p.Status == CarePaymentStatus.Reversed && p.ReversedAt != null && p.ReversedAt >= range.Start && p.ReversedAt < range.End)
+            .Select(p => new { p.Method, p.AmountMinor, At = p.ReversedAt!.Value }).ToListAsync(ct);
+        static List<MethodTotalDto> ByMethod<T>(IEnumerable<T> rows, Func<T, PayMethod> method, Func<T, long> amount, bool keepEmpty, int sign = 1) =>
+            Methods.Select(m => new MethodTotalDto(m, rows.Count(r => method(r) == m), sign * rows.Where(r => method(r) == m).Sum(amount)))
+                .Where(m => keepEmpty || m.Count > 0).ToList();
+        var days = payments.Select(p => CareCalendar.Today(p.At)).Concat(reversals.Select(r => CareCalendar.Today(r.At))).Distinct().Order()
+            .Select(day =>
+            {
+                var taken = payments.Where(p => CareCalendar.Today(p.At) == day).ToList();
+                var back = reversals.Where(r => CareCalendar.Today(r.At) == day).ToList();
+                return new TakingsDayDto(day, taken.Count, taken.Sum(p => p.AmountMinor) - back.Sum(r => r.AmountMinor),
+                    ByMethod(taken, p => p.Method, p => p.AmountMinor, keepEmpty: false), ByMethod(back, r => r.Method, r => r.AmountMinor, keepEmpty: false, sign: -1));
+            })
             .ToList();
-        var byMethod = Methods.Select(m => new MethodTotalDto(m, payments.Count(p => p.Method == m), payments.Where(p => p.Method == m).Sum(p => p.AmountMinor))).ToList();
-        return new TakingsReportDto(range.From, range.To, payments.Count, payments.Sum(p => p.AmountMinor), byMethod, days);
+        return new TakingsReportDto(range.From, range.To, payments.Count, payments.Sum(p => p.AmountMinor) - reversals.Sum(r => r.AmountMinor),
+            ByMethod(payments, p => p.Method, p => p.AmountMinor, keepEmpty: true), days,
+            ByMethod(reversals, r => r.Method, r => r.AmountMinor, keepEmpty: false, sign: -1));
     }
 
     public async Task<byte[]> TakingsCsvAsync(DateOnly? from, DateOnly? to, CancellationToken ct)
@@ -146,8 +167,13 @@ public sealed class CareReportService(IAppDbContext db, CareAccess access, ITena
         var report = await TakingsAsync(from, to, ct);
         var sb = new StringBuilder("date,method,payments,amount\r\n");
         foreach (var day in report.Days)
+        {
             foreach (var m in day.ByMethod)
                 sb.Append(CultureInfo.InvariantCulture, $"{day.Date:yyyy-MM-dd},{Cell(PaymentService.MethodLabel(m.Method))},{m.Count},{Major(m.AmountMinor)}\r\n");
+            // Wave 1: a reversal is a negative row on the day it was made.
+            foreach (var m in day.Reversals)
+                sb.Append(CultureInfo.InvariantCulture, $"{day.Date:yyyy-MM-dd},{Cell("Reversal: " + PaymentService.MethodLabel(m.Method))},{m.Count},{Major(m.AmountMinor)}\r\n");
+        }
         sb.Append(CultureInfo.InvariantCulture, $"total,,{report.Count},{Major(report.TotalMinor)}\r\n");
         return Bytes(sb);
     }

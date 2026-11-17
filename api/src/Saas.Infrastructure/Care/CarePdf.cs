@@ -7,7 +7,10 @@ using SkiaSharp;
 
 namespace Saas.Infrastructure.Care;
 
-/// <summary>CareLink's PDFs with QuestPDF (Community licence): the prescription and the discharge summary on the clinic's letterhead. Later tasks add receipts.</summary>
+/// <summary>
+/// CareLink's PDFs with QuestPDF (Community licence): the prescription, the discharge summary and the receipt on the clinic's letterhead,
+/// each with the signer's signature image above their name when they have one on file (Wave 1).
+/// </summary>
 public sealed class CarePdf : ICarePdf
 {
     static CarePdf() => QuestPDF.Settings.License = LicenseType.Community;
@@ -34,6 +37,7 @@ public sealed class CarePdf : ICarePdf
     public static IDocument PrescriptionDocument(PrescriptionPdfData d)
     {
         var logo = Usable(d.Logo);
+        var signature = Usable(d.Signature);
         return Document.Create(doc => doc.Page(page =>
         {
             page.Size(PageSizes.A5);
@@ -110,6 +114,7 @@ public sealed class CarePdf : ICarePdf
                     row.RelativeItem();
                     row.ConstantItem(60, Unit.Millimetre).Column(c =>
                     {
+                        if (signature is not null) c.Item().Height(14, Unit.Millimetre).AlignLeft().Image(signature).FitArea();
                         c.Item().BorderTop(0.5f).BorderColor(Colors.Grey.Darken1).PaddingTop(1, Unit.Millimetre).Text(d.DoctorName).SemiBold();
                         if (!string.IsNullOrWhiteSpace(d.DoctorTitle)) c.Item().Text(d.DoctorTitle).FontSize(8);
                         if (!string.IsNullOrWhiteSpace(d.LicenceNumber)) c.Item().Text($"Licence {d.LicenceNumber}").FontSize(8);
@@ -136,6 +141,7 @@ public sealed class CarePdf : ICarePdf
     public static IDocument DischargeDocument(DischargePdfData d)
     {
         var logo = Usable(d.Logo);
+        var signature = Usable(d.Signature);
         return Document.Create(doc => doc.Page(page =>
         {
             page.Size(PageSizes.A4);
@@ -204,6 +210,7 @@ public sealed class CarePdf : ICarePdf
                     row.RelativeItem();
                     row.ConstantItem(70, Unit.Millimetre).Column(c =>
                     {
+                        if (signature is not null) c.Item().Height(14, Unit.Millimetre).AlignLeft().Image(signature).FitArea();
                         c.Item().BorderTop(0.5f).BorderColor(Colors.Grey.Darken1).PaddingTop(1, Unit.Millimetre).Text(d.DoctorName).SemiBold();
                         if (!string.IsNullOrWhiteSpace(d.DoctorTitle)) c.Item().Text(d.DoctorTitle).FontSize(8);
                         if (!string.IsNullOrWhiteSpace(d.LicenceNumber)) c.Item().Text($"Licence {d.LicenceNumber}").FontSize(8);
@@ -233,6 +240,7 @@ public sealed class CarePdf : ICarePdf
     public static IDocument ReceiptDocument(CareReceiptData d)
     {
         var logo = Usable(d.Logo);
+        var signature = Usable(d.Signature);
         return Document.Create(doc => doc.Page(page =>
         {
             page.Size(PageSizes.A5);
@@ -277,6 +285,17 @@ public sealed class CarePdf : ICarePdf
                     Row("Reference", d.Reference);
                     Row("Balance on the bill", d.BillBalance);
                 });
+                // Wave 1: who took the money, with their signature when they have one on file.
+                if (!string.IsNullOrWhiteSpace(d.ReceivedBy))
+                    col.Item().PaddingTop(6, Unit.Millimetre).Row(row =>
+                    {
+                        row.RelativeItem();
+                        row.ConstantItem(55, Unit.Millimetre).Column(c =>
+                        {
+                            if (signature is not null) c.Item().Height(12, Unit.Millimetre).AlignLeft().Image(signature).FitArea();
+                            c.Item().BorderTop(0.5f).BorderColor(Colors.Grey.Darken1).PaddingTop(1, Unit.Millimetre).Text($"Received by {d.ReceivedBy}").FontSize(8);
+                        });
+                    });
             });
             page.Footer().AlignCenter().Text(text =>
             {

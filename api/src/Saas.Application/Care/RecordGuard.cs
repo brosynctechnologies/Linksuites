@@ -55,11 +55,13 @@ public sealed class RecordGuard(
         public const string WardRounds = "ward-round";
         /// <summary>Task 9: an admission's medication chart.</summary>
         public const string MedicationChart = "medication";
+        /// <summary>Wave 1: an admission's ward vital signs chart.</summary>
+        public const string WardVitals = "vitals";
         /// <summary>Final review C1: a portal account read the patient's bills (their lines name drugs and tests). Written only by the portal.</summary>
         public const string Bills = "bills";
 
         public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
-            { Record, Consultation, Admission, Prescription, Result, Discharge, Pdf, File, Triage, NursingNotes, Fluids, WardRounds, MedicationChart, Bills };
+            { Record, Consultation, Admission, Prescription, Result, Discharge, Pdf, File, Triage, NursingNotes, Fluids, WardRounds, MedicationChart, WardVitals, Bills };
 
         /// <summary>
         /// What each area reads as on the director's access log (Task 16). Every area has one; the portal has its own patient-facing
@@ -80,6 +82,7 @@ public sealed class RecordGuard(
             [Fluids] = "Fluid chart",
             [WardRounds] = "Ward rounds",
             [MedicationChart] = "Medication chart",
+            [WardVitals] = "Ward vital signs",
             [Bills] = "Bills",
         };
 

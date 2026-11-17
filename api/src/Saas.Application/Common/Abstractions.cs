@@ -207,6 +207,7 @@ public interface IAppDbContext
     DbSet<Saas.Domain.Care.Prescription> Prescriptions { get; }
     DbSet<Saas.Domain.Care.PrescriptionItem> PrescriptionItems { get; }
     DbSet<Saas.Domain.Care.TestRequest> TestRequests { get; }
+    DbSet<Saas.Domain.Care.TestResultAmendment> TestResultAmendments { get; }
     DbSet<Saas.Domain.Care.Ward> Wards { get; }
     DbSet<Saas.Domain.Care.Bed> Beds { get; }
     DbSet<Saas.Domain.Care.Admission> Admissions { get; }

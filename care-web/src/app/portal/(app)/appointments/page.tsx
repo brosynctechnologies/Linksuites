@@ -16,14 +16,15 @@ import type { PortalAppointmentDto, PortalAppointmentsDto } from "@/lib/types/po
 const REASON_LABEL = "Reason for visit (no medical details)";
 
 /**
- * Appointments: book from a doctor's open slots, and cancel at least 2 hours before (the API says why when it is later). There is no
- * portal reschedule route (API gap): to change a time, cancel and book again, or call the clinic.
+ * Appointments: book from a doctor's open slots, and change the time or cancel at least 2 hours before (the API says why when it is
+ * later). Changing the time (Wave 1) picks another open slot under the same rules as booking.
  */
 export default function PortalAppointmentsPage() {
   const { patient } = usePortal();
   const list = useApi<PortalAppointmentsDto>(usePatientApi("/appointments"));
   const [booking, setBooking] = useState(false);
   const [cancelling, setCancelling] = useState<PortalAppointmentDto | null>(null);
+  const [moving, setMoving] = useState<PortalAppointmentDto | null>(null);
   const reasonLabel = list.data?.reasonLabel ?? REASON_LABEL;
   const [now] = useState(Date.now);
   const all = list.data?.appointments ?? [];
@@ -60,11 +61,9 @@ export default function PortalAppointmentsPage() {
                 action={canBook ? <Button onClick={() => setBooking(true)}>Book an appointment</Button> : undefined}
               />
             ) : (
-              upcoming.map((a) => <AppointmentCard key={a.id} a={a} reasonLabel={reasonLabel} onCancel={() => setCancelling(a)} />)
+              upcoming.map((a) => <AppointmentCard key={a.id} a={a} reasonLabel={reasonLabel} onCancel={() => setCancelling(a)} onMove={() => setMoving(a)} />)
             )}
-            {upcoming.length > 0 && (
-              <p className="text-sm text-muted">To change a time, cancel it and book again at least 2 hours before, or call the clinic.</p>
-            )}
+            {upcoming.length > 0 && <p className="text-sm text-muted">You can change the time or cancel up to 2 hours before. After that, call the clinic.</p>}
           </section>
           {past.length > 0 && (
             <section aria-labelledby="past" className="space-y-3">
@@ -101,6 +100,18 @@ export default function PortalAppointmentsPage() {
           }}
         />
       )}
+      {moving && patient && (
+        <BookDialog
+          patientId={patient.id}
+          reasonLabel={reasonLabel}
+          moving={moving}
+          onClose={() => setMoving(null)}
+          onBooked={() => {
+            setMoving(null);
+            list.reload();
+          }}
+        />
+      )}
       {cancelling && patient && (
         <CancelDialog
           patientId={patient.id}
@@ -116,7 +127,7 @@ export default function PortalAppointmentsPage() {
   );
 }
 
-function AppointmentCard({ a, reasonLabel, onCancel }: { a: PortalAppointmentDto; reasonLabel: string; onCancel: () => void }) {
+function AppointmentCard({ a, reasonLabel, onCancel, onMove }: { a: PortalAppointmentDto; reasonLabel: string; onCancel: () => void; onMove: () => void }) {
   const late = a.status === "Booked" && !a.canCancel;
   return (
     <Card>
@@ -136,19 +147,37 @@ function AppointmentCard({ a, reasonLabel, onCancel }: { a: PortalAppointmentDto
         </dl>
       )}
       {a.canCancel && (
-        <Button variant="secondary" className="mt-4" onClick={onCancel}>
-          Cancel this appointment
-        </Button>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={onMove}>
+            Change the time
+          </Button>
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel this appointment
+          </Button>
+        </div>
       )}
       {late && <p className="mt-3 text-sm text-slate-700">{LATE_CANCEL}</p>}
     </Card>
   );
 }
 
-function BookDialog({ patientId, reasonLabel, onClose, onBooked }: { patientId: string; reasonLabel: string; onClose: () => void; onBooked: () => void }) {
+/** Books a new appointment, or with `moving` changes an existing one's time (and, if chosen, its doctor); the reason stays as it was. */
+function BookDialog({
+  patientId,
+  reasonLabel,
+  moving,
+  onClose,
+  onBooked,
+}: {
+  patientId: string;
+  reasonLabel: string;
+  moving?: PortalAppointmentDto;
+  onClose: () => void;
+  onBooked: () => void;
+}) {
   const today = lagosToday();
   const doctors = useApi<DoctorDto[]>(`/api/care-portal/patients/${patientId}/doctors`);
-  const [doctorId, setDoctorId] = useState("");
+  const [doctorId, setDoctorId] = useState(moving?.doctorUserId ?? "");
   const [date, setDate] = useState(today);
   const [start, setStart] = useState<string | null>(null);
   const [reason, setReason] = useState("");
@@ -162,10 +191,12 @@ function BookDialog({ patientId, reasonLabel, onClose, onBooked }: { patientId: 
     e.preventDefault();
     if (!start || !chosenDoctor) return;
     const res = await run(() =>
-      api(`/api/care-portal/patients/${patientId}/appointments`, {
-        method: "POST",
-        body: { doctorUserId: chosenDoctor, start, reason: reason.trim() || null },
-      }),
+      moving
+        ? api(`/api/care-portal/patients/${patientId}/appointments/${moving.id}/reschedule`, { method: "POST", body: { doctorUserId: chosenDoctor, start } })
+        : api(`/api/care-portal/patients/${patientId}/appointments`, {
+            method: "POST",
+            body: { doctorUserId: chosenDoctor, start, reason: reason.trim() || null },
+          }),
     );
     if (res.ok) onBooked();
     else if (res.error.code === "slot_taken") {
@@ -175,7 +206,7 @@ function BookDialog({ patientId, reasonLabel, onClose, onBooked }: { patientId: 
   }
 
   return (
-    <Modal open title="Book an appointment" onClose={onClose}>
+    <Modal open title={moving ? "Change the time" : "Book an appointment"} onClose={onClose}>
       {doctors.error && !doctors.data ? (
         <PortalError error={doctors.error} onRetry={doctors.reload} />
       ) : !doctors.data ? (
@@ -234,21 +265,27 @@ function BookDialog({ patientId, reasonLabel, onClose, onBooked }: { patientId: 
               </div>
             </fieldset>
           )}
-          <Input
-            label={reasonLabel}
-            maxLength={120}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            error={error?.field("reason")}
-            hint="For example: check-up, follow-up or new patient. The front desk can read this, so leave out medical details."
-          />
+          {moving ? (
+            <p className="text-sm text-slate-700">
+              Now {lagosDate(moving.start)} at {lagosClock(moving.start)} with {moving.doctorName}. Pick a new time.
+            </p>
+          ) : (
+            <Input
+              label={reasonLabel}
+              maxLength={120}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              error={error?.field("reason")}
+              hint="For example: check-up, follow-up or new patient. The front desk can read this, so leave out medical details."
+            />
+          )}
           <ErrorBox error={error && !error.field("reason") ? error : null} />
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={onClose}>
-              Cancel
+              {moving ? "Keep the time" : "Cancel"}
             </Button>
             <Button type="submit" loading={busy} disabled={!start}>
-              Book {start ? `for ${lagosClock(start)}` : ""}
+              {moving ? `Move${start ? ` to ${lagosClock(start)}` : ""}` : `Book${start ? ` for ${lagosClock(start)}` : ""}`}
             </Button>
           </div>
         </form>

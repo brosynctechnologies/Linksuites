@@ -15,7 +15,8 @@ public sealed record CheckInRequest(Guid? PatientId, Guid? AppointmentId);
 /// </summary>
 public sealed record VisitDto(
     Guid Id, Guid PatientId, string PatientNumber, string PatientName, PatientSex Sex, int AgeYears, VisitStage Stage, Urgency Urgency,
-    Guid? DoctorUserId, string? DoctorName, Guid? AppointmentId, Guid? BillId, DateTimeOffset ArrivedAt, int MinutesWaited);
+    Guid? DoctorUserId, string? DoctorName, Guid? AppointmentId, Guid? BillId, DateTimeOffset ArrivedAt, int MinutesWaited,
+    string? WhatsAppUrl = null);
 
 public sealed record QueueStageDto(VisitStage Stage, IReadOnlyList<VisitDto> Visits);
 
@@ -29,11 +30,14 @@ public sealed record VitalsInput(
 /// <summary>Triage: the readings, how urgent, and the doctor who will see the patient (defaults to the appointment's doctor).</summary>
 public sealed record TriageRequest(VitalsInput? Vitals, Urgency? Urgency, Guid? DoctorUserId);
 
-/// <summary>A set of vital signs, for clinical staff only.</summary>
+/// <summary>A set of vital signs, for clinical staff only: taken at triage (<see cref="VisitId"/>) or on the ward (<see cref="AdmissionId"/>, Wave 1).</summary>
 public sealed record VitalSignsDto(
     Guid Id, Guid PatientId, Guid? VisitId, Guid TakenBy, string TakenByName, DateTimeOffset TakenAt, decimal? TemperatureC, int? Systolic,
     int? Diastolic, int? Pulse, int? RespRate, int? SpO2, decimal? WeightKg, decimal? HeightCm, decimal? Bmi, IReadOnlyList<string> Flags,
-    bool Critical);
+    bool Critical, Guid? AdmissionId = null);
+
+/// <summary>Wave 1: a set of vital signs taken on the ward (the same readings and checks as triage).</summary>
+public sealed record WardVitalsRequest(VitalsInput? Vitals);
 
 /// <summary>The triage answer: the visit and the readings the caller just recorded (an echo of their own input, with its flags).</summary>
 public sealed record TriageResultDto(VisitDto Visit, VitalSignsDto Vitals);
@@ -55,6 +59,7 @@ public sealed class VisitService(
     public const string VisitClosed = "This visit is closed.";
     public const string TriageNotWaiting = "Triage is only for patients waiting to be seen.";
     public const string BillNotPaid = "This bill isn't paid yet.";
+    public const string VisitSeen = "The doctor has already seen this patient. Ask the medical director or an admin to send the visit back.";
     /// <summary>How long a visit's care relationships (triage nurse, visit doctor) last after the visit is Done: follow-up review.</summary>
     public static readonly TimeSpan FollowUpWindow = TimeSpan.FromDays(30);
     public const string CriticalNotice = CareNotices.CriticalVitalText;
@@ -290,6 +295,9 @@ public sealed class VisitService(
     {
         var caller = await access.CallerAsync(ct);
         if (r.Stage is not { } stage || !Enum.IsDefined(stage)) throw BadRequestException.Field("stage", "Choose a stage.");
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        // Wave 1 (final review): the per-visit lock triage and the consultation open take, so a stage change can't interleave with them.
+        await db.LockAsync(ConsultationService.VisitLockKey(TenantId, visitId), ct);
         var visit = await db.Visits.FirstOrDefaultAsync(v => v.Id == visitId, ct) ?? throw new NotFoundException("Visit");
         if (caller.IsCashier)
         {
@@ -297,6 +305,19 @@ public sealed class VisitService(
         }
         else PatientService.EnsureDesk(caller);
         if (visit.Stage == VisitStage.Done) throw new ConflictException(VisitClosed, "visit_closed");
+        // Wave 1 (final review): once the doctor has seen the patient only leadership (the medical director or an admin) sends the visit
+        // back to the waiting stages (a hand-over to another doctor through re-triage), so a clinician can't reopen triage to join the
+        // patient's care without the emergency reason. The move is audited.
+        if (visit.Stage >= VisitStage.WithDoctor && stage < VisitStage.WithDoctor)
+        {
+            if (!caller.IsLeadership) throw new ConflictException(VisitSeen, "visit_seen");
+            db.AuditLogs.Add(new AuditLog
+            {
+                TenantId = TenantId, ActorId = caller.UserId, Action = "care.visit_sent_back", EntityType = nameof(Visit), EntityId = visit.Id.ToString(),
+                AfterJson = System.Text.Json.JsonSerializer.Serialize(new { visitId = visit.Id, patientId = visit.PatientId, from = visit.Stage.ToString(), to = stage.ToString() }),
+                Ip = user.IpAddress, CreatedAt = clock.GetUtcNow(),
+            });
+        }
         if (caller.IsCashier)
         {
             // The cashier closes a visit only when its bill is settled: nothing owed, or waived.
@@ -306,7 +327,6 @@ public sealed class VisitService(
                 throw new ConflictException(BillNotPaid, "bill_not_paid");
         }
 
-        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         // Ruling (Task 14): a visit sent to payment with money owed tells the patient's portal users the bill number and balance.
         if (stage == VisitStage.WaitingPayment && visit.Stage != VisitStage.WaitingPayment
             && await db.PatientBills.AsNoTracking().Where(b => b.VisitId == visit.Id).Select(b => new { b.Number, b.BalanceMinor }).FirstOrDefaultAsync(ct) is { } due)
@@ -341,7 +361,7 @@ public sealed class VisitService(
                select p.Id).AnyAsync(ct);
 
     /// <summary>Checks the readings are present and physically plausible (field <c>vitals.{name}</c>).</summary>
-    private static VitalsInput ValidateVitals(VitalsInput? v)
+    internal static VitalsInput ValidateVitals(VitalsInput? v)
     {
         if (v is null || (v.TemperatureC is null && v.Systolic is null && v.Diastolic is null && v.Pulse is null && v.RespRate is null
             && v.SpO2 is null && v.WeightKg is null && v.HeightCm is null))
@@ -371,7 +391,7 @@ public sealed class VisitService(
 
     internal static VitalSignsDto ToDto(VitalSigns v, string takenByName) =>
         new(v.Id, v.PatientId, v.VisitId, v.TakenBy, takenByName, v.TakenAt, v.TemperatureC, v.Systolic, v.Diastolic, v.Pulse, v.RespRate,
-            v.SpO2, v.WeightKg, v.HeightCm, v.Bmi, v.Flags, Vitals.IsCritical(v.Flags));
+            v.SpO2, v.WeightKg, v.HeightCm, v.Bmi, v.Flags, Vitals.IsCritical(v.Flags), v.AdmissionId);
 
     private async Task<VisitDto> ReadAsync(Guid id, CancellationToken ct) =>
         (await DtosAsync(db.Visits.AsNoTracking().Where(v => v.Id == id), ct)).FirstOrDefault() ?? throw new NotFoundException("Visit");
@@ -385,19 +405,33 @@ public sealed class VisitService(
                           from u in doctors.DefaultIfEmpty()
                           select new
                           {
-                              Visit = v, p.Number, Name = p.FirstName + " " + p.LastName, p.Sex, p.DateOfBirth,
+                              Visit = v, p.Number, Name = p.FirstName + " " + p.LastName, p.FirstName, p.Phone, p.Status, p.Sex, p.DateOfBirth,
                               DoctorName = u == null ? null : u.FullName,
                               BillId = db.PatientBills.Where(b => b.VisitId == v.Id).Select(b => (Guid?)b.Id).FirstOrDefault(),
                           }).ToListAsync(ct);
         var now = clock.GetUtcNow();
         var today = CareCalendar.Today(now);
+        var clinic = rows.Count == 0 ? "" : await db.ClinicProfiles.AsNoTracking().Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
         return rows.Select(r =>
         {
             var v = r.Visit;
             var age = today.Year - r.DateOfBirth.Year - (today < r.DateOfBirth.AddYears(today.Year - r.DateOfBirth.Year) ? 1 : 0);
             var waited = (int)Math.Max(0, Math.Floor(((v.DoneAt ?? now) - v.ArrivedAt).TotalMinutes));
             return new VisitDto(v.Id, v.PatientId, r.Number, r.Name, r.Sex, age, v.Stage, v.Urgency, v.DoctorUserId, r.DoctorName, v.AppointmentId,
-                r.BillId, v.ArrivedAt, waited);
+                r.BillId, v.ArrivedAt, waited, r.Status == PatientStatus.Deceased ? null : QueueReminder(v.Stage, r.FirstName, r.Phone, clinic));
         }).ToList();
     }
+
+    /// <summary>
+    /// Wave 1: the WhatsApp message staff can send a patient who stepped out: "it is nearly your turn" while waiting, "please come to the
+    /// cashier" while waiting to pay. The first name and the clinic only, never anything clinical; none with the doctor, once done, or without a phone.
+    /// </summary>
+    internal static string? QueueReminder(VisitStage stage, string firstName, string? phone, string clinic) => stage switch
+    {
+        VisitStage.WaitingVitals or VisitStage.WaitingDoctor =>
+            Saas.Application.School.GuardianInviteService.WhatsAppUrl(phone, $"Hello {firstName}, it is nearly your turn at {clinic}. Please come back to the waiting area."),
+        VisitStage.WaitingPayment =>
+            Saas.Application.School.GuardianInviteService.WhatsAppUrl(phone, $"Hello {firstName}, please come to the cashier at {clinic} to settle your bill."),
+        _ => null,
+    };
 }

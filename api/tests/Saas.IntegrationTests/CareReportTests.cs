@@ -68,7 +68,8 @@ public sealed class CareReportTests(ApiFixture api)
         var earlier = await PayAsync(cashier, billId, 50_000, "Cash");
         foreach (var id in new[] { cash, pos, transfer }) await MoveAsync(id, day);
         await MoveAsync(earlier, day.AddDays(-1));
-        // A reversed payment and an online checkout that never succeeded are not takings.
+        // Wave 1: a reversed payment still counts on the day it was taken (its reversal is a negative row on the day it was made, today, outside
+        // this range); an online checkout that never succeeded is not takings.
         (await cashier.PostAsJsonAsync($"/api/care/payments/{transfer}/reverse", new { reason = "Bounced transfer" }, Ct)).EnsureSuccessStatusCode();
         await api.WithDbAsync(db =>
         {
@@ -81,30 +82,31 @@ public sealed class CareReportTests(ApiFixture api)
         });
 
         var report = await Json(await cashier.GetAsync($"/api/care/reports/takings?from={day:yyyy-MM-dd}&to={day:yyyy-MM-dd}", Ct));
-        Assert.Equal(700_000, report.GetProperty("totalMinor").GetInt64());
+        Assert.Equal(800_000, report.GetProperty("totalMinor").GetInt64());
         Assert.Equal(500_000, Method(report.GetProperty("byMethod"), "Cash"));
         Assert.Equal(200_000, Method(report.GetProperty("byMethod"), "Pos"));
-        Assert.Equal(0, Method(report.GetProperty("byMethod"), "Transfer"));
+        Assert.Equal(100_000, Method(report.GetProperty("byMethod"), "Transfer"));
         Assert.Equal(0, Method(report.GetProperty("byMethod"), "Online"));
         var only = Assert.Single(report.GetProperty("days").EnumerateArray());
         Assert.Equal(day.ToString("yyyy-MM-dd"), only.GetProperty("date").GetString());
 
         // Two days: totals per day, and the range total.
         var two = await Json(await cashier.GetAsync($"/api/care/reports/takings?from={day.AddDays(-1):yyyy-MM-dd}&to={day:yyyy-MM-dd}", Ct));
-        Assert.Equal(750_000, two.GetProperty("totalMinor").GetInt64());
+        Assert.Equal(850_000, two.GetProperty("totalMinor").GetInt64());
         var days = two.GetProperty("days").EnumerateArray().ToList();
         Assert.Equal(2, days.Count);
         Assert.Equal(50_000, days[0].GetProperty("totalMinor").GetInt64());
-        Assert.Equal(700_000, days[1].GetProperty("totalMinor").GetInt64());
+        Assert.Equal(800_000, days[1].GetProperty("totalMinor").GetInt64());
 
         var csv = await CsvAsync(await cashier.GetAsync($"/api/care/reports/takings.csv?from={day.AddDays(-1):yyyy-MM-dd}&to={day:yyyy-MM-dd}", Ct));
         var lines = csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
         Assert.Equal("date,method,payments,amount", lines[0]);
         Assert.Contains($"{day:yyyy-MM-dd},\"Cash\",1,5000.00", lines);
         Assert.Contains($"{day:yyyy-MM-dd},\"POS\",1,2000.00", lines);
-        Assert.DoesNotContain(lines, l => l.Contains("Bank transfer", StringComparison.Ordinal));
+        Assert.Contains($"{day:yyyy-MM-dd},\"Bank transfer\",1,1000.00", lines);
+        Assert.DoesNotContain(lines, l => l.Contains("Reversal", StringComparison.Ordinal)); // reversed today, outside the range
         Assert.Contains($"{day.AddDays(-1):yyyy-MM-dd},\"Cash\",1,500.00", lines);
-        Assert.Equal("total,,3,7500.00", lines[^1]);
+        Assert.Equal("total,,4,8500.00", lines[^1]);
 
         // A backwards range is a field error.
         Assert.Equal(HttpStatusCode.BadRequest, (await cashier.GetAsync($"/api/care/reports/takings?from={day:yyyy-MM-dd}&to={day.AddDays(-1):yyyy-MM-dd}", Ct)).StatusCode);
