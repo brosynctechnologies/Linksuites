@@ -751,6 +751,9 @@ public sealed partial class SchoolPlatformTests(ApiFixture api)
         ["POST /api/school/lesson-plans/{id:guid}/return"] = "YYNY",
         ["GET /api/school/exam-periods"] = "YYNY", // subject teacher or leadership; unpublished periods stay off the teacher's list; the bursar is refused before lookup
         ["POST /api/school/exam-periods"] = Admin,
+        ["PUT /api/school/sessions/{id:guid}"] = Admin,
+        ["PUT /api/school/terms/{id:guid}"] = Admin,
+        ["POST /api/school/terms/{id:guid}/make-current"] = Admin,
         ["GET /api/school/exam-periods/{id:guid}"] = "YYNY", // a teacher gets 404 until the period is published, and then only sittings for subjects they teach
         ["POST /api/school/exam-periods/{id:guid}/sittings"] = Admin,
         ["POST /api/school/exam-periods/{id:guid}/publish"] = Admin,
