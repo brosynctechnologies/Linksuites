@@ -141,6 +141,8 @@ public class PatientBill : TenantEntity
     public long CreditMinor { get; set; }
     /// <summary>Set when an online payment landed for more than the balance at that moment: the cashier checks it (refund, or keep as credit).</summary>
     public bool NeedsReview { get; set; }
+    /// <summary>Wave 2: the balance the patient was last told was due (care.bill_due), so going back to payment with the same balance tells nobody again.</summary>
+    public long? DueNoticeBalanceMinor { get; set; }
 }
 
 /// <summary>A discount (part of the bill) or a waiver (forgiving what is owed).</summary>
@@ -358,6 +360,8 @@ public class Consultation : TenantEntity
     public string Plan { get; set; } = "";
     public NoteStatus Status { get; set; } = NoteStatus.Draft;
     public DateTimeOffset? SignedAt { get; set; }
+    /// <summary>Wave 2: the doctor's signature file at signing, frozen for the prescriptions written in this consultation. Null: none.</summary>
+    public string? SignatureKey { get; set; }
 }
 
 /// <summary>
@@ -438,6 +442,8 @@ public class Prescription : TenantEntity
     /// <summary>The recorded allergies the doctor prescribed over (as recorded then), each stored through <c>ClinicalText</c>. Empty without an override.</summary>
     public List<string> OverriddenAllergens { get; set; } = [];
     public List<PrescriptionItem> Items { get; set; } = [];
+    /// <summary>Wave 2: for a prescription outside a consultation, the prescriber's signature file when it was written (frozen for the PDF).</summary>
+    public string? SignatureKey { get; set; }
 }
 
 /// <summary>
@@ -617,6 +623,8 @@ public class DischargeSummary : TenantEntity
     public DateOnly? FollowUp { get; set; }
     public NoteStatus Status { get; set; } = NoteStatus.Draft;
     public DateTimeOffset? SignedAt { get; set; }
+    /// <summary>Wave 2: the signing doctor's signature file at signing, frozen for the printed summary. Null: none.</summary>
+    public string? SignatureKey { get; set; }
 }
 
 /// <summary>A bed assignment or move: <see cref="FromBedId"/> is null for the first bed. The bed charge follows the ward (Task 13).</summary>
@@ -658,6 +666,13 @@ public class CarePayment : TenantEntity
     public string? ReceiptNumber { get; set; }
     /// <summary>True when recorded as an admission deposit.</summary>
     public bool IsDeposit { get; set; }
+    /// <summary>
+    /// Wave 2: the bill's balance right after this payment, minus any credit (negative: in credit). The receipt prints it, so a reprint
+    /// shows the balance at the time. Null on payments from before Wave 2 (the receipt then shows the current balance).
+    /// </summary>
+    public long? BalanceAfterMinor { get; set; }
+    /// <summary>Wave 2: the recorder's signature file when the money was taken, frozen for the receipt. Null: none (or before Wave 2).</summary>
+    public string? SignatureKey { get; set; }
     public Guid? RecordedByUserId { get; set; }
     /// <summary>
     /// When the clinic took the money: the desk's time, or for an online payment the time CareLink confirmed it (Wave 1: a late

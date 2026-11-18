@@ -216,6 +216,8 @@ public static class RateLimits
     /// <summary>Bank transfer claims for plans: a few per business per hour (RateLimits:TransferClaimsPerHour, default 5).</summary>
     public const string TransferClaim = "transfer-claim";
     public const string Admin = "admin";
+    /// <summary>Import previews (Excel/CSV files): per signed-in user (RateLimits:ImportPreviewsPerMinute, default 20).</summary>
+    public const string ImportPreview = "import-preview";
     /// <summary>Browser error reports from the web apps: per IP (RateLimits:ClientErrorsPerMinute, default 10).</summary>
     public const string ClientError = "client-error";
 }

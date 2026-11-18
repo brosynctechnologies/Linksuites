@@ -165,13 +165,34 @@ export function AssignBedDialog({ admission, onClose, onDone }: { admission: Adm
 
 /** Moves an admitted patient to another free bed (the old one goes to cleaning). Front desk, clinical staff and leadership. */
 export function TransferDialog({ admission, onClose, onDone }: { admission: AdmissionSummaryDto; onClose: () => void; onDone: (a: AdmissionSummaryDto) => void }) {
+  const { access } = useCare();
   const beds = useFreeBeds(admission.bedId);
   const [bedId, setBedId] = useState("");
+  // A ward with a higher minimum deposit needs the difference with the move (the API names the shortfall); the director may override.
+  const [deposit, setDeposit] = useState("");
+  const [method, setMethod] = useState<PayMethod>("Cash");
+  const [reference, setReference] = useState("");
+  const [override, setOverride] = useState(false);
+  const [amountError, setAmountError] = useState<string | null>(null);
   const { busy, error, run } = useAction();
+  const kobo = deposit.trim() ? toKobo(deposit) : 0;
+  const short = error?.code === "deposit_below_minimum";
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const res = await run(() => api<AdmissionSummaryDto>(`/api/care/admissions/${admission.id}/transfer`, { method: "POST", body: { bedId } }));
+    if (kobo === null) {
+      setAmountError("Enter the deposit in naira, such as 50000.");
+      return;
+    }
+    setAmountError(null);
+    const body = {
+      bedId,
+      depositMinor: kobo,
+      method: kobo > 0 ? method : null,
+      reference: reference.trim() || null,
+      overrideByOwner: access.isDirector && override,
+    };
+    const res = await run(() => api<AdmissionSummaryDto>(`/api/care/admissions/${admission.id}/transfer`, { method: "POST", body }));
     if (res.ok) onDone(res.data);
     else if (res.error.code === "bed_occupied" || res.error.code === "bed_cleaning") beds.reload();
   }
@@ -190,7 +211,30 @@ export function TransferDialog({ admission, onClose, onDone }: { admission: Admi
         {!beds.loading && beds.free.length === 0 && <Notice tone="warning">No other bed is free.</Notice>}
         <BedSelect value={bedId} onChange={setBedId} groups={beds.free} error={error?.field("bedId")} />
         <p className="text-xs text-muted">The old bed goes to cleaning. From tomorrow the daily charge follows the new ward, and its nurses take over.</p>
-        <ApiErrorView error={error && !error.field("bedId") ? error : null} />
+        <Input
+          label="Extra deposit (naira)"
+          inputMode="decimal"
+          value={deposit}
+          onChange={(e) => setDeposit(e.target.value)}
+          error={amountError ?? error?.field("depositMinor")}
+          hint="Only when the new ward asks for a higher minimum deposit than has been paid."
+        />
+        {kobo !== null && kobo > 0 && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Select label="Paid by" value={method} onChange={(e) => setMethod(e.target.value as PayMethod)} error={error?.field("method")}>
+              {DESK_METHODS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </Select>
+            <Input label="Reference" value={reference} maxLength={100} onChange={(e) => setReference(e.target.value)} error={error?.field("reference")} hint="POS slip or transfer reference." />
+          </div>
+        )}
+        {short && access.isDirector && !access.readOnly && (
+          <Checkbox checked={override} onChange={setOverride} label="Move with less than the ward's minimum deposit (medical director's override, recorded)." />
+        )}
+        <ApiErrorView error={error && !["bedId", "depositMinor", "method", "reference"].some((f) => error.field(f)) ? error : null} />
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>
             Cancel

@@ -149,7 +149,7 @@ public sealed class PortalService(
             if (view.Students.FirstOrDefault(s => s.EnrolmentId == enrolmentId) is not { } mine) continue;
             var levelId = await db.SchoolClasses.AsNoTracking().Where(c => c.Id == classId).Select(c => c.LevelId).FirstAsync(ct);
             var traits = (await TraitService.RatedBlocksAsync(db, levelId, termId, [enrolmentId], ct))[enrolmentId];
-            entries.Add(new PortalResultEntryDto(classId, view.ClassName, mine.Total, mine.Average, mine.Position, mine.ClassSize, mine.DaysPresent, mine.DaysAbsent, mine.DaysLate, mine.DaysExcused, mine.DaysOpen,
+            entries.Add(new PortalResultEntryDto(classId, view.ClassName, mine.Total ?? 0, mine.Average ?? 0, mine.Position ?? 0, mine.ClassSize, mine.DaysPresent, mine.DaysAbsent, mine.DaysLate, mine.DaysExcused, mine.DaysOpen,
                 mine.TeacherRemark, mine.PrincipalRemark,
                 mine.Subjects.Select(s => new PortalSubjectDto(s.Subject, s.SubjectCode, s.Total, s.Grade, s.Remark, s.ClassAverage, s.Position)).ToList(), mine.Mode,
                 mine.Mode == AssessmentMode.Developmental ? mine.Developmental : [], traits));

@@ -456,6 +456,7 @@ public sealed class OnlinePaymentService(
         }
         await db.SaveChangesAsync(ct);
         await billing.RecalculateAsync(payment.BillId, ct);
+        await PaymentService.StampBalanceAfterAsync(db, payment, ct);
         // The patient's portal users hear the amount, the bill and the receipt number (Task 14), committed with the payment.
         await notices.PaymentReceivedAsync(payment.PatientId, bill.Number, payment.AmountMinor, payment.ReceiptNumber!, ct);
         await db.SaveChangesAsync(ct);

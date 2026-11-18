@@ -124,7 +124,11 @@ function OpenAttempt({
   onSubmitted: (view: CbtAttemptViewDto) => void;
   onRestart: () => void;
 }) {
-  const now = useNow();
+  const deviceNow = useNow();
+  // The deadline is the server's: how far the device's clock is from the server's is measured once, when the sitting loads, so a
+  // device clock that is fast or slow neither ends the test early nor lets it run past the deadline.
+  const [skew] = useState(() => new Date(attempt.serverNow).getTime() - Date.now());
+  const now = deviceNow + skew;
   const [items, setItems] = useState<CbtOpenItemDto[]>(attempt.items);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [saveError, setSaveError] = useState<ApiError | null>(null);
@@ -256,7 +260,9 @@ function Result({ view }: { view: CbtAttemptViewDto }) {
     <div className="min-w-0 space-y-4">
       <section className={cx(panelClass, "w-full min-w-0 space-y-1 p-4")}>
         <p className="text-sm text-muted">Your total</p>
-        <p className="slab tnum text-3xl font-bold text-ink">{"totalMarks" in view ? score(view.totalMarks) : ""}</p>
+        <p className="slab tnum text-3xl font-bold text-ink">{"totalMarks" in view ? score(view.totalMarks) : ""}
+          {"outOf" in view && <span className="text-lg font-semibold text-muted"> of {score(view.outOf)}</span>}
+        </p>
         {submittedAt && <p className="text-xs text-muted">Handed in {formatStamp(submittedAt)}</p>}
         {!marked && <p className="text-sm text-slate-700">Your teacher will show which answers were right after the test closes.</p>}
       </section>

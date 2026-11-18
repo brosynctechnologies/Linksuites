@@ -16,7 +16,8 @@ public sealed record AdmitRequest(Guid? PatientId, Guid? ConsultationId, string?
 /// </summary>
 public sealed record AssignBedRequest(Guid? BedId, long? DepositMinor, PayMethod? Method, string? Reference, bool OverrideByOwner = false);
 
-public sealed record TransferRequest(Guid? BedId);
+/// <summary>Wave 2: a move to a ward with a higher minimum deposit takes the difference with it (<c>depositMinor</c>, <c>method</c>, <c>reference</c>).</summary>
+public sealed record TransferRequest(Guid? BedId, long? DepositMinor = null, PayMethod? Method = null, string? Reference = null, bool OverrideByOwner = false);
 
 /// <summary>Task 16: the doctor to add to an admission's care team as a covering doctor.</summary>
 public sealed record CareTeamRequest(Guid? UserId);
@@ -208,6 +209,9 @@ public sealed class AdmissionService(
         var caller = await access.CallerAsync(ct);
         PatientService.EnsureDesk(caller);
         if (r.BedId is not { } bedId) throw BadRequestException.Field("bedId", "Choose a bed.");
+        var deposit = r.DepositMinor ?? 0;
+        if (deposit < 0) throw BadRequestException.Field("depositMinor", "The deposit can't be negative.");
+        if (deposit > 0) PaymentService.ValidateDesk(deposit, r.Method, r.Reference, "depositMinor");
         var patientId = await db.Admissions.AsNoTracking().Where(a => a.Id == admissionId).Select(a => (Guid?)a.PatientId).FirstOrDefaultAsync(ct)
             ?? throw new NotFoundException("Admission");
 
@@ -220,13 +224,43 @@ public sealed class AdmissionService(
         if (fromBedId == bedId) throw BadRequestException.Field("bedId", "The patient is already in that bed.");
         var (bed, ward) = await BedAsync(bedId, ct);
 
+        // Wave 2: the new ward's minimum deposit applies too. The deposits already received on this admission count towards it; the
+        // difference comes with the move (or the medical director overrides, audited, as at the first bed).
+        var minimum = ward.MinDepositMinor ?? await db.ClinicProfiles.AsNoTracking().Select(c => c.MinDepositMinor).FirstOrDefaultAsync(ct);
+        var held = await db.CarePayments.AsNoTracking()
+            .Where(p => p.IsDeposit && p.Status == CarePaymentStatus.Succeeded && db.PatientBills.Any(b => b.Id == p.BillId && b.AdmissionId == admission.Id))
+            .SumAsync(p => (long?)p.AmountMinor, ct) ?? 0;
+        var overridden = false;
+        // A move inside the same ward is not a new ward: its deposit was settled (or overridden) when the patient came in.
+        var sameWard = await db.Beds.AsNoTracking().AnyAsync(b => b.Id == fromBedId && b.WardId == ward.Id, ct);
+        if (!sameWard && held + deposit < minimum)
+        {
+            if (!(r.OverrideByOwner && caller.MemberRole == MemberRole.Owner && !caller.IsSupportView))
+                throw new ConflictException(
+                    $"{DepositTooLow(minimum)} {Money.Format(held, "NGN")} has been paid; add the difference to move the patient.", "deposit_below_minimum");
+            overridden = true;
+        }
+
         await ClaimAsync(bed, ct);
+        if (overridden)
+            db.AuditLogs.Add(new AuditLog
+            {
+                TenantId = TenantId, ActorId = caller.UserId, Action = "care.deposit_override", EntityType = nameof(Admission),
+                EntityId = admission.Id.ToString(),
+                AfterJson = JsonSerializer.Serialize(new { patientId, wardId = ward.Id, bedId = bed.Id, depositMinor = held + deposit, minimumMinor = minimum, transfer = true }),
+                Ip = user.IpAddress, CreatedAt = now,
+            });
         var oldBed = await db.Beds.FirstAsync(b => b.Id == fromBedId, ct);
         oldBed.Status = BedStatus.Cleaning;
         admission.BedId = bed.Id;
         db.BedMoves.Add(new BedMove { TenantId = TenantId, AdmissionId = admission.Id, FromBedId = fromBedId, ToBedId = bed.Id, At = now, ByUserId = caller.UserId });
         await WardService.SyncWardNursesAsync(db, TenantId, admission, ward, now, ct);
         await db.SaveChangesAsync(ct);
+        if (deposit > 0)
+        {
+            var bill = await billing.OpenBillForAdmissionAsync(patientId, admission.Id, ct);
+            await payments.RecordDeskAsync(bill.Id, deposit, r.Method!.Value, r.Reference, deposit: true, ct);
+        }
         if (tx is not null) await tx.CommitAsync(ct);
         return (await SummariesAsync(db, db.Admissions.AsNoTracking().Where(a => a.Id == admission.Id), clock, ct)).Single();
     }

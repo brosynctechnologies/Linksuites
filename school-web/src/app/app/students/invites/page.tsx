@@ -96,7 +96,8 @@ function ByClass({ classes }: { classes: ClassDto[] }) {
   const [error, setError] = useState<{ key: string; error: ApiError } | null>(null);
 
   useEffect(() => {
-    if (!students.data) return;
+    // While the next class loads, students.data is still the previous class's list: wait, so its parents are never filed under this class.
+    if (!students.data || students.loading) return;
     const key = classId;
     const ctrl = new AbortController();
     guardiansOf(students.data, ctrl.signal).then(
@@ -117,7 +118,7 @@ function ByClass({ classes }: { classes: ClassDto[] }) {
       },
     );
     return () => ctrl.abort();
-  }, [students.data, classId]);
+  }, [students.data, students.loading, classId]);
 
   const current = rows?.key === classId ? rows.rows : null;
   const currentError = error?.key === classId ? error.error : (students.error ?? null);

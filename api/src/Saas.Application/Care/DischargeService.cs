@@ -174,6 +174,8 @@ public sealed class DischargeService(
         if (string.IsNullOrEmpty(summary.Diagnoses) || string.IsNullOrEmpty(summary.Condition)) throw new ConflictException(EmptySummary, "note_empty");
         summary.Status = NoteStatus.Signed;
         summary.SignedAt = now;
+        // Wave 2: frozen at signing, as printed on the summary from now on.
+        summary.SignatureKey = await CareBrandingService.CurrentSignatureKeyAsync(db, summary.DoctorUserId, ct);
         db.AuditLogs.Add(new AuditLog
         {
             TenantId = TenantId, ActorId = caller.UserId, Action = "care.note_signed", EntityType = nameof(DischargeSummary), EntityId = summary.Id.ToString(),
@@ -417,7 +419,8 @@ public sealed class DischargeService(
             admission.DeathTime is { } died ? died.ToOffset(CareCalendar.LagosOffset).ToString("d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture) : null,
             admission.DeathCause, summary.Diagnoses ?? "", summary.Treatment ?? "", summary.Condition ?? "", summary.TakeHome ?? "",
             summary.FollowUp?.ToString("d MMMM yyyy", CultureInfo.InvariantCulture), summary.DoctorName, staff?.Title, staff?.LicenceNumber,
-            Day(signedAt), !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct), await CareBrandingService.SignatureBytesAsync(db, storage, summary.DoctorUserId, ct));
+            Day(signedAt), !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct), await CareBrandingService.FrozenSignatureAsync(storage,
+                await db.DischargeSummaries.AsNoTracking().Where(s => s.AdmissionId == admissionId && s.Status == NoteStatus.Signed).Select(s => s.SignatureKey).FirstOrDefaultAsync(ct), ct));
         var stamp = CareCalendar.Today(admission.DischargedAt ?? signedAt);
         return (await pdf.DischargeAsync(data, ct), $"discharge-{patient.Number}-{stamp:yyyyMMdd}.pdf");
     }

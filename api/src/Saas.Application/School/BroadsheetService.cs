@@ -109,8 +109,8 @@ public sealed class BroadsheetService(IAppDbContext db, ResultService results, I
                         cells.Add("");
                     }
                 }
-                cells.Add(Num(student.Total));
-                cells.Add(Num(student.Average));
+                cells.Add(Num(student.Total ?? 0));
+                cells.Add(Num(student.Average ?? 0));
                 cells.Add(Num(student.Position));
             }
             // Rows published before late, absent and excused were counted leave those cells blank rather than print a false zero.

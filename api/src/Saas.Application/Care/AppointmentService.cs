@@ -333,6 +333,11 @@ public sealed class AppointmentService(
             await db.LockAsync(key, ct);
         var appointment = await db.Appointments.FirstOrDefaultAsync(a => a.Id == id, ct) ?? throw new NotFoundException("Appointment");
         if (appointment.Status != AppointmentStatus.Booked) throw new ConflictException("Only a booked appointment can be moved.", "appointment_not_booked");
+        // Wave 2: re-checked under the lock. The appointment may have moved to another doctor since it was read (then the lock held is
+        // the wrong one), and the doctor may have left the clinic or lost the doctor role meanwhile, the same doctor included.
+        if (appointment.DoctorUserId != current.DoctorUserId)
+            throw new ConflictException("This appointment was just changed. Reload and try again.", "appointment_changed");
+        await DoctorForBookingAsync(doctorId, ct);
         if (portalPatientId is not null && appointment.Start - clock.GetUtcNow() < PortalCancelNotice)
             throw new ConflictException(LateCancel, "appointment_starts_soon");
         await EnsureAliveUnderLockAsync(appointment.PatientId, ct);

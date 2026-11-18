@@ -20,7 +20,7 @@ public sealed record TraitBlockDto(string Heading, IReadOnlyList<TraitBlockRowDt
 
 /// <summary>
 /// Psychomotor and affective criteria, and the class teacher's 1–5 ratings. Ratings are not scores: saving one does not
-/// change <see cref="Score"/> or <see cref="TermResult.Total"/>, and it stays allowed after the term is published.
+/// change <see cref="Score"/> or <see cref="TermResult.Total"/>. Wave 2: a locked term (and so a published one) refuses them, like scores.
 /// A level with its own rows overrides the school default for that kind, the same way an assessment scheme does.
 /// </summary>
 public sealed class TraitService(IAppDbContext db, ITenantContext tenant, SchoolAccess access, IDbErrors dbErrors)
@@ -142,7 +142,7 @@ public sealed class TraitService(IAppDbContext db, ITenantContext tenant, School
 
     /// <summary>
     /// Saves the ratings that were sent and leaves the others as they are. A value outside 1 to 5 is refused.
-    /// This does not write a score or a term total, and published results do not freeze it.
+    /// This does not write a score or a term total. A locked term refuses it (409 <c>term_locked</c>).
     /// </summary>
     public async Task<TraitRatingsDto> SaveRatingsAsync(Guid studentId, Guid? termId, TraitKind? kind, SaveTraitRatingsRequest r, CancellationToken ct)
     {
@@ -167,6 +167,9 @@ public sealed class TraitService(IAppDbContext db, ITenantContext tenant, School
         // An import's confirm already has a transaction open: join it (it commits), otherwise open our own.
         await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         await db.LockAsync(RatingLockKey(child.Enrolment.Id), ct);
+        // Wave 2: ratings print on the report card, so a locked term (results frozen for publishing) refuses them, as it does scores.
+        if (await db.TermResultLocks.AnyAsync(l => l.ClassId == child.Class.Id && l.TermId == term, ct))
+            throw new ConflictException("This term is locked for the class, so ratings can't change. Ask the principal to unlock it.", "term_locked");
         var ids = ratings.Select(x => x.CriterionId).ToList();
         var existing = await db.TraitRatings.Where(x => x.EnrolmentId == child.Enrolment.Id && x.TermId == term && ids.Contains(x.CriterionId)).ToListAsync(ct);
         foreach (var rating in ratings)

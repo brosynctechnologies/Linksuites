@@ -544,7 +544,10 @@ public sealed class SchoolResultTests(ApiFixture api)
         var g = await SubjectGridAsync("Subject Column School");
         var results = await Json(await g.SubjectTeacher.GetAsync(ResultsUrl(g.Setup), Ct));
         var ada = StudentRow(results, "Ada");
-        Assert.Equal(160m, ada.GetProperty("total").GetDecimal());
+        // Wave 2: the overall total, average and position cover subjects they don't teach, so a subject teacher doesn't get them.
+        Assert.Equal(JsonValueKind.Null, ada.GetProperty("total").ValueKind);
+        Assert.Equal(JsonValueKind.Null, ada.GetProperty("average").ValueKind);
+        Assert.Equal(JsonValueKind.Null, ada.GetProperty("position").ValueKind);
         Assert.Equal(["Mathematics"], SubjectNames(ada));
         Assert.Equal(90m, SubjectRow(ada, "Mathematics").GetProperty("total").GetDecimal());
         Assert.Equal(["Mathematics"], SubjectNames(StudentRow(results, "Bayo")));

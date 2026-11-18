@@ -278,6 +278,7 @@ public sealed partial class CarePlatformTests(ApiFixture api)
         ["POST /api/care/tests/{id:guid}/result"] = Clinical,
         ["POST /api/care/tests/{id:guid}/amend"] = Clinical, // Wave 1: as recording
         ["GET /api/care/tests/{id:guid}/file"] = Clinical,
+        ["GET /api/care/tests/{id:guid}/superseded/{amendmentId:guid}/file"] = Clinical, // Wave 2: the file of a corrected result
         // Post-build (user decision): doctors and the director review a result before the portal shows it, and list those waiting.
         ["POST /api/care/tests/{id:guid}/review"] = Doctors,
         ["GET /api/care/tests/awaiting-review"] = Doctors,
@@ -371,7 +372,8 @@ public sealed partial class CarePlatformTests(ApiFixture api)
     };
 
     /// <summary>Routes under /api/care outside the signed-in group: the signed result-file link carries its own proof.</summary>
-    private static readonly HashSet<string> Exempt = ["GET /api/care/result-files/{id:guid}/{expires:long}/{signature}"];
+    private static readonly HashSet<string> Exempt =
+        ["GET /api/care/result-files/{id:guid}/{expires:long}/{signature}", "GET /api/care/superseded-result-files/{id:guid}/{expires:long}/{signature}"];
 
     [GeneratedRegex(@"\{[^}]+\}")]
     private static partial Regex Parameter();

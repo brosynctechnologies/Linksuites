@@ -309,7 +309,7 @@ public sealed class ReportCardService(
                 profile?.Name ?? "School", profile?.Motto, profile?.Address, logo, signature,
                 student.Name, student.AdmissionNo, cls.Name, person?.Gender.ToString() ?? "", person?.DateOfBirth?.ToString("d MMMM yyyy", CultureInfo.InvariantCulture), photo,
                 $"{term.Name}, {sessionName} session", headers, mode == AssessmentMode.Developmental ? [] : subjects,
-                ReportCardText.Score(student.Total), ReportCardText.Average(student.Average), ReportCardText.Position(student.Position, student.ClassSize),
+                ReportCardText.Score(student.Total ?? 0), ReportCardText.Average(student.Average ?? 0), ReportCardText.Position(student.Position ?? 0, student.ClassSize),
                 ReportCardText.Attendance(student.DaysPresent, student.DaysLate, student.DaysAbsent, student.DaysExcused, student.DaysOpen),
                 student.TeacherRemark, student.PrincipalRemark, nextTerm, notices, showBranding,
                 mode, traits is { Count: > 0 } ? traits : null, developmentalRows));

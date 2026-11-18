@@ -223,7 +223,9 @@ function PayModal({ studentId, invoice, onClose }: { studentId: string; invoice:
           onChange={(e) => setAmount(e.target.value)}
           error={amountHint ?? pay.error?.field("amountMinor")}
         />
-        <ErrorBox error={pay.error && !pay.error.field("amountMinor") ? pay.error : null} />
+        {/* The box is hidden only when it would repeat the message already under the amount; anything more (another field, the
+            school's own message) still shows. */}
+        <ErrorBox error={pay.error && pay.error.field("amountMinor") !== pay.error.message ? pay.error : null} />
         {next && next !== invoice.balance && (
           <Button
             type="button"

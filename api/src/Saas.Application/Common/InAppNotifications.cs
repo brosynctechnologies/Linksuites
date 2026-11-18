@@ -15,6 +15,8 @@ public sealed record UnreadCountDto(int Count);
 public sealed class InAppNotifications(IAppDbContext db, ITenantContext tenant, ICurrentUser user, TimeProvider clock)
 {
     public const int PageSize = 20;
+    /// <summary>Every staff-side notification links into the staff app, whose pages all start with this.</summary>
+    public const string StaffLinkPrefix = "/app";
     /// <summary>The API stops counting here; the UI shows 9+.</summary>
     public const int UnreadCap = 99;
     public static readonly TimeSpan ReadRetention = TimeSpan.FromDays(90);
@@ -35,7 +37,10 @@ public sealed class InAppNotifications(IAppDbContext db, ITenantContext tenant, 
     {
         var userId = user.UserId ?? throw new ForbiddenException("Sign in to see your notifications.");
         var query = db.UserNotifications.Where(n => n.UserId == userId);
-        if (tenant.TenantId is { } tenantId) query = query.Where(n => n.TenantId == tenantId);
+        // Wave 2: one person can be staff at a school and a parent there too. The staff app (a business token) shows only staff
+        // notifications, which link into the staff app (/app...); the customer apps (parent, student, patient portal) show the rest.
+        if (tenant.TenantId is { } tenantId) query = query.Where(n => n.TenantId == tenantId && n.Link.StartsWith(StaffLinkPrefix));
+        else query = query.Where(n => !n.Link.StartsWith(StaffLinkPrefix));
         return query;
     }
 

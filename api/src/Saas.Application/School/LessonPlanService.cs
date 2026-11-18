@@ -117,6 +117,7 @@ public sealed class LessonPlanService(
             throw new ConflictException("This lesson plan has already been accepted.", "lesson_plan_accepted");
         if (plan.Status == LessonPlanStatus.Submitted)
             throw new ConflictException("This lesson plan has already been submitted.", "lesson_plan_submitted");
+        EnsureComplete(plan);
 
         var needReview = await db.SchoolProfiles.Select(p => p.LessonPlansNeedReview).FirstAsync(ct);
         plan.SubmittedAt = clock.GetUtcNow();
@@ -251,15 +252,15 @@ public sealed class LessonPlanService(
         if (r.Date == default) throw BadRequestException.Field("date", "Choose the date of the lesson.");
         return new PlanText(
             Required(r.Topic, "topic", "Enter a topic.", MaxTopicLength),
-            Required(r.Objectives, "objectives", "Write the objectives.", MaxTextLength),
-            Required(r.Materials, "materials", "Write the materials.", MaxTextLength),
-            Required(r.Methods, "methods", "Write the methods.", MaxTextLength),
-            Required(r.Activities, "activities", "Write the activities.", MaxTextLength),
-            Required(r.PreviousKnowledge, "previousKnowledge", "Write the previous knowledge.", MaxTextLength),
-            Required(r.Introduction, "introduction", "Write the introduction.", MaxTextLength),
-            Required(r.Presentation, "presentation", "Write the presentation.", MaxTextLength),
-            Required(r.Conclusion, "conclusion", "Write the conclusion.", MaxTextLength),
-            Required(r.Evaluation, "evaluation", "Write the evaluation.", MaxTextLength),
+            Draft(r.Objectives, "objectives", MaxTextLength),
+            Draft(r.Materials, "materials", MaxTextLength),
+            Draft(r.Methods, "methods", MaxTextLength),
+            Draft(r.Activities, "activities", MaxTextLength),
+            Draft(r.PreviousKnowledge, "previousKnowledge", MaxTextLength),
+            Draft(r.Introduction, "introduction", MaxTextLength),
+            Draft(r.Presentation, "presentation", MaxTextLength),
+            Draft(r.Conclusion, "conclusion", MaxTextLength),
+            Draft(r.Evaluation, "evaluation", MaxTextLength),
             Optional(r.TeacherRemarks, "teacherRemarks", MaxRemarksLength));
     }
 
@@ -269,6 +270,24 @@ public sealed class LessonPlanService(
         if (text.Length == 0) throw BadRequestException.Field(field, empty);
         if (text.Length > max) throw BadRequestException.Field(field, $"Use {max} characters or fewer.");
         return text;
+    }
+
+    /// <summary>Wave 2: a draft can be saved half-written. Blank is stored as ""; <see cref="EnsureComplete"/> asks for it at submit.</summary>
+    private static string Draft(string? value, string field, int max) => Optional(value, field, max) ?? "";
+
+    /// <summary>Every part of the plan, checked when it is submitted (a draft may be saved without them). 400 names the first one missing.</summary>
+    private static void EnsureComplete(LessonPlan plan)
+    {
+        (string Value, string Field, string Message)[] parts =
+        [
+            (plan.Objectives, "objectives", "Write the objectives."), (plan.Materials, "materials", "Write the materials."),
+            (plan.Methods, "methods", "Write the methods."), (plan.Activities, "activities", "Write the activities."),
+            (plan.PreviousKnowledge, "previousKnowledge", "Write the previous knowledge."), (plan.Introduction, "introduction", "Write the introduction."),
+            (plan.Presentation, "presentation", "Write the presentation."), (plan.Conclusion, "conclusion", "Write the conclusion."),
+            (plan.Evaluation, "evaluation", "Write the evaluation."),
+        ];
+        foreach (var (value, field, message) in parts)
+            if (string.IsNullOrWhiteSpace(value)) throw BadRequestException.Field(field, $"{message} A plan needs every part before it is submitted.");
     }
 
     private static string? Optional(string? value, string field, int max)

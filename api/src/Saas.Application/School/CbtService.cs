@@ -45,14 +45,16 @@ public sealed record CbtPerformanceDto(
 public sealed record CbtAttemptsDto(Guid PaperId, string Title, DateTimeOffset? ReleasedKeyAt, IReadOnlyList<CbtRosterRowDto> Students, CbtPerformanceDto? Performance = null);
 
 public sealed record CbtStartItemDto(Guid Id, string Stem, IReadOnlyList<string> Options);
-public sealed record CbtStartDto(Guid AttemptId, DateTimeOffset DeadlineAt, IReadOnlyList<CbtStartItemDto> Items);
+/// <param name="ServerNow">Wave 2: the server's clock when this was sent. The page counts down from it, never from the device's clock.</param>
+public sealed record CbtStartDto(Guid AttemptId, DateTimeOffset DeadlineAt, IReadOnlyList<CbtStartItemDto> Items, DateTimeOffset ServerNow);
 public sealed record SaveCbtAnswerRequest(Guid ItemId, int ChosenIndex);
 public sealed record CbtOpenItemDto(Guid Id, string Stem, IReadOnlyList<string> Options, int? ChosenIndex);
-public sealed record CbtAttemptOpenDto(Guid AttemptId, DateTimeOffset DeadlineAt, IReadOnlyList<CbtOpenItemDto> Items);
-public sealed record CbtAttemptTotalDto(Guid AttemptId, DateTimeOffset DeadlineAt, DateTimeOffset? SubmittedAt, decimal TotalMarks, bool AutoMarked);
+public sealed record CbtAttemptOpenDto(Guid AttemptId, DateTimeOffset DeadlineAt, IReadOnlyList<CbtOpenItemDto> Items, DateTimeOffset ServerNow);
+/// <param name="OutOf">Wave 2: what the sitting is marked out of (the marks of its questions).</param>
+public sealed record CbtAttemptTotalDto(Guid AttemptId, DateTimeOffset DeadlineAt, DateTimeOffset? SubmittedAt, decimal TotalMarks, bool AutoMarked, decimal OutOf);
 public sealed record CbtMarkedItemDto(Guid Id, string Stem, IReadOnlyList<string> Options, int? ChosenIndex, bool Correct, decimal MarksAwarded);
 public sealed record CbtAttemptMarkedDto(
-    Guid AttemptId, DateTimeOffset DeadlineAt, DateTimeOffset SubmittedAt, decimal TotalMarks, bool AutoMarked, IReadOnlyList<CbtMarkedItemDto> Items);
+    Guid AttemptId, DateTimeOffset DeadlineAt, DateTimeOffset SubmittedAt, decimal TotalMarks, bool AutoMarked, IReadOnlyList<CbtMarkedItemDto> Items, decimal OutOf);
 public sealed record CbtReleaseDto(Guid Id, DateTimeOffset ReleasedKeyAt);
 public sealed record CbtReopenDto(Guid Id, DateTimeOffset ReopenedAt);
 
@@ -362,7 +364,7 @@ public sealed class CbtService(
             throw new ConflictException(AlreadyStarted);
         }
         await tx.CommitAsync(ct);
-        return new CbtStartDto(attempt.Id, attempt.DeadlineAt, items.Select(i => new CbtStartItemDto(i.Id, i.Stem, i.Options)).ToList());
+        return new CbtStartDto(attempt.Id, attempt.DeadlineAt, items.Select(i => new CbtStartItemDto(i.Id, i.Stem, i.Options)).ToList(), clock.GetUtcNow());
     }
 
     public async Task<object> GetAttemptAsync(Guid id, CancellationToken ct)
@@ -457,9 +459,22 @@ public sealed class CbtService(
         if (attempt.SubmittedAt is not null) throw new ConflictException(HandedIn);
         if (attempt.ReopenedAt is not null) throw new ConflictException("This sitting was reopened. Start the test again.");
         var paper = await db.CbtPapers.FirstAsync(p => p.Id == attempt.PaperId, ct);
-        var items = await MarkAsync(attempt, clock.GetUtcNow(), ct);
+        // Wave 2: the deadline is the server's. A hand-in that arrives after it (a device clock running slow) is stamped at the deadline,
+        // exactly as the timed-out marking would have stamped it; answers after the deadline were already refused.
+        var now = clock.GetUtcNow();
+        var items = await MarkAsync(attempt, now > attempt.DeadlineAt ? attempt.DeadlineAt : now, ct);
         if (paper.AssessmentComponentId is not null)
-            await WriteScoreAsync(paper, enrolment.Id, attempt.TotalMarks, items.Sum(i => i.Marks), ct);
+        {
+            try
+            {
+                await WriteScoreAsync(paper, enrolment.Id, attempt.TotalMarks, items.Sum(i => i.Marks), ct);
+            }
+            catch (ConflictException ex) when (ex.Code == "term_locked")
+            {
+                // Wave 2 (M3): the term was locked during the sitting. The hand-in is marked, as a timed-out sitting is, and the score
+                // sheet stays as the principal locked it; the teacher sees the mark on the attempts list.
+            }
+        }
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return await ViewAsync(attempt, ct);
@@ -527,18 +542,19 @@ public sealed class CbtService(
             return OpenDto(attempt, await ItemsAsync(attempt.Id, ct));
         var paper = await db.CbtPapers.AsNoTracking().FirstAsync(p => p.Id == attempt.PaperId, ct);
         var released = attempt.ReleasedKeyAt is not null || paper.ReleasedKeyAt is not null || clock.GetUtcNow() >= paper.CloseAt;
-        if (!released)
-            return new CbtAttemptTotalDto(attempt.Id, attempt.DeadlineAt, attempt.SubmittedAt, attempt.TotalMarks, attempt.AutoMarked);
         var items = await ItemsAsync(attempt.Id, ct);
+        var outOf = items.Sum(i => i.Marks);
+        if (!released)
+            return new CbtAttemptTotalDto(attempt.Id, attempt.DeadlineAt, attempt.SubmittedAt, attempt.TotalMarks, attempt.AutoMarked, outOf);
         return new CbtAttemptMarkedDto(attempt.Id, attempt.DeadlineAt, attempt.SubmittedAt.Value, attempt.TotalMarks, attempt.AutoMarked,
-            items.Select(i => new CbtMarkedItemDto(i.Id, i.Stem, i.Options, i.ChosenIndex, i.ChosenIndex == i.CorrectShownIndex, i.MarksAwarded ?? 0)).ToList());
+            items.Select(i => new CbtMarkedItemDto(i.Id, i.Stem, i.Options, i.ChosenIndex, i.ChosenIndex == i.CorrectShownIndex, i.MarksAwarded ?? 0)).ToList(), outOf);
     }
 
     /// <summary>The key is revealed at the close, so no sitting may run past it.</summary>
     private static DateTimeOffset Min(DateTimeOffset a, DateTimeOffset b) => a <= b ? a : b;
 
-    private static CbtAttemptOpenDto OpenDto(CbtAttempt attempt, IReadOnlyList<CbtAttemptItem> items) => new(
-        attempt.Id, attempt.DeadlineAt, items.Select(i => new CbtOpenItemDto(i.Id, i.Stem, i.Options, i.ChosenIndex)).ToList());
+    private CbtAttemptOpenDto OpenDto(CbtAttempt attempt, IReadOnlyList<CbtAttemptItem> items) => new(
+        attempt.Id, attempt.DeadlineAt, items.Select(i => new CbtOpenItemDto(i.Id, i.Stem, i.Options, i.ChosenIndex)).ToList(), clock.GetUtcNow());
 
     private Task<List<CbtAttemptItem>> ItemsAsync(Guid attemptId, CancellationToken ct) =>
         db.CbtAttemptItems.AsNoTracking().Where(i => i.AttemptId == attemptId).OrderBy(i => i.Order).ThenBy(i => i.Id).ToListAsync(ct);

@@ -353,6 +353,9 @@ public sealed class WardCareService(
     /// the director. 404; 409 discharged; 403 not on the ward; 409 "This dose was stopped." for a Stopped dose; 409 "This dose is already
     /// recorded." unless it is still Due (or Missed: a late dose). The record is one conditional update, so of two racing records exactly one wins.
     /// </summary>
+    /// <summary>Wave 2: how long before its due time a dose may be recorded as Given (409 <c>dose_not_due</c> earlier).</summary>
+    public static readonly TimeSpan EarlyGivenWindow = TimeSpan.FromHours(1);
+
     public async Task<DoseRecordedDto> RecordDoseAsync(Guid doseId, RecordDoseRequest r, CancellationToken ct)
     {
         var caller = await access.CallerAsync(ct);
@@ -366,8 +369,10 @@ public sealed class WardCareService(
         await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         await LockForWriteAsync(caller, admissionId, now, ct);
         var stored = note is null ? null : text.Protect(note);
+        // Wave 2: a dose can be given from an hour before it is due, not earlier (held or refused may be decided ahead).
+        var givenFrom = now + EarlyGivenWindow;
         var recorded = await db.MedicationDoses
-            .Where(d => d.Id == doseId && (d.Status == DoseStatus.Due || d.Status == DoseStatus.Missed))
+            .Where(d => d.Id == doseId && (d.Status == DoseStatus.Missed || (d.Status == DoseStatus.Due && (status != DoseStatus.Given || d.DueAt <= givenFrom))))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(d => d.Status, status)
                 .SetProperty(d => d.RecordedByUserId, (Guid?)caller.UserId)
@@ -377,8 +382,12 @@ public sealed class WardCareService(
         if (recorded == 0)
         {
             // Nothing matched: the dose was stopped (end of course or discharge) or already recorded. Read under the same lock.
-            var current = await db.MedicationDoses.AsNoTracking().Where(d => d.Id == doseId).Select(d => d.Status).FirstAsync(ct);
-            if (current == DoseStatus.Stopped) throw new ConflictException(DoseStopped, "dose_stopped");
+            var current = await db.MedicationDoses.AsNoTracking().Where(d => d.Id == doseId).Select(d => new { d.Status, d.DueAt }).FirstAsync(ct);
+            if (current.Status == DoseStatus.Stopped) throw new ConflictException(DoseStopped, "dose_stopped");
+            if (current.Status == DoseStatus.Due)
+                throw new ConflictException(
+                    $"This dose is due at {current.DueAt.ToOffset(CareCalendar.LagosOffset):HH:mm} on {CareCalendar.Today(current.DueAt):d MMMM}. It can be given from an hour before.",
+                    "dose_not_due");
             throw new ConflictException(DoseRecorded, "dose_recorded");
         }
         if (tx is not null) await tx.CommitAsync(ct);

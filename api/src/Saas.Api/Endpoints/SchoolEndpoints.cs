@@ -94,7 +94,7 @@ public static class SchoolEndpoints
         school.MapGet("/students/import/template.csv", async (StudentImportService s, CancellationToken ct) =>
             Results.File(await s.CsvTemplateAsync(ct), "text/csv", "schoollink-students-template.csv")).RequireAuthorization(admin);
         school.MapPost("/students/import/preview", (IFormFile file, StudentImportService s, CancellationToken ct) => s.PreviewAsync(file.ToUpload(), ct))
-            .RequireAuthorization(admin).DisableAntiforgery();
+            .RequireAuthorization(admin).DisableAntiforgery().RequireRateLimiting(RateLimits.ImportPreview);
         school.MapPost("/students/import/{token}/confirm", (string token, StudentImportService s, CancellationToken ct) => s.ConfirmAsync(token, ct)).RequireAuthorization(admin);
 
         // Every other list input imports through one engine. The kind decides who may use it (its access check runs before anything is looked
@@ -110,7 +110,7 @@ public static class SchoolEndpoints
             return Results.File(file.Content, file.ContentType, file.FileName);
         });
         school.MapPost("/imports/{kind}/preview", (string kind, IFormFile? file, HttpRequest req, ImportEngine s, CancellationToken ct) =>
-            s.PreviewAsync(kind, Scope(req), file?.ToUpload(), ct)).DisableAntiforgery();
+            s.PreviewAsync(kind, Scope(req), file?.ToUpload(), ct)).DisableAntiforgery().RequireRateLimiting(RateLimits.ImportPreview);
         school.MapPost("/imports/{token}/confirm", (string token, ImportEngine s, CancellationToken ct) => s.ConfirmAsync(token, ct));
 
         // ID cards: leadership and the bursar. The photo bytes are read on the server; the PDF carries no links.
@@ -308,7 +308,8 @@ public static class SchoolEndpoints
         fees.MapPut("/fee-structure/{termId:guid}/{levelId:guid}", (Guid termId, Guid levelId, SaveFeeStructureRequest r, FeeService s, CancellationToken ct) => s.SaveStructureAsync(termId, levelId, r, ct));
         fees.MapPost("/fee-structure/{termId:guid}/copy-from/{fromTermId:guid}", (Guid termId, Guid fromTermId, FeeService s, CancellationToken ct) => s.CopyStructureAsync(termId, fromTermId, ct));
         fees.MapPost("/invoices/generate", (GenerateInvoicesRequest r, FeeService s, CancellationToken ct) => s.GenerateAsync(r, ct));
-        fees.MapGet("/invoices", (Guid? termId, Guid? classId, string? status, int? skip, int? take, FeeService s, CancellationToken ct) => s.ListAsync(termId, classId, status, skip, take, ct));
+        fees.MapGet("/invoices", (Guid? termId, Guid? classId, string? status, int? skip, int? take, string? q, bool? owing, FeeService s, CancellationToken ct) =>
+            s.ListAsync(termId, classId, status, skip, take, ct, q, owing == true));
         fees.MapGet("/invoices/{id:guid}", (Guid id, FeeService s, CancellationToken ct) => s.GetAsync(id, ct));
         fees.MapPut("/invoices/{id:guid}/optional-items", (Guid id, OptionalItemsRequest r, FeeService s, CancellationToken ct) => s.OptionalItemsAsync(id, r, ct));
         fees.MapPost("/invoices/{id:guid}/discount", (Guid id, DiscountRequest r, FeeService s, CancellationToken ct) => s.DiscountAsync(id, r, ct));

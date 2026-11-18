@@ -10,7 +10,9 @@ namespace Saas.Application.Care;
 /// <item>A name match needs at least 3 characters on the shorter side. From 5 characters plain containment counts (Hydroxychloroquine
 /// ~ Chloroquine); under 5 the shorter name must start at a word of the longer one, a hyphen starting a word ("Horse serum" doesn't
 /// contain ORS; "Low-ORS" does).</item>
-/// <item>A small class table links a class name to its members and brands: an allergen and a drug in the same class match.</item>
+/// <item>A small class table links a class name to its members and brands: an allergen and a drug in the same class match (penicillins
+/// with PCN, NSAIDs with ASA, sulfonamides, cephalosporins, heparins, statins). A class name under 5 characters must be a whole word.</item>
+/// <item>Wave 2: a match inside a longer drug name that only looks related (Nystatin is not a statin) doesn't count.</item>
 /// </list>
 /// </summary>
 public static class AllergyMatcher
@@ -31,12 +33,24 @@ public static class AllergyMatcher
     /// <summary>Allergy classes: each lists the class names and its members (generic and Nigerian brand names), stored normalised.</summary>
     private static readonly string[][] Classes =
     [
-        Normalised("penicillin", "penicillins", "amoxicillin", "ampicillin", "augmentin", "co-amoxiclav", "amoxil", "cloxacillin", "flucloxacillin",
-            "ampiclox", "benzylpenicillin", "phenoxymethylpenicillin"),
         Normalised("sulfa", "sulpha", "sulfonamide", "sulphonamide", "co-trimoxazole", "cotrimoxazole", "septrin", "sulfamethoxazole",
             "sulfadoxine", "fansidar"),
-        Normalised("nsaid", "nsaids", "ibuprofen", "diclofenac", "aspirin", "naproxen", "piroxicam"),
+        Normalised("nsaid", "nsaids", "ibuprofen", "diclofenac", "aspirin", "naproxen", "piroxicam", "asa", "acetylsalicylic acid"),
+        // Wave 2: PCN is the common shorthand for penicillin.
+        Normalised("pcn", "penicillin", "penicillins", "amoxicillin", "ampicillin", "augmentin", "co-amoxiclav", "amoxil", "cloxacillin",
+            "flucloxacillin", "ampiclox", "benzylpenicillin", "phenoxymethylpenicillin"),
+        Normalised("cephalosporin", "cephalosporins", "cefalexin", "cephalexin", "cefuroxime", "ceftriaxone", "cefixime", "cefotaxime",
+            "ceftazidime", "cefazolin", "cefpodoxime", "cefaclor", "cefadroxil", "cefepime", "zinnat", "rocephin"),
+        Normalised("heparin", "heparins", "enoxaparin", "dalteparin", "tinzaparin", "clexane", "fragmin"),
+        Normalised("statin", "statins", "atorvastatin", "simvastatin", "rosuvastatin", "pravastatin", "lovastatin", "fluvastatin", "lipitor",
+            "crestor", "zocor"),
     ];
+
+    /// <summary>
+    /// Wave 2: drugs whose names contain a class or drug name they are not (Nystatin is an antifungal, not a statin). A match that falls
+    /// inside one of these words doesn't count.
+    /// </summary>
+    private static readonly string[] FalseFriends = Normalised("nystatin", "somatostatin", "ecostatin");
 
     /// <summary>
     /// The recorded allergies that match any of the drugs, distinct and in the order recorded (as written, trimmed). Empty when none do.
@@ -51,7 +65,7 @@ public static class AllergyMatcher
             if (allergy.Length == 0 || result.Contains(allergy, StringComparer.OrdinalIgnoreCase)) continue;
             var allergen = Parse(allergy);
             if (allergen.Text.Length == 0 || MeansNone(allergen.Text)) continue;
-            if (drugNames.Any(d => NameMatch(d, allergen) || SameClass(d.Text, allergen.Text))) result.Add(allergy);
+            if (drugNames.Any(d => NameMatch(d, allergen) || SameClass(d, allergen))) result.Add(allergy);
         }
         return result;
     }
@@ -92,13 +106,41 @@ public static class AllergyMatcher
     {
         var (shorter, longer) = drug.Text.Length <= allergen.Text.Length ? (drug, allergen) : (allergen, drug);
         if (shorter.Text.Length < MinimumLength) return false;
-        if (shorter.Text.Length >= WordStartBelow) return longer.Text.Contains(shorter.Text, StringComparison.Ordinal);
-        for (var at = longer.Text.IndexOf(shorter.Text, StringComparison.Ordinal); at >= 0;
-             at = longer.Text.IndexOf(shorter.Text, at + 1, StringComparison.Ordinal))
-            if (longer.WordStarts.Contains(at)) return true;
+        return Occurs(longer, shorter.Text, wholeWord: false);
+    }
+
+    /// <summary>
+    /// <paramref name="needle"/> appears in <paramref name="host"/>: under <see cref="WordStartBelow"/> characters only where a word starts
+    /// (and, with <paramref name="wholeWord"/>, only as the whole word: ASA is a class name, "Asacol" is not); never inside a
+    /// <see cref="FalseFriends"/> word that is longer than it.
+    /// </summary>
+    private static bool Occurs(Name host, string needle, bool wholeWord)
+    {
+        for (var at = host.Text.IndexOf(needle, StringComparison.Ordinal); at >= 0; at = host.Text.IndexOf(needle, at + 1, StringComparison.Ordinal))
+        {
+            if (needle.Length < WordStartBelow)
+            {
+                if (!host.WordStarts.Contains(at)) continue;
+                var end = at + needle.Length;
+                if (wholeWord && end != host.Text.Length && !host.WordStarts.Contains(end)) continue;
+            }
+            if (InsideFalseFriend(host.Text, at, needle.Length)) continue;
+            return true;
+        }
         return false;
     }
 
-    private static bool SameClass(string drug, string allergen) =>
-        Classes.Any(members => members.Any(m => allergen.Contains(m, StringComparison.Ordinal)) && members.Any(m => drug.Contains(m, StringComparison.Ordinal)));
+    private static bool InsideFalseFriend(string text, int at, int length)
+    {
+        foreach (var friend in FalseFriends)
+        {
+            if (friend.Length <= length) continue;
+            for (var f = text.IndexOf(friend, StringComparison.Ordinal); f >= 0; f = text.IndexOf(friend, f + 1, StringComparison.Ordinal))
+                if (f <= at && at + length <= f + friend.Length) return true;
+        }
+        return false;
+    }
+
+    private static bool SameClass(Name drug, Name allergen) =>
+        Classes.Any(members => members.Any(m => Occurs(allergen, m, wholeWord: true)) && members.Any(m => Occurs(drug, m, wholeWord: true)));
 }

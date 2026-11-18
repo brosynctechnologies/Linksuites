@@ -328,9 +328,15 @@ public sealed class VisitService(
         }
 
         // Ruling (Task 14): a visit sent to payment with money owed tells the patient's portal users the bill number and balance.
+        // Wave 2: once per balance. Coming back to payment with the same amount owed (sent back to the doctor and returned) tells nobody
+        // again; a new charge changes the balance, and that is news.
         if (stage == VisitStage.WaitingPayment && visit.Stage != VisitStage.WaitingPayment
-            && await db.PatientBills.AsNoTracking().Where(b => b.VisitId == visit.Id).Select(b => new { b.Number, b.BalanceMinor }).FirstOrDefaultAsync(ct) is { } due)
+            && await db.PatientBills.FirstOrDefaultAsync(b => b.VisitId == visit.Id, ct) is { } due
+            && due.BalanceMinor > 0 && due.DueNoticeBalanceMinor != due.BalanceMinor)
+        {
+            due.DueNoticeBalanceMinor = due.BalanceMinor;
             await notices.BillDueAsync(visit.PatientId, due.Number, due.BalanceMinor, ct);
+        }
         visit.Stage = stage;
         if (stage == VisitStage.Done)
         {

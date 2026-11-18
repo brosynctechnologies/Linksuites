@@ -179,13 +179,24 @@ public static class CareEndpoints
             s.FileLinkAsync(id, reason, ct));
         // Post-build: a doctor or the director reviews a result before the portal shows it (and the patient is told); the list of results
         // waiting for review (no description or result text).
-        care.MapPost("/tests/{id:guid}/review", (Guid id, TestService s, CancellationToken ct) => s.ReviewAsync(id, ct));
+        // Wave 2: the file of a corrected (superseded) result, as for the current file: a logged clinical read that answers a signed link.
+        care.MapGet("/tests/{id:guid}/superseded/{amendmentId:guid}/file", (Guid id, Guid amendmentId,
+            [FromHeader(Name = RecordGuard.ReasonHeader)] string? reason, TestService s, CancellationToken ct) => s.SupersededFileLinkAsync(id, amendmentId, reason, ct));
+        care.MapPost("/tests/{id:guid}/review",(Guid id, TestService s, CancellationToken ct) => s.ReviewAsync(id, ct));
         care.MapGet("/tests/awaiting-review", (TestService s, CancellationToken ct) => s.AwaitingReviewAsync(ct));
         // The signed result-file link carries its own proof (issued after a logged clinical read), so it sits outside the signed-in group.
         app.MapGet("/api/care/result-files/{id:guid}/{expires:long}/{signature}", async (Guid id, long expires, string signature, TestService s,
             HttpContext http, CancellationToken ct) =>
         {
             var file = await s.FileByLinkAsync(id, expires, signature, ct);
+            if (file is null) return Results.NotFound();
+            http.Response.Headers.CacheControl = "private, no-store";
+            return file.RedirectUrl is { } url ? Results.Redirect(url) : Results.Stream(file.Content!, file.ContentType);
+        }).AllowAnonymous().ExcludeFromDescription().WithTags("Care");
+        app.MapGet("/api/care/superseded-result-files/{id:guid}/{expires:long}/{signature}", async (Guid id, long expires, string signature, TestService s,
+            HttpContext http, CancellationToken ct) =>
+        {
+            var file = await s.SupersededFileByLinkAsync(id, expires, signature, ct);
             if (file is null) return Results.NotFound();
             http.Response.Headers.CacheControl = "private, no-store";
             return file.RedirectUrl is { } url ? Results.Redirect(url) : Results.Stream(file.Content!, file.ContentType);
@@ -361,7 +372,7 @@ public static class CareEndpoints
         });
         care.MapPost("/imports/{kind}/preview", (string kind, IFormFile? file, Saas.Application.School.Imports.ImportEngine s, CancellationToken ct) =>
             s.PreviewAsync(Saas.Application.Billing.Products.Care, kind, Saas.Application.School.Imports.ImportScope.Empty, file?.ToUpload(), ct))
-            .DisableAntiforgery();
+            .DisableAntiforgery().RequireRateLimiting(RateLimits.ImportPreview);
         care.MapPost("/imports/{token}/confirm", (string token, Saas.Application.School.Imports.ImportEngine s, CancellationToken ct) =>
             s.ConfirmAsync(Saas.Application.Billing.Products.Care, token, ct));
 

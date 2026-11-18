@@ -25,10 +25,10 @@ public sealed class StudentImporter(
     {
         ["admission_no"] = "The school's admission number. A number already in the school updates that student.",
         ["first_name"] = "The student's first name.",
-        ["middle_name"] = "Optional.",
+        ["middle_name"] = "Optional. Left blank for a student already on file, the stored middle name stays.",
         ["last_name"] = "The student's surname.",
         ["gender"] = "M or F (Male or Female also work).",
-        ["date_of_birth"] = "Optional. 2012-03-04 or 04/03/2012 (day, month, year).",
+        ["date_of_birth"] = "Optional. 2012-03-04 or 04/03/2012 (day, month, year). Left blank for a student already on file, the stored date stays.",
         ["class"] = "The name of a class in the current session, for example JSS 1A.",
         ["guardian1_name"] = "Optional. Required when you give the guardian's phone number or email.",
         ["guardian1_phone"] = "Optional. Siblings share one guardian when the phone number is the same.",
@@ -247,10 +247,11 @@ public sealed class StudentImporter(
             {
                 var student = tracked[id];
                 student.FirstName = p.Student.FirstName;
-                student.MiddleName = p.Student.MiddleName;
+                // Wave 2: a blank optional cell leaves the stored value as it is; it never erases it.
+                student.MiddleName = p.Student.MiddleName ?? student.MiddleName;
                 student.LastName = p.Student.LastName;
                 student.Gender = p.Gender;
-                student.DateOfBirth = p.Student.DateOfBirth;
+                student.DateOfBirth = p.Student.DateOfBirth ?? student.DateOfBirth;
                 if (enrolments.TryGetValue(id, out var enrolment)) enrolment.ClassId = p.ClassId;
                 else db.Enrolments.Add(new Enrolment { TenantId = tenantId, StudentId = id, SessionId = p.SessionId, ClassId = p.ClassId });
                 studentId = id;

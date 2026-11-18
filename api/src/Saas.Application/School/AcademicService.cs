@@ -409,7 +409,9 @@ public sealed class AcademicService(IAppDbContext db, ITenantContext tenant)
             saved.Add(row);
         }
         var keptIds = saved.Select(c => c.Id).ToHashSet();
-        db.AssessmentComponents.RemoveRange(own.Where(c => !keptIds.Contains(c.Id)));
+        var removed = own.Where(c => !keptIds.Contains(c.Id)).ToList();
+        await EnsureNoCountedWorkAsync(removed, ct);
+        db.AssessmentComponents.RemoveRange(removed);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return new AssessmentDto(r.LevelId, saved.Select(ToDto).ToList());
@@ -425,6 +427,7 @@ public sealed class AcademicService(IAppDbContext db, ITenantContext tenant)
         await db.LockAsync(AssessmentLockKey(TenantId), ct);
         var own = await db.AssessmentComponents.Where(c => c.LevelId == levelId).ToListAsync(ct);
         await EnsureNoScoresAsync(own, ct);
+        await EnsureNoCountedWorkAsync(own, ct);
         db.AssessmentComponents.RemoveRange(own);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
@@ -435,6 +438,21 @@ public sealed class AcademicService(IAppDbContext db, ITenantContext tenant)
     /// (<see cref="IAppDbContext.LockSharedAsync"/>), so many teachers save at once but an edit waits for them and blocks them.
     /// </summary>
     public static long AssessmentLockKey(Guid tenantId) => BitConverter.ToInt64(tenantId.ToByteArray(), 0) ^ 0x4153534D;
+
+    public const string ComponentHasWork =
+        "An assignment or CBT test counts towards this part, so it can't be removed. You can still rename it or change its maximum.";
+
+    /// <summary>
+    /// Wave 2 (M9): removing a part that counted assignments or CBT papers write to would quietly turn them into practice (the link is
+    /// cleared by the database), so it is refused (409 <c>component_has_work</c>). Assignments and papers have no edit route, so the part stays.
+    /// </summary>
+    private async Task EnsureNoCountedWorkAsync(IReadOnlyList<AssessmentComponent> components, CancellationToken ct)
+    {
+        if (components.Count == 0) return;
+        var ids = components.Select(c => (Guid?)c.Id).ToList();
+        if (await db.Assignments.AnyAsync(a => ids.Contains(a.AssessmentComponentId), ct) || await db.CbtPapers.AnyAsync(p => ids.Contains(p.AssessmentComponentId), ct))
+            throw new ConflictException(ComponentHasWork, "component_has_work");
+    }
 
     private async Task EnsureNoScoresAsync(IReadOnlyList<AssessmentComponent> components, CancellationToken ct)
     {

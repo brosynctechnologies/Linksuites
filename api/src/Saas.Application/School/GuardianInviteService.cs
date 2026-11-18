@@ -134,6 +134,9 @@ public sealed class GuardianInviteService(
     public async Task<IReadOnlyList<ChildRef>> AcceptAsync(string token, CancellationToken ct)
     {
         var userId = parents.CustomerUserId();
+        // Wave 2: a student's own account is a customer account too, but it is never a parent's.
+        if (await db.Students.IgnoreQueryFilters().AnyAsync(s => s.UserId == userId, ct))
+            throw new ForbiddenException("A student account can't accept a parent invitation. Sign in with the parent's own account.");
         var invite = await OpenAsync(token, ct);
 
         await using (var tx = await db.Database.BeginTransactionAsync(ct))
