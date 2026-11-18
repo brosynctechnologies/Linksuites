@@ -182,6 +182,25 @@ public sealed class InvoiceWave2Tests(ApiFixture api)
         Assert.Equal(Png, await read.Content.ReadAsByteArrayAsync(Ct));
     }
 
+    [Fact]
+    public async Task A_receipt_missing_from_storage_is_cleared_so_it_never_blocks_the_move()
+    {
+        var (owner, auth) = await api.SignupInvoicesAsync("MissingReceipt");
+        var tenantId = auth.GetProperty("tenant").GetProperty("id").GetGuid();
+        await api.MakeProAsync(tenantId, Products.Invoices, "business");
+        var expenseId = await CreateExpenseAsync(owner);
+        var goneKey = $"{tenantId}/expenses/{expenseId:N}/{Guid.NewGuid():N}.png"; // never saved to storage
+        await api.WithDbAsync(db => db.Expenses.IgnoreQueryFilters().Where(e => e.Id == expenseId)
+            .ExecuteUpdateAsync(s => s.SetProperty(e => e.ReceiptKey, goneKey).SetProperty(e => e.ReceiptUrl, "https://example.test/x.png"), Ct));
+
+        using (var scope = api.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<ExpenseReceiptMigration>().RunAsync(Ct);
+
+        var row = await api.WithDbAsync(db => db.Expenses.IgnoreQueryFilters().AsNoTracking().SingleAsync(e => e.Id == expenseId, Ct));
+        Assert.Null(row.ReceiptKey); // no longer queued for the move
+        Assert.Null(row.ReceiptUrl);
+    }
+
     // ---- M8: a failing delete of the old image doesn't fail the save ----
 
     [Fact]
