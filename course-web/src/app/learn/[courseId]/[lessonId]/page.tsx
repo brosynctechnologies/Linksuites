@@ -95,11 +95,12 @@ export default function LessonPlayerPage() {
 
   /** PUT progress. Returns false when it couldn't be saved. */
   const saveProgress = useCallback(
-    async (id: string, positionSec: number, completed: boolean) => {
+    async (id: string, positionSec: number, completed: boolean, mediaDurationSec?: number) => {
       try {
         const res = await api<ProgressResponse>(`/api/learn/lessons/${id}/progress`, {
           method: "PUT",
-          body: { positionSec: Math.max(0, Math.floor(positionSec)), completed },
+          // The video's own length lets the server learn an unprobed lesson's duration (never the position).
+          body: { positionSec: Math.max(0, Math.floor(positionSec)), completed, mediaDurationSec: mediaDurationSec ? Math.round(mediaDurationSec) : null },
         });
         setSaveError(null);
         if (completed) markLocal(id, { completed: true }, res);
@@ -384,11 +385,12 @@ function VideoStage({
   /** Marked complete elsewhere (the button): later saves keep it complete. */
   done: boolean;
   watermark: string | null;
-  onSave: (id: string, positionSec: number, completed: boolean) => Promise<boolean>;
+  onSave: (id: string, positionSec: number, completed: boolean, mediaDurationSec?: number) => Promise<boolean>;
 }) {
   const pos = useRef(lesson.positionSec ?? 0);
   const lastSaved = useRef(lesson.positionSec ?? 0);
   const completed = useRef(lesson.completed);
+  const mediaDuration = useRef(0);
   const saveRef = useRef(onSave);
   useEffect(() => {
     saveRef.current = onSave;
@@ -400,7 +402,7 @@ function VideoStage({
       const p = pos.current;
       if (!force && Math.abs(p - lastSaved.current) < 1) return;
       lastSaved.current = p;
-      void saveRef.current(lesson.id, p, completed.current);
+      void saveRef.current(lesson.id, p, completed.current, mediaDuration.current || undefined);
     },
     [lesson.id],
   );
@@ -428,6 +430,7 @@ function VideoStage({
       title={lesson.title}
       onTime={(sec, duration) => {
         pos.current = sec;
+        if (Number.isFinite(duration) && duration > 0) mediaDuration.current = duration;
         if (!completed.current && duration > 0 && sec >= duration - Math.max(8, duration * 0.05)) {
           completed.current = true;
           save(true);

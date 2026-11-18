@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { downloadFile, toApiError, type ApiError } from "@/lib/api";
-import { todayISO } from "@/lib/dates";
+import { formatDay, todayISO } from "@/lib/dates";
 import { useApi } from "@/lib/use-api";
 import { useCan } from "@/lib/permissions";
 import { useDebounced, useQueryParam } from "@/lib/use-debounced";
@@ -25,6 +25,9 @@ const PAGE_SIZE = 20;
 
 export default function InvoicesPage() {
   const statusParam = useQueryParam("status");
+  // From the dashboard's "Paid this month": invoices with a payment dated in the period (part payments too).
+  const paidFrom = useQueryParam("paidFrom");
+  const paidTo = useQueryParam("paidTo");
   const [status, setStatus] = useState<string>(() => {
     const s = statusParam ?? "";
     return TABS.some((t) => t.value === s) ? s : "";
@@ -40,6 +43,8 @@ export default function InvoicesPage() {
   const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
   if (status) params.set("status", status);
   if (dq) params.set("q", dq);
+  if (paidFrom) params.set("paidFrom", paidFrom);
+  if (paidTo) params.set("paidTo", paidTo);
   const { data, error, loading, reload } = useApi<Paged<InvoiceSummaryDto>>(`/api/invoices?${params}`);
   const { data: business } = useApi<BusinessDto>("/api/business");
 
@@ -80,6 +85,17 @@ export default function InvoicesPage() {
         <div className="mb-3">
           <ErrorBox error={exportError} />
         </div>
+      )}
+
+      {(paidFrom || paidTo) && (
+        <p className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-700">
+          <span>
+            Invoices with a payment {paidFrom && paidTo ? `between ${formatDay(paidFrom)} and ${formatDay(paidTo)}` : paidFrom ? `from ${formatDay(paidFrom)}` : `up to ${formatDay(paidTo)}`}
+          </span>
+          <Link href="/app/invoices" className="font-semibold text-ink underline underline-offset-2">
+            Show all invoices
+          </Link>
+        </p>
       )}
 
       <Tabs

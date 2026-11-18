@@ -448,7 +448,7 @@ function ReschedulePanel({ booking, tz, onClose, onDone }: { booking: BookingDto
       </Select>
       <DateSlotPicker
         key={staffId}
-        source={{ kind: "app", serviceId: booking.serviceId, staffId: staffId || null }}
+        source={{ kind: "app", serviceId: booking.serviceId, staffId: staffId || null, excludeBookingId: booking.id }}
         timezone={tz}
         today={today}
         maxDate={addDays(today, 365)}

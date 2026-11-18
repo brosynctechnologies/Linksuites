@@ -337,7 +337,7 @@ export function CustomerFields({
                     <span className="block truncate text-xs text-muted">{c.phone}</span>
                   </span>
                   <span className="shrink-0 text-xs text-muted">
-                    {c.bookingsCount} visit{c.bookingsCount === 1 ? "" : "s"}
+                    {c.completedCount} visit{c.completedCount === 1 ? "" : "s"}
                     {c.noShowCount > 0 && <span className="text-brick">, {c.noShowCount} no-show</span>}
                   </span>
                 </button>

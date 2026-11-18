@@ -9,11 +9,13 @@ namespace Saas.Application.Bookings;
 public sealed class BookingService(
     IAppDbContext db, BookingCore core, PlanService plans, IMerchantPayments payments, ISecretProtector secrets)
 {
-    public async Task<AvailabilityDto> AvailabilityAsync(Guid serviceId, Guid? staffId, DateOnly date, CancellationToken ct)
+    public async Task<AvailabilityDto> AvailabilityAsync(Guid serviceId, Guid? staffId, DateOnly date, CancellationToken ct,
+        Guid? excludeBookingId = null)
     {
         var business = await core.BusinessAsync(ct);
         var service = await core.ServiceAsync(serviceId, ct);
-        var slots = await core.SlotsAsync(business, service, staffId, date, forPublic: false, ignoreHours: false, null, ct);
+        // When moving a booking, its own time (and buffers) doesn't block the new one.
+        var slots = await core.SlotsAsync(business, service, staffId, date, forPublic: false, ignoreHours: false, excludeBookingId, ct);
         return new AvailabilityDto(date, business.Timezone, slots.Select(s => new SlotDto(s.StartsAt, s.EndsAt, s.StaffIds)).ToList());
     }
 
@@ -97,7 +99,8 @@ public sealed class BookingService(
         if (booking.Status is BookingStatus.Cancelled or BookingStatus.Expired)
             throw new ConflictException("This booking was cancelled.");
         core.AddPayment(booking, r.AmountMinor, r.Type, r.Method, r.Reference, providerRef: null);
-        if (booking.Status == BookingStatus.Pending && r.Type == BookingPaymentType.Deposit)
+        // A deposit, or any payment that brings what was paid up to the deposit, confirms a booking waiting for its deposit.
+        if (booking.Status == BookingStatus.Pending && (r.Type == BookingPaymentType.Deposit || BookingCore.DepositDueMinor(booking) == 0))
             await core.ChangeStatusAsync(booking, BookingStatus.Confirmed, "Deposit recorded", ct);
         await core.SaveBookingAsync(booking, ct);
         return await GetAsync(id, ct);

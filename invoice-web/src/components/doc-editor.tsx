@@ -28,7 +28,17 @@ import type {
 import { ClientPicker, type PickedClient } from "./client-picker";
 import { businessForPreview } from "./doc-view-parts";
 import { InvoicePreview, type PreviewDoc } from "./invoice-preview";
-import { LineItemsEditor, editorLinesFrom, isBlankLine, mathInput, newLine, previewLines, toLineRequests, type EditorLine } from "./line-items-editor";
+import {
+  LineItemsEditor,
+  editorLinesFrom,
+  hasDeletedRate,
+  isBlankLine,
+  mathInput,
+  newLine,
+  previewLines,
+  toLineRequests,
+  type EditorLine,
+} from "./line-items-editor";
 import { TemplatePicker } from "./template-picker";
 import { ExchangeRateField } from "./fx";
 import { ApiErrorView, Button, Card, ErrorBox, Input, NoAccess, PageLoader, Segmented, Select, Textarea, cx, linkClass } from "./ui";
@@ -201,6 +211,11 @@ function EditorForm({
       setTab("edit");
       return;
     }
+    if (lines.some((l) => !isBlankLine(l) && hasDeletedRate(l, taxRates))) {
+      setError("A line's tax rate was deleted. Choose a current rate (or No tax) for it.");
+      setTab("edit");
+      return;
+    }
     if (reqLines.some((l) => !l.description)) {
       setError("Every line needs a description.");
       setTab("edit");
@@ -225,7 +240,10 @@ function EditorForm({
       setTab("edit");
       return;
     }
-    const withRate = foreign && rate ? { ...common, exchangeRate: rate } : common;
+    // Send a rate only when the person typed one (or the document already had one): otherwise the server uses today's
+    // provider rate at full precision instead of storing a rounded copy as a manual rate.
+    const manualRate = rateEdit?.currency === currency;
+    const withRate = foreign && rate && manualRate ? { ...common, exchangeRate: rate } : common;
     const base = isInvoice ? "/api/invoices" : "/api/quotes";
     const body: SaveInvoiceRequest | SaveQuoteRequest = isInvoice ? { ...withRate, dueDate: secondDate } : { ...withRate, expiryDate: secondDate };
     setBusy(true);

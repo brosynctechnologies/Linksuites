@@ -5,6 +5,7 @@ import { SITE_URL, baseOpenGraph, baseTwitter } from "@/lib/config";
 import { getProduct, getStore } from "@/lib/storefront";
 import type { PublicProductDto, PublicStoreDto } from "@/lib/types";
 import { ProductPurchase } from "@/components/store/product-purchase";
+import { UploadImage } from "@/components/upload-image";
 import { ClosedBanner, StoreShell, StoreSkeleton, StoreTopBar } from "@/components/store/store-shell";
 import { JsonLd } from "@/components/suite/sections";
 
@@ -71,13 +72,15 @@ async function Product({ params }: Props) {
         <div className="relative bg-paper">
           <div className="no-scrollbar flex snap-x snap-mandatory overflow-x-auto" role="region" aria-label="Product photos" tabIndex={0}>
             {product.images.map((img, i) => (
-              <img
-                key={img.url}
-                src={img.url}
-                alt={i === 0 ? product.name : `${product.name} photo ${i + 1}`}
-                className="aspect-square w-full shrink-0 snap-center object-cover"
-                loading={i === 0 ? "eager" : "lazy"}
-              />
+              <div key={img.url} className="relative aspect-square w-full shrink-0 snap-center">
+                <UploadImage
+                  src={img.url}
+                  alt={i === 0 ? product.name : `${product.name} photo ${i + 1}`}
+                  sizes="(min-width: 560px) 560px, 100vw"
+                  className="object-cover"
+                  eager={i === 0}
+                />
+              </div>
             ))}
           </div>
           {product.images.length > 1 && (

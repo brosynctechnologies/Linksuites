@@ -109,7 +109,8 @@ public sealed record LessonPlaybackDto(Guid Id, Guid CourseId, string Title, Les
     PlaybackVideoDto? Video, IReadOnlyList<PlaybackResourceDto> Resources, PlaybackQuizDto? Quiz, int PositionSec, bool Completed,
     Guid? PreviousLessonId, Guid? NextLessonId, string? Watermark);
 
-public sealed record ProgressRequest(int PositionSec, bool Completed);
+/// <summary><c>MediaDurationSec</c>: the length the player read from the video, used to learn the length of an unprobed lesson.</summary>
+public sealed record ProgressRequest(int PositionSec, bool Completed, int? MediaDurationSec = null);
 public sealed record ProgressResult(int ProgressPercent, bool CourseCompleted, string? CertificateCode);
 public sealed record NoteDto(string Body, DateTimeOffset? UpdatedAt);
 

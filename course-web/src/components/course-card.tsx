@@ -5,6 +5,7 @@ import type { CourseCardDto } from "@/lib/types";
 import { Rating } from "./badges";
 import { GraduationIcon } from "./icons";
 import { cx } from "./styles";
+import { UploadImage } from "./upload-image";
 
 /** Price as learners see it: "Free" in lime-dark (it's an invitation), paid in ink. */
 export function Price({ priceMinor, currency, isFree, className }: { priceMinor: number; currency?: string; isFree: boolean; className?: string }) {
@@ -17,7 +18,7 @@ export function Thumb({ src, title, className }: { src: string | null | undefine
   return (
     <div className={cx("relative aspect-video w-full overflow-hidden bg-ink-2", className)}>
       {src ? (
-        <img src={src} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+        <UploadImage src={src} alt="" sizes="(min-width: 1024px) 360px, (min-width: 640px) 50vw, 100vw" className="object-cover" />
       ) : (
         <div className="flex h-full w-full items-end p-3" aria-hidden="true">
           <GraduationIcon className="absolute top-3 right-3 h-5 w-5 text-white/25" />

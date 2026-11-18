@@ -84,7 +84,7 @@ public sealed record InvoiceDto(
     string? Notes, string? Terms, string PublicUrl, string WhatsappShareUrl, DateTimeOffset? SentAt, DateTimeOffset? ViewedAt,
     DateTimeOffset? PaidAt, Guid? QuoteId, Guid? RecurringScheduleId, IReadOnlyList<PaymentDto> Payments,
     IReadOnlyList<EventDto> Events, DateTimeOffset CreatedAt, string BaseCurrency, decimal ExchangeRate, long TotalBaseMinor,
-    long BalanceBaseMinor);
+    long BalanceBaseMinor, bool ShowBranding = true);
 
 public sealed record QuoteSummaryDto(
     Guid Id, string Number, string ClientName, DateOnly IssueDate, DateOnly ExpiryDate, string Currency, long TotalMinor,
@@ -95,7 +95,10 @@ public sealed record QuoteDto(
     string Template, IReadOnlyList<LineDto> Items, long SubtotalMinor, long DiscountTotalMinor, long TaxTotalMinor,
     IReadOnlyList<TaxBreakdown> Taxes, long ShippingMinor, long TotalMinor, string? Notes, string? Terms, string PublicUrl,
     string WhatsappShareUrl, DateTimeOffset? SentAt, DateTimeOffset? ViewedAt, Guid? ConvertedInvoiceId, DateTimeOffset CreatedAt,
-    string BaseCurrency, decimal ExchangeRate, long TotalBaseMinor);
+    string BaseCurrency, decimal ExchangeRate, long TotalBaseMinor, IReadOnlyList<QuoteEventDto>? Events = null, bool ShowBranding = true);
+
+/// <summary>A quote's activity, built from its dates: Created, Sent, Viewed, Accepted or Declined, Converted.</summary>
+public sealed record QuoteEventDto(string Type, string? Note, DateTimeOffset CreatedAt);
 
 public sealed record InvoiceDashboardDto(
     string Currency, long OutstandingMinor, long OverdueMinor, int OverdueCount, long PaidThisMonthMinor, int DraftCount,
@@ -152,7 +155,8 @@ public sealed record PublicInvoiceDto(
 public sealed record PublicQuoteDto(
     string Number, QuoteStatus Status, PublicBusinessDto Business, ClientSnapshotDto Client, DateOnly IssueDate, DateOnly ExpiryDate,
     string Currency, string Template, IReadOnlyList<LineDto> Items, long SubtotalMinor, long DiscountTotalMinor, long TaxTotalMinor,
-    IReadOnlyList<TaxBreakdown> Taxes, long ShippingMinor, long TotalMinor, string? Notes, string? Terms, bool CanRespond, bool ShowBranding);
+    IReadOnlyList<TaxBreakdown> Taxes, long ShippingMinor, long TotalMinor, string? Notes, string? Terms, bool CanRespond, bool ShowBranding,
+    bool SenderNotified = false);
 
 public sealed record PayRequest(string? Email);
 public sealed record VerifyRequest(string Reference);

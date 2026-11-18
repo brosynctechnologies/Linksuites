@@ -226,6 +226,7 @@ function BookingView({
                 {panel === "reschedule" && (
                   <Reschedule
                     base={base}
+                    token={token}
                     booking={b}
                     onDone={(nb) => {
                       setBooking(nb);
@@ -333,7 +334,17 @@ function PayDeposit({ base, booking }: { base: string; booking: PublicBookingDto
   );
 }
 
-function Reschedule({ base, booking, onDone }: { base: string; booking: PublicBookingDto; onDone: (b: PublicBookingDto) => void }) {
+function Reschedule({
+  base,
+  token,
+  booking,
+  onDone,
+}: {
+  base: string;
+  token: string;
+  booking: PublicBookingDto;
+  onDone: (b: PublicBookingDto) => void;
+}) {
   const tz = booking.timezone;
   const { data: page, error: pageError, reload } = useApi<PublicBookingPageDto>(`/api/public/book/${encodeURIComponent(booking.business.slug)}`, {
     auth: false,
@@ -383,7 +394,7 @@ function Reschedule({ base, booking, onDone }: { base: string; booking: PublicBo
   return (
     <div className="space-y-4 border-t border-line-soft pt-4">
       <DateSlotPicker
-        source={{ kind: "public", slug: booking.business.slug, serviceId: service.id, staffId: staff?.id ?? null }}
+        source={{ kind: "public", slug: booking.business.slug, serviceId: service.id, staffId: staff?.id ?? null, excludeToken: token }}
         timezone={tz}
         today={today}
         maxDate={addDays(today, page.maxDaysAhead)}

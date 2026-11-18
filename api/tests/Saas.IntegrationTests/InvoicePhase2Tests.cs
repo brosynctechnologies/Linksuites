@@ -72,7 +72,7 @@ public sealed class InvoicePhase2Tests(ApiFixture api)
 
         using var receipt = new MultipartFormDataContent { { new ByteArrayContent("%PDF-1.4 test"u8.ToArray()), "file", "receipt.pdf" } };
         var withReceipt = await Json(await owner.PostAsync($"/api/expenses/{usdExpense.GetProperty("id").GetGuid()}/receipt", receipt, Ct));
-        Assert.EndsWith(".pdf", withReceipt.GetProperty("receiptUrl").GetString());
+        Assert.True(withReceipt.GetProperty("receiptIsPdf").GetBoolean());
 
         var client = await CreateClientAsync(owner, "Payer");
         var invoice = await Json(await owner.PostAsJsonAsync("/api/invoices", Invoice(client, "NGN", 20_000_000), Ct));

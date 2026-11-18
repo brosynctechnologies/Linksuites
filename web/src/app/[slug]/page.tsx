@@ -7,6 +7,7 @@ import { formatMoney } from "@/lib/money";
 import { getProducts, getStore } from "@/lib/storefront";
 import type { PublicProductDto, PublicStoreDto } from "@/lib/types";
 import { CartButton } from "@/components/store/cart-button";
+import { UploadImage } from "@/components/upload-image";
 import { ClosedBanner, StoreShell, StoreSkeleton } from "@/components/store/store-shell";
 import { JsonLd } from "@/components/suite/sections";
 
@@ -55,11 +56,11 @@ function ProductCard({ p, slug, currency }: { p: PublicProductDto; slug: string;
       <Link href={`/${slug}/p/${p.slug}`} className="group block rounded-control">
         <div className="relative aspect-square overflow-hidden rounded-control bg-paper">
           {p.images[0] ? (
-            <img
+            <UploadImage
               src={p.images[0].url}
               alt={p.name}
-              loading="lazy"
-              className={`h-full w-full object-cover ${p.inStock ? "" : "opacity-60 grayscale"}`}
+              sizes="(min-width: 560px) 270px, 50vw"
+              className={`object-cover ${p.inStock ? "" : "opacity-60 grayscale"}`}
             />
           ) : (
             <div className="flex h-full items-center justify-center text-line-strong" aria-hidden="true">

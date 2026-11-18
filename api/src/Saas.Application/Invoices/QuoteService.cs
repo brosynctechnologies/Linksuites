@@ -224,6 +224,28 @@ public sealed class QuoteService(
             x.Currency, x.Template, items.Select(InvoiceWorkspace.ToDto).ToList(), x.SubtotalMinor, x.DiscountTotalMinor, x.TaxTotalMinor,
             InvoiceMath.Taxes(items), x.ShippingMinor, x.TotalMinor, x.Notes, x.Terms, url,
             InvoiceWorkspace.WhatsAppShare(x.Client, share, await ws.CountryAsync(ct)), x.SentAt, x.ViewedAt, x.ConvertedInvoiceId, x.CreatedAt,
-            business.Currency, x.ExchangeRate, ExchangeRateService.ToBase(x.TotalMinor, x.ExchangeRate));
+            business.Currency, x.ExchangeRate, ExchangeRateService.ToBase(x.TotalMinor, x.ExchangeRate),
+            await EventsAsync(x, ct), await ws.ShowBrandingAsync(ct));
+    }
+
+    /// <summary>Quotes keep no event rows; their activity is rebuilt from the dates they record.</summary>
+    private async Task<IReadOnlyList<QuoteEventDto>> EventsAsync(Quote x, CancellationToken ct)
+    {
+        var events = new List<QuoteEventDto> { new("Created", null, x.CreatedAt) };
+        if (x.SentAt is { } sent) events.Add(new("Sent", null, sent));
+        if (x.ViewedAt is { } viewed) events.Add(new("Viewed", null, viewed));
+        if (x.RespondedAt is { } responded)
+        {
+            // A converted quote was accepted first (or converted by the business without a reply, then RespondedAt is null).
+            var declined = x.Status == QuoteStatus.Declined;
+            events.Add(new(declined ? "Declined" : "Accepted", null, responded));
+        }
+        if (x.ConvertedInvoiceId is { } invoiceId)
+        {
+            var invoice = await db.Invoices.AsNoTracking().Where(i => i.Id == invoiceId)
+                .Select(i => new { i.Number, i.CreatedAt }).FirstOrDefaultAsync(ct);
+            events.Add(new("Converted", invoice?.Number, invoice?.CreatedAt ?? x.UpdatedAt ?? x.CreatedAt));
+        }
+        return events.OrderBy(e => e.CreatedAt).ToList();
     }
 }

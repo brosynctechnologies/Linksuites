@@ -93,11 +93,13 @@ If no rate can be found, creating a foreign-currency invoice returns `503` with 
 | DELETE | `/api/expenses/{id}` | | 204 |
 | POST | `/api/expenses/{id}/receipt` | multipart `file` (jpeg/png/webp/pdf ≤ 5 MB) | `ExpenseDto` |
 | DELETE | `/api/expenses/{id}/receipt` | | `ExpenseDto` |
+| GET | `/api/expenses/{id}/receipt` | | the receipt file (`application/pdf` or the image type), `Cache-Control: private, no-store`; Owner, Admin and Accountant only (403 for Staff), 404 for another business's expense or no receipt |
 | GET | `/api/expenses/export.csv?from=&to=` | | `text/csv` |
 
 `SaveExpenseRequest = { date, category, vendor, description, amountMinor, currency, taxMinor, paymentMethod, reference, clientId, notes, exchangeRate }`
 (`vendor`, `description`, `reference`, `clientId`, `notes`, `exchangeRate` optional; `taxMinor` is the VAT included in `amountMinor`, default 0; `paymentMethod` uses the invoice payment methods.)
-`ExpenseDto = SaveExpenseRequest & { id, baseAmountMinor, receiptUrl, clientName, createdAt }`
+`ExpenseDto = SaveExpenseRequest & { id, baseAmountMinor, receiptUrl, clientName, createdAt, receiptIsPdf }`
+Receipts are private files (bank and card details): they are stored under `private/invoices/{tenant}/expenses/…`, never under the public `/uploads`. `receiptUrl` is the API path `/api/expenses/{id}/receipt` (null without a receipt), to be fetched with the user's token. Receipts uploaded before this were under the public `{tenant}/expenses/…` key; the invoice job (every 15 minutes, under its lock) copies each one to a private key, points the expense and its file row at it and deletes the public copy. A file missing from storage is logged and left as it is.
 Default categories: Advertising, Bank charges, Equipment, Internet & phone, Rent, Salaries, Software, Supplies, Transport, Utilities, Other.
 
 ## Profit report (Business plan; Owner, Admin, Accountant)

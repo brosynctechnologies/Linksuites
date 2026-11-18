@@ -280,7 +280,8 @@ export interface PublicVariant {
   id: string;
   optionValues: string[];
   title: string;
-  priceMinor: number | null;
+  /** Always filled: falls back to the product price. */
+  priceMinor: number;
   inStock: boolean;
 }
 export interface PublicProductDto {
@@ -317,6 +318,8 @@ export interface QuoteLine {
   lineTotalMinor: number;
   /** Null when this product does not track stock. */
   stockQty: number | null;
+  /** The product's current slug, so cart links survive a rename. */
+  productSlug?: string | null;
 }
 export interface QuoteDto {
   lines: QuoteLine[];
@@ -359,4 +362,6 @@ export interface PublicOrderDto {
   whatsappUrl: string;
   /** False on plans that remove the "Powered by" line. */
   showBranding: boolean;
+  /** Delivery with no zone: the fee is agreed with the seller on WhatsApp. */
+  deliveryToBeAgreed?: boolean;
 }

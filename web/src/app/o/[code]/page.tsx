@@ -51,7 +51,7 @@ async function Order({ params }: Props) {
 
   const rows: TicketRow[] = [{ label: "Subtotal", value: formatMoney(order.subtotalMinor, c) }];
   if (order.fulfilment === "Delivery") {
-    rows.push({ label: "Delivery", value: order.deliveryFeeMinor === 0 ? "—" : formatMoney(order.deliveryFeeMinor, c) });
+    rows.push({ label: "Delivery", value: order.deliveryToBeAgreed ? "To be agreed" : order.deliveryFeeMinor === 0 ? "Free" : formatMoney(order.deliveryFeeMinor, c) });
   } else {
     rows.push({ label: "Fulfilment", value: "Pickup" });
   }

@@ -66,8 +66,9 @@ public static class InvoiceEndpoints
         });
 
         var invoices = api.MapGroup("/invoices").WithTags("Invoices").WritableBy(MemberRole.Owner, MemberRole.Admin, MemberRole.Staff);
-        invoices.MapGet("/", (InvoiceStatus? status, Guid? clientId, string? q, int? page, int? pageSize, InvoiceService s, CancellationToken ct) =>
-            s.ListAsync(status, clientId, q, page ?? 1, pageSize ?? 20, ct));
+        invoices.MapGet("/", (InvoiceStatus? status, Guid? clientId, string? q, int? page, int? pageSize, DateOnly? paidFrom, DateOnly? paidTo,
+            InvoiceService s, CancellationToken ct) =>
+            s.ListAsync(status, clientId, q, page ?? 1, pageSize ?? 20, ct, paidFrom, paidTo));
         invoices.MapGet("/export.csv", async (InvoiceStatus? status, DateOnly? from, DateOnly? to, InvoiceService s, CancellationToken ct) =>
             Results.File(await s.ExportCsvAsync(status, from, to, ct), "text/csv", $"invoices-{DateTime.UtcNow:yyyy-MM-dd}.csv"))
             .RequireAuthorization(Policies.Reports);
@@ -145,6 +146,13 @@ public static class InvoiceEndpoints
         expenses.MapPost("/{id:guid}/receipt", (Guid id, IFormFile file, ExpenseService s, CancellationToken ct) =>
             s.UploadReceiptAsync(id, file.ToUpload(), ct)).DisableAntiforgery();
         expenses.MapDelete("/{id:guid}/receipt", (Guid id, ExpenseService s, CancellationToken ct) => s.RemoveReceiptAsync(id, ct));
+        // Receipts are private files: only the business's owners, admins and accountants can read them, through the API.
+        expenses.MapGet("/{id:guid}/receipt", async (Guid id, ExpenseService s, HttpContext http, CancellationToken ct) =>
+        {
+            if (await s.ReceiptAsync(id, ct) is not { } file) return Results.NotFound();
+            http.Response.Headers.CacheControl = "private, no-store";
+            return Results.File(file.Content, file.ContentType, file.FileName, enableRangeProcessing: false);
+        }).RequireAuthorization(Policies.Reports);
 
         var reports = api.MapGroup("/reports").WithTags("Reports").RequireAuthorization(Policies.Reports);
         reports.MapGet("/profit", (DateOnly? from, DateOnly? to, ReportService s, CancellationToken ct) => s.ProfitAsync(from, to, ct));

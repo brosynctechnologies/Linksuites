@@ -56,8 +56,16 @@ public static class WhatsAppMessage
         }
         if (order.Fulfilment == Fulfilment.Delivery)
         {
-            var zone = order.DeliveryZoneName is { Length: > 0 } z ? $" ({z})" : "";
-            sb.AppendLine($"Delivery{zone} - {Money.Format(order.DeliveryFeeMinor, c)}");
+            if (order.DeliveryZoneId is null && order.DeliveryFeeMinor == 0)
+            {
+                // No delivery zones: the fee is agreed with the seller on WhatsApp, not ₦0.
+                sb.AppendLine("Delivery - to be agreed");
+            }
+            else
+            {
+                var zone = order.DeliveryZoneName is { Length: > 0 } z ? $" ({z})" : "";
+                sb.AppendLine($"Delivery{zone} - {Money.Format(order.DeliveryFeeMinor, c)}");
+            }
         }
         else
         {

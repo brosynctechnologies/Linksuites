@@ -45,6 +45,14 @@ public static partial class CourseRules
     /// A coupon's end date is a calendar day in Africa/Lagos (where every studio date is shown): it works until the
     /// last moment of that day. Stored as the last microsecond (PostgreSQL's precision) before the next Lagos midnight.
     /// </summary>
+    /// <summary>Midnight on the 1st of the current month in Africa/Lagos, as a UTC instant (studio "this month" figures).</summary>
+    public static DateTimeOffset MonthStartInLagos(DateTimeOffset now)
+    {
+        var local = TimeZoneInfo.ConvertTime(now, Lagos);
+        var first = new DateTime(local.Year, local.Month, 1, 0, 0, 0, DateTimeKind.Unspecified);
+        return new DateTimeOffset(first, Lagos.GetUtcOffset(first)).ToUniversalTime();
+    }
+
     public static DateTimeOffset EndOfDayInLagos(DateOnly day)
     {
         var nextMidnight = day.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);

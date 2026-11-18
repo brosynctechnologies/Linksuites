@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useId, useRef, useState, type FormEvent } from "react";
-import { api, asList, toApiError, upload, type ApiError } from "@/lib/api";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { api, apiBlob, asList, toApiError, upload, type ApiError } from "@/lib/api";
 import { CURRENCIES } from "@/lib/config";
 import { todayISO } from "@/lib/dates";
 import { parseRate, rateFor, rateInput, useExchangeRates } from "@/lib/fx";
@@ -13,6 +13,56 @@ import type { BusinessDto, ClientDto, ExpenseDto, PaymentMethod, SaveExpenseRequ
 import { ExchangeRateField } from "./fx";
 import { ImageIcon, TrashIcon } from "./icons";
 import { ApiErrorView, Button, Card, ErrorBox, Input, Notice, PageLoader, SectionTitle, Select, Textarea, UpgradePrompt } from "./ui";
+
+/**
+ * A receipt is a private file: it is fetched through the API with the signed-in user's token and shown from a blob URL.
+ * Staff can attach receipts but only owners, admins and accountants can open them, so a 403 shows a plain note.
+ */
+function PrivateReceipt({ path, isPdf }: { path: string; isPdf: boolean }) {
+  const [state, setState] = useState<{ path: string; url: string | null; error: ApiError | null } | null>(null);
+  useEffect(() => {
+    let live = true;
+    let url: string | null = null;
+    apiBlob(path).then(
+      (blob) => {
+        url = URL.createObjectURL(blob);
+        if (live) setState({ path, url, error: null });
+        else URL.revokeObjectURL(url);
+      },
+      (e) => live && setState({ path, url: null, error: toApiError(e) }),
+    );
+    return () => {
+      live = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [path]);
+
+  const current = state?.path === path ? state : null;
+  if (current?.error) {
+    return (
+      <span className="text-sm text-slate-600">
+        {current.error.status === 403 ? "Receipt attached. Only owners, admins and accountants can open it." : "Couldn't load the receipt."}
+      </span>
+    );
+  }
+  return (
+    <>
+      {isPdf || !current?.url ? (
+        <span className="flex h-16 w-16 items-center justify-center rounded-control border border-rule bg-slate-50 text-xs font-semibold text-slate-600">
+          {isPdf ? "PDF" : "…"}
+        </span>
+      ) : (
+        // A blob URL from the private API route: next/image can't optimise it.
+        <img src={current.url} alt="Receipt" className="h-16 w-16 rounded-control border border-rule object-cover" />
+      )}
+      {current?.url && (
+        <a href={current.url} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-ink underline-offset-2 hover:underline">
+          View receipt
+        </a>
+      )}
+    </>
+  );
+}
 
 export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "BankTransfer", label: "Bank transfer" },
@@ -235,7 +285,7 @@ function ExpenseForm({
   }
 
   const receiptUrl = existing?.receiptUrl ?? null;
-  const isPdf = !!receiptUrl && /\.pdf($|\?)/i.test(receiptUrl);
+  const isPdf = !!existing?.receiptIsPdf;
 
   return (
     <form onSubmit={save} className="space-y-4">
@@ -344,16 +394,7 @@ function ExpenseForm({
           />
           {receiptUrl ? (
             <div className="flex flex-wrap items-center gap-3">
-              {isPdf ? (
-                <span className="flex h-16 w-16 items-center justify-center rounded-control border border-rule bg-slate-50 text-xs font-semibold text-slate-600">
-                  PDF
-                </span>
-              ) : (
-                <img src={receiptUrl} alt="Receipt" className="h-16 w-16 rounded-control border border-rule object-cover" />
-              )}
-              <a href={receiptUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-ink underline-offset-2 hover:underline">
-                View receipt
-              </a>
+              <PrivateReceipt path={receiptUrl} isPdf={isPdf} />
               {canEdit && (
                 <>
                   <Button variant="secondary" className="min-h-8 px-3 py-1" loading={receiptBusy} onClick={() => fileInput.current?.click()}>

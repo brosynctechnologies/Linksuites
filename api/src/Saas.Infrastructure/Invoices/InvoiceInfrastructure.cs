@@ -56,6 +56,16 @@ public sealed class InvoiceJobsHostedService(IServiceScopeFactory scopes, ILogge
             if (!locked) return;
             try
             {
+                // One-off: receipts uploaded before they were private move to private storage (a no-op once done).
+                try
+                {
+                    using var moveScope = scopes.CreateScope();
+                    await moveScope.ServiceProvider.GetRequiredService<ExpenseReceiptMigration>().RunAsync(ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogError(ex, "Moving expense receipts to private storage failed");
+                }
                 tenantIds = await db.Tenants.Where(t => t.Product == Products.Invoices && t.Status == Domain.Core.TenantStatus.Active)
                     .Select(t => t.Id).ToListAsync(ct);
                 foreach (var tenantId in tenantIds)

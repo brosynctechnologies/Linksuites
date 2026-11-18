@@ -172,7 +172,8 @@ public sealed class PublicDocumentsService(
         quote.Status = accept ? QuoteStatus.Accepted : QuoteStatus.Declined;
         quote.RespondedAt = clock.GetUtcNow();
         var business = await ws.BusinessAsync(ct);
-        if (!string.IsNullOrWhiteSpace(business.Email))
+        var notified = !string.IsNullOrWhiteSpace(business.Email);
+        if (notified)
             notifications.Email(business.Email, "quote.response", new()
             {
                 ["number"] = quote.Number,
@@ -181,7 +182,7 @@ public sealed class PublicDocumentsService(
                 ["total"] = Money.Format(quote.TotalMinor, quote.Currency),
             }, quote.TenantId);
         await db.SaveChangesAsync(ct);
-        return await ToPublicAsync(quote, ct);
+        return await ToPublicAsync(quote, ct) with { SenderNotified = notified };
     }
 
     public async Task<(byte[] Pdf, string FileName)> QuotePdfAsync(string token, CancellationToken ct)

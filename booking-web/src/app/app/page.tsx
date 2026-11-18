@@ -37,6 +37,8 @@ export default function TodayPage() {
 
   function replace(b: BookingDto) {
     setData((d) => (d ? { ...d, today: d.today.map((x) => (x.id === b.id ? { ...x, ...b } : x)) } : d!));
+    // The counts (waiting for deposit, upcoming, no-show rate) changed too: fetch them again.
+    reload();
   }
 
   return (
@@ -46,7 +48,7 @@ export default function TodayPage() {
         subtitle={
           list.length === 0
             ? "Nothing booked yet today."
-            : `${list.filter((b) => isLive(b.status)).length} of ${list.length} appointment${list.length === 1 ? "" : "s"} still to come or in the chair.`
+            : `${list.filter((b) => isLive(b.status) && (!now || new Date(b.endsAt).getTime() > now)).length} of ${list.length} appointment${list.length === 1 ? "" : "s"} still to come or in the chair.`
         }
         action={
           canCreate && (
@@ -61,7 +63,8 @@ export default function TodayPage() {
         label="This month"
         cols={5}
         items={[
-          { label: "Upcoming", value: String(data.upcomingCount), href: "/app/bookings" },
+          // The count is confirmed bookings from now on, so the link opens the confirmed ones.
+          { label: "Upcoming", value: String(data.upcomingCount), href: "/app/bookings?status=Confirmed" },
           {
             label: "Waiting for deposit",
             value: String(data.pendingCount),

@@ -1,13 +1,49 @@
 import type { MetadataRoute } from "next";
+import { API_URL } from "@/lib/config";
 import { SITE_URL } from "@/lib/site";
 
-/**
- * BookLink's own pages. Businesses' booking pages (/{slug}) are not listed: the API has no public list of them yet
- * (docs/BOOKINGS_API.md), so they are found through the links businesses share.
- */
-export default function sitemap(): MetadataRoute.Sitemap {
+/** Rebuilt at most hourly; the list of booking pages changes slowly. */
+export const revalidate = 3600;
+
+interface SlugPage {
+  items: { slug: string; updatedAt: string }[];
+  total: number;
+}
+
+const PAGE_SIZE = 1000;
+/** A single sitemap holds up to 50,000 URLs; past that, split with generateSitemaps. */
+const MAX_PAGES = 45_000;
+
+/** Every public booking page (active business taking bookings online), from GET /api/public/book. */
+async function bookingSlugs(): Promise<SlugPage["items"]> {
+  const all: SlugPage["items"] = [];
+  try {
+    for (let page = 1; all.length < MAX_PAGES; page++) {
+      const res = await fetch(`${API_URL}/api/public/book?page=${page}&pageSize=${PAGE_SIZE}`, {
+        headers: { Accept: "application/json" },
+        next: { revalidate },
+      });
+      if (!res.ok) break;
+      const body = (await res.json()) as SlugPage;
+      all.push(...body.items);
+      if (body.items.length < PAGE_SIZE || page * PAGE_SIZE >= body.total) break;
+    }
+  } catch {
+    // The API is down: still serve BookLink's own pages.
+  }
+  return all;
+}
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const pages = await bookingSlugs();
   return [
     { url: `${SITE_URL}/`, changeFrequency: "monthly", priority: 1 },
     { url: `${SITE_URL}/signup`, changeFrequency: "yearly", priority: 0.6 },
+    ...pages.map((p) => ({
+      url: `${SITE_URL}/${encodeURIComponent(p.slug)}`,
+      lastModified: p.updatedAt,
+      changeFrequency: "weekly" as const,
+      priority: 0.8,
+    })),
   ];
 }

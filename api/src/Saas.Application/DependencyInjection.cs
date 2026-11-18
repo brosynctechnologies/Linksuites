@@ -50,6 +50,7 @@ public static class DependencyInjection
         services.AddScoped<PublicDocumentsService>();
         services.AddScoped<ExchangeRateService>();
         services.AddScoped<ExpenseService>();
+        services.AddScoped<ExpenseReceiptMigration>();
         services.AddScoped<ReportService>();
 
         // Teams (any product)

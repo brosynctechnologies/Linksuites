@@ -6,17 +6,19 @@ import { useCan } from "@/lib/permissions";
 import { formatPlainDate, todayIn } from "@/lib/time";
 import type { BookingReportDto } from "@/lib/types";
 import { qs, useApi } from "@/lib/use-api";
-import { FALLBACK_TZ, useBusiness } from "@/lib/use-business";
+import { useBusiness } from "@/lib/use-business";
 import { PeriodPicker, periodFrom, type Period } from "@/components/period-picker";
 import { ApiErrorView, Card, EmptyState, NoAccess, PageHeader, PageLoader, SectionTitle, SummaryStrip, cx } from "@/components/ui";
 import { ChartIcon } from "@/components/icons";
 
 export default function ReportsPage() {
   const allowed = useCan("reports.view");
-  const { tz } = useBusiness();
-  const [period, setPeriod] = useState<Period>(() => periodFrom("this-month", todayIn(FALLBACK_TZ)));
+  const { tz, business } = useBusiness();
+  // Until the person picks a period, "this month" is the business's month in its own zone (known once the business loads).
+  const [chosen, setPeriod] = useState<Period | null>(null);
+  const period = chosen ?? periodFrom("this-month", todayIn(tz));
   const { data, error, loading, reload } = useApi<BookingReportDto>(
-    allowed && period.from && period.to ? `/api/booking-reports${qs({ from: period.from, to: period.to })}` : null,
+    allowed && business && period.from && period.to ? `/api/booking-reports${qs({ from: period.from, to: period.to })}` : null,
   );
 
   if (!allowed) {

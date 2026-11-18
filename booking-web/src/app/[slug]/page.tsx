@@ -79,15 +79,15 @@ export async function generateMetadata({ params, searchParams }: PageProps<"/[sl
   const title = `${p.name}: book online`;
   const description = summary(p);
   const url = `/${p.slug}`;
-  const image = p.coverUrl ?? p.logoUrl;
   return {
     title: { absolute: title },
     description,
     alternates: { canonical: url },
     // The embedded widget is the same page inside another site: keep only the full page in search.
     robots: embed ? { index: false, follow: true } : { index: true, follow: true },
-    openGraph: { ...baseOpenGraph, url, title, description, ...(image ? { images: [{ url: image, alt: p.name }] } : {}) },
-    twitter: { ...baseTwitter, title, description, ...(image ? { images: [image] } : {}) },
+    // The share image is this business's generated opengraph-image (same folder).
+    openGraph: { ...baseOpenGraph, url, title, description },
+    twitter: { ...baseTwitter, title, description },
   };
 }
 

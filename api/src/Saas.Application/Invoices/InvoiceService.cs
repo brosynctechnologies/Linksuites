@@ -19,13 +19,18 @@ public sealed class InvoiceService(
     private static readonly InvoiceStatus[] Open = [InvoiceStatus.Sent, InvoiceStatus.Viewed, InvoiceStatus.PartiallyPaid];
 
     public async Task<Paged<InvoiceSummaryDto>> ListAsync(
-        InvoiceStatus? status, Guid? clientId, string? q, int page, int pageSize, CancellationToken ct)
+        InvoiceStatus? status, Guid? clientId, string? q, int page, int pageSize, CancellationToken ct,
+        DateOnly? paidFrom = null, DateOnly? paidTo = null)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
         var today = await ws.TodayAsync(ct);
         var query = Filter(db.Invoices.AsNoTracking(), status, today);
         if (clientId is { } cid) query = query.Where(i => i.ClientId == cid);
+        // Invoices with a payment dated in the period, part payments included (the dashboard's "Paid this month").
+        if (paidFrom is not null || paidTo is not null)
+            query = query.Where(i => db.InvoicePayments.Any(p => p.InvoiceId == i.Id
+                && (paidFrom == null || p.PaidAt >= paidFrom) && (paidTo == null || p.PaidAt <= paidTo)));
         if (!string.IsNullOrWhiteSpace(q))
         {
             var term = q.Trim().ToLower();
@@ -374,7 +379,7 @@ public sealed class InvoiceService(
                 p.Reference, p.PaidAt, p.ReceiptNumber, p.Note, p.ProviderRef is not null, p.ExchangeRate, p.BaseAmountMinor)).ToList(),
             i.Events.OrderBy(e => e.CreatedAt).Select(e => new EventDto(e.Type, e.Note, e.CreatedAt)).ToList(), i.CreatedAt,
             business.Currency, i.ExchangeRate, ExchangeRateService.ToBase(i.TotalMinor, i.ExchangeRate),
-            ExchangeRateService.ToBase(i.BalanceMinor, i.ExchangeRate));
+            ExchangeRateService.ToBase(i.BalanceMinor, i.ExchangeRate), await ws.ShowBrandingAsync(ct));
     }
 
     private static string Csv(string value) =>

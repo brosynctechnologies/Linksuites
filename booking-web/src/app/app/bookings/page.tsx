@@ -11,7 +11,7 @@ import { ALL_STATUSES, SOURCE_LABEL, STATUS_LABEL, isLive } from "@/lib/status";
 import { dateKey, formatPlainDate, formatTime, todayIn } from "@/lib/time";
 import type { BookingStatus, BookingSummaryDto, Paged } from "@/lib/types";
 import { qs, useApi } from "@/lib/use-api";
-import { FALLBACK_TZ, useBusiness, useStaff } from "@/lib/use-business";
+import { useBusiness, useStaff } from "@/lib/use-business";
 import { useDebounced } from "@/lib/use-debounced";
 import { useNewBooking } from "@/components/new-booking";
 import { PeriodPicker, periodFrom, type Period } from "@/components/period-picker";
@@ -23,12 +23,14 @@ const PAGE_SIZE = 50;
 export default function BookingsPage() {
   const sp = useSearchParams();
   const initialStatus = sp.get("status");
-  const { tz, currency } = useBusiness();
+  const { tz, currency, business } = useBusiness();
   const { staff } = useStaff();
   const { open, version } = useNewBooking();
   const canCreate = useCan("bookings.edit");
 
-  const [period, setPeriod] = useState<Period>(() => periodFrom("upcoming", todayIn(FALLBACK_TZ)));
+  // Until the person picks a period, "Upcoming" starts today in the business's own zone (known once the business loads).
+  const [chosen, setPeriod] = useState<Period | null>(null);
+  const period = chosen ?? periodFrom("upcoming", todayIn(tz));
   const [status, setStatus] = useState<string>(initialStatus && (ALL_STATUSES as string[]).includes(initialStatus) ? initialStatus : "");
   const [staffId, setStaffId] = useState("");
   const [q, setQ] = useState("");
@@ -36,7 +38,7 @@ export default function BookingsPage() {
   const dq = useDebounced(q.trim());
 
   const path = `/api/bookings${qs({ from: period.from, to: period.to, staffId, status, q: dq, page, pageSize: PAGE_SIZE })}`;
-  const { data, error, loading, reload } = useApi<Paged<BookingSummaryDto>>(period.from && period.to ? path : null, { nonce: version });
+  const { data, error, loading, reload } = useApi<Paged<BookingSummaryDto>>(business && period.from && period.to ? path : null, { nonce: version });
   const list = asList(data);
   const filtered = !!(status || staffId || dq);
 

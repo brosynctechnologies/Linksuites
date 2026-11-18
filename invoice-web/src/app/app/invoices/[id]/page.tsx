@@ -209,7 +209,7 @@ export default function InvoicePage() {
         </div>
 
         <div className="min-w-0 lg:col-start-1 lg:row-span-2 lg:row-start-1">
-          {business ? <InvoicePreview doc={previewFromDoc(inv, business)} animateStamp={stampAnim} /> : <DocumentSkeleton />}
+          {business ? <InvoicePreview doc={previewFromDoc(inv, business, inv.showBranding ?? false)} animateStamp={stampAnim} /> : <DocumentSkeleton />}
         </div>
 
         <aside className={cx(panelClass, "divide-y divide-rule-soft lg:col-start-2 lg:row-start-2")} aria-label="Balance, payments and activity">

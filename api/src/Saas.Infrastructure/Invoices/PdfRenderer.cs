@@ -72,7 +72,8 @@ public sealed class QuestPdfRenderer(
     public async Task<byte[]> RenderAsync(DocumentPdfModel m, CancellationToken ct)
     {
         var images = new PdfImages(
-            await LoadImageAsync(m.LogoUrl, ct), await LoadImageAsync(m.Signature?.ImageUrl, ct), await LoadImageAsync(m.Signature?.StampImageUrl, ct));
+            await LoadImageAsync(m.LogoUrl, ct), await LoadImageAsync(m.Signature?.ImageUrl, ct),
+            await LoadImageAsync(m.Signature?.StampImageUrl, ct, stamp: true));
         return Build(m, images).GeneratePdf();
     }
 
@@ -911,7 +912,7 @@ public sealed class QuestPdfRenderer(
     /// Only loads images from our own storage, so a stored URL can't make the server fetch arbitrary addresses. Each image is
     /// decoded once, here; one whose header declares more than 4000 pixels a side (an upload from before that limit) is left out.
     /// </summary>
-    private async Task<Image?> LoadImageAsync(string? url, CancellationToken ct)
+    private async Task<Image?> LoadImageAsync(string? url, CancellationToken ct, bool stamp = false)
     {
         if (string.IsNullOrWhiteSpace(url)) return null;
         var allowed = new[] { $"{urls.ApiBaseUrl.TrimEnd('/')}/uploads/", storage.Value.R2PublicBaseUrl is { Length: > 0 } r2 ? $"{r2.TrimEnd('/')}/" : null }
@@ -929,7 +930,8 @@ public sealed class QuestPdfRenderer(
                 logger.LogWarning("Image {Url} is too large or unreadable for a PDF", url);
                 return null;
             }
-            return Image.FromBinaryData(bytes); // a file that can't be decoded would fail the whole PDF; leave it out instead
+            // The stamp prints like ink, as in the preview (opacity 90%, multiply): see StampInk.
+            return Image.FromBinaryData(stamp ? StampInk.Apply(bytes) : bytes); // a file that can't be decoded would fail the whole PDF; leave it out instead
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {

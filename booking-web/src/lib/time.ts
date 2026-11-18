@@ -136,6 +136,12 @@ export function zonedInstant(date: string, time: string, tz: string): string {
   let off = offsetMinutes(new Date(wall), tz);
   // Second pass settles DST edges where the first guess crosses a transition.
   off = offsetMinutes(new Date(wall - off * 60000), tz);
+  // A wall time that happens twice (the hour repeated when clocks go back) has two valid offsets. Pick the larger one,
+  // the earlier instant, as the server does (Availability.cs), so a custom time matches the server's slot.
+  const day = 24 * 60 * 60000;
+  for (const c of [offsetMinutes(new Date(wall - day), tz), offsetMinutes(new Date(wall + day), tz)]) {
+    if (c > off && offsetMinutes(new Date(wall - c * 60000), tz) === c) off = c;
+  }
   return `${date}T${pad(hh)}:${pad(mm)}:00${offsetString(off)}`;
 }
 

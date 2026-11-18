@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using Saas.Application.Auth;
 using Saas.Application.Billing;
@@ -39,7 +40,8 @@ public sealed class InvoicesUsage(IAppDbContext db, InvoiceWorkspace workspace) 
 
 /// <summary>Business profile, tax rates, clients and saved items.</summary>
 public sealed class InvoiceSetupService(
-    IAppDbContext db, InvoiceWorkspace workspace, IFileStorage storage, ISecretProtector secrets, PlanService plans, MerchantKeyRules keyRules)
+    IAppDbContext db, InvoiceWorkspace workspace, IFileStorage storage, ISecretProtector secrets, PlanService plans, MerchantKeyRules keyRules,
+    ILogger<InvoiceSetupService> logger)
 {
     public const string BrandImagesMessage = "Your logo, signature and stamp are part of the Pro plan. Upgrade to add them.";
 
@@ -122,7 +124,7 @@ public sealed class InvoiceSetupService(
         db.Files.Add(new StoredFile { Key = key, Url = url, MimeType = mime, SizeBytes = buffer.Length, Purpose = $"business-{name}" });
         if (previous is not null) db.Files.Remove(previous);
         await db.SaveChangesAsync(ct);
-        if (previous is not null) await storage.DeleteAsync(previous.Key, ct);
+        if (previous is not null) await storage.DeleteQuietlyAsync(previous.Key, logger, ct);
         return await DtoAsync(b, ct);
     }
 
@@ -133,7 +135,7 @@ public sealed class InvoiceSetupService(
         SetUrl(b, kind, null);
         if (previous is not null) db.Files.Remove(previous);
         await db.SaveChangesAsync(ct);
-        if (previous is not null) await storage.DeleteAsync(previous.Key, ct);
+        if (previous is not null) await storage.DeleteQuietlyAsync(previous.Key, logger, ct);
     }
 
     public async Task<BusinessDto> SetPaystackKeyAsync(PaystackKeyRequest r, CancellationToken ct)

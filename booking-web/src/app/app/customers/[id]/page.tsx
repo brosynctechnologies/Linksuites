@@ -33,7 +33,8 @@ export default function CustomerPage() {
     );
   }
 
-  const bookings = [...c.bookings].sort((a, b) => b.startsAt.localeCompare(a.startsAt));
+  // Expired holds are left out, as they are from the booking count.
+  const bookings = c.bookings.filter((b) => b.status !== "Expired").sort((a, b) => b.startsAt.localeCompare(a.startsAt));
 
   return (
     <div className="space-y-5">
@@ -64,7 +65,8 @@ export default function CustomerPage() {
         label="Customer figures"
         cols={4}
         items={[
-          { label: "Visits", value: String(c.bookingsCount), sub: `${c.completedCount} completed` },
+          // A visit is a completed booking; bookingsCount also counts cancelled, no-show and future ones.
+          { label: "Visits", value: String(c.completedCount), sub: `${c.bookingsCount} booking${c.bookingsCount === 1 ? "" : "s"} in all` },
           { label: "No-shows", value: String(c.noShowCount), tone: c.noShowCount > 0 ? "red" : undefined, sub: c.noShowCount > 0 ? "Ask for a deposit next time" : "None" },
           { label: "Total spent", value: formatMoney(c.totalSpentMinor, currency) },
           { label: "Last visit", value: c.lastVisitAt ? formatPlainDate(dateKey(c.lastVisitAt, tz)) : "None yet" },

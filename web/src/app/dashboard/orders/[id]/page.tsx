@@ -76,7 +76,8 @@ export default function OrderDetailPage() {
   if (order.fulfilment === "Delivery") {
     rows.push({
       label: `Delivery${order.deliveryZoneName ? ` (${order.deliveryZoneName})` : ""}`,
-      value: formatMoney(order.deliveryFeeMinor, c),
+      // No zone and no fee: delivery was agreed on WhatsApp, not free.
+      value: !order.deliveryZoneName && order.deliveryFeeMinor === 0 ? "To be agreed" : formatMoney(order.deliveryFeeMinor, c),
     });
   }
   if (order.discountMinor > 0) {

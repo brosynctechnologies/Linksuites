@@ -18,6 +18,8 @@ export interface EditorLine {
   discountPercent: string;
   /** Used in "rates" mode (signed-in editor). */
   taxRateId: string | null;
+  /** The tax saved on the line (invoice/quote lines), shown when its rate has since been deleted. */
+  savedTax?: { name: string | null; percent: number } | null;
   /** Used in "percent" mode (free generator). */
   taxPercent: string;
 }
@@ -53,8 +55,17 @@ export function editorLinesFrom(items: (LineRequest | LineDto)[]): EditorLine[] 
       discountPercent: l.discountPercent ? String(l.discountPercent) : "",
       taxRateId: l.taxRateId ?? null,
       taxPercent: "taxRatePercent" in l && l.taxRatePercent ? String(l.taxRatePercent) : "",
+      savedTax: "taxRatePercent" in l && l.taxRateId && l.taxRatePercent ? { name: l.taxName, percent: l.taxRatePercent } : null,
     }),
   );
+}
+
+/**
+ * A line whose tax rate was deleted (before deleting rates in use was refused). The editor shows its saved tax, the
+ * preview keeps it, and saving asks for a current rate instead of failing on the server.
+ */
+export function hasDeletedRate(l: EditorLine, taxRates?: TaxRateDto[]): boolean {
+  return !!taxRates && !!l.taxRateId && !taxRates.some((r) => r.id === l.taxRateId);
 }
 
 export function isBlankLine(l: EditorLine) {
@@ -63,12 +74,14 @@ export function isBlankLine(l: EditorLine) {
 
 export function mathInput(l: EditorLine, taxRates?: TaxRateDto[]): MathLineInput {
   const rate = taxRates ? taxRates.find((r) => r.id === l.taxRateId) : undefined;
+  // A deleted rate keeps the tax saved on the line, so the preview total doesn't silently drop it.
+  const saved = !rate && hasDeletedRate(l, taxRates) ? l.savedTax : null;
   return {
     quantity: parseNumber(l.quantity),
     unitPriceMinor: toMinor(l.unitPrice) ?? 0,
     discountPercent: parseNumber(l.discountPercent),
-    ratePercent: taxRates ? (rate?.ratePercent ?? 0) : parseNumber(l.taxPercent),
-    taxName: taxRates ? (rate?.name ?? null) : "Tax",
+    ratePercent: taxRates ? (rate?.ratePercent ?? saved?.percent ?? 0) : parseNumber(l.taxPercent),
+    taxName: taxRates ? (rate?.name ?? saved?.name ?? null) : "Tax",
   };
 }
 
@@ -258,6 +271,11 @@ export function LineItemsEditor({
                     onChange={(e) => update(l.key, { taxRateId: e.target.value || null })}
                   >
                     <option value="">No tax</option>
+                    {hasDeletedRate(l, taxRates) && (
+                      <option value={l.taxRateId ?? ""} disabled>
+                        {l.savedTax ? `${l.savedTax.name ?? "Tax"} (${l.savedTax.percent}%)` : "Tax"}, deleted: choose a rate
+                      </option>
+                    )}
                     {taxRates.map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.name} ({r.ratePercent}%)

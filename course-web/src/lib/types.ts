@@ -63,7 +63,7 @@ export type Channel = "Marketplace" | "Academy";
 /** How a learner got into a course (server EnrollmentSource). */
 export type EnrollmentSource = "Purchase" | "Free" | "Coupon";
 export type PayoutStatus = "Requested" | "Paid" | "Rejected";
-export type EarningStatus = "Pending" | "Available" | "PaidOut" | "Reversed";
+export type EarningStatus = "Pending" | "Available" | "PartlyAvailable" | "Requested" | "PaidOut" | "Reversed";
 export type DiscountType = "Percent" | "Fixed";
 
 // ---- Academy ----

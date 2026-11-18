@@ -65,8 +65,8 @@ public static class BookingEndpoints
             return Results.NoContent();
         });
 
-        api.MapGet("/availability", (Guid serviceId, Guid? staffId, DateOnly date, BookingService s, CancellationToken ct) =>
-            s.AvailabilityAsync(serviceId, staffId, date, ct)).WithTags("Bookings");
+        api.MapGet("/availability", (Guid serviceId, Guid? staffId, DateOnly date, Guid? excludeBookingId, BookingService s, CancellationToken ct) =>
+            s.AvailabilityAsync(serviceId, staffId, date, ct, excludeBookingId)).WithTags("Bookings");
         api.MapGet("/calendar", (DateOnly from, DateOnly to, Guid? staffId, BookingService s, CancellationToken ct) =>
             s.CalendarAsync(from, to, staffId, ct)).WithTags("Bookings");
         api.MapGet("/booking-dashboard", (BookingService s, CancellationToken ct) => s.DashboardAsync(ct)).WithTags("Bookings");
@@ -92,13 +92,15 @@ public static class BookingEndpoints
         customers.MapPut("/{id:guid}", (Guid id, UpdateCustomerRequest r, BookingService s, CancellationToken ct) => s.UpdateCustomerAsync(id, r, ct))
             .Validate<UpdateCustomerRequest>();
 
-        // Public: booking page and the customer's manage link.
+        // Public: booking page slugs for the sitemap, the booking page and the customer's manage link.
+        app.MapGet("/api/public/book", (int? page, int? pageSize, PublicBookingService s, CancellationToken ct) =>
+            s.ListPagesAsync(page ?? 1, pageSize ?? 500, ct)).WithTags("Bookings: public");
         var book = app.MapGroup("/api/public/book/{slug}").WithTags("Bookings: public");
         book.MapGet("/", (string slug, PublicBookingService s, CancellationToken ct) => s.PageAsync(slug, ct));
-        book.MapGet("/days", (string slug, Guid serviceId, Guid? staffId, string month, PublicBookingService s, CancellationToken ct) =>
-            s.DaysAsync(slug, serviceId, staffId, month, ct));
-        book.MapGet("/availability", (string slug, Guid serviceId, Guid? staffId, DateOnly date, PublicBookingService s, CancellationToken ct) =>
-            s.AvailabilityAsync(slug, serviceId, staffId, date, ct));
+        book.MapGet("/days", (string slug, Guid serviceId, Guid? staffId, string month, string? excludeToken, PublicBookingService s, CancellationToken ct) =>
+            s.DaysAsync(slug, serviceId, staffId, month, ct, excludeToken));
+        book.MapGet("/availability", (string slug, Guid serviceId, Guid? staffId, DateOnly date, string? excludeToken, PublicBookingService s, CancellationToken ct) =>
+            s.AvailabilityAsync(slug, serviceId, staffId, date, ct, excludeToken));
         book.MapPost("/bookings", (string slug, PublicBookRequest r, PublicBookingService s, CancellationToken ct) => s.BookAsync(slug, r, ct))
             .Validate<PublicBookRequest>().RequireRateLimiting(RateLimits.PublicWrite);
 

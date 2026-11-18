@@ -278,6 +278,8 @@ export interface InvoiceDto {
   exchangeRate: number;
   totalBaseMinor: number;
   balanceBaseMinor: number;
+  /** True when the PDF prints "Made with InvoiceLink" (plans without branding removal). */
+  showBranding?: boolean;
 }
 export interface RecordPaymentRequest {
   amountMinor: number;
@@ -358,6 +360,8 @@ export interface QuoteDto {
   baseCurrency: string;
   exchangeRate: number;
   totalBaseMinor: number;
+  /** True when the PDF prints "Made with InvoiceLink" (plans without branding removal). */
+  showBranding?: boolean;
 }
 
 // ---- Recurring ----
@@ -468,6 +472,8 @@ export interface PublicQuoteDto {
   terms: string | null;
   canRespond: boolean;
   showBranding: boolean;
+  /** Set on the accept/decline response: true when the sender was emailed about it. */
+  senderNotified?: boolean;
 }
 export interface PreviewRequest {
   business: {
@@ -613,7 +619,9 @@ export interface SaveExpenseRequest {
 export interface ExpenseDto extends SaveExpenseRequest {
   id: string;
   baseAmountMinor: number;
+  /** API path that streams the private receipt (owners, admins and accountants; fetch it with auth). */
   receiptUrl: string | null;
+  receiptIsPdf?: boolean;
   clientName: string | null;
   createdAt: string;
 }

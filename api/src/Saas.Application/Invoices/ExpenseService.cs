@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Text;
 using FluentValidation;
@@ -16,7 +17,7 @@ public sealed record SaveExpenseRequest(
 public sealed record ExpenseDto(
     Guid Id, DateOnly Date, string Category, string? Vendor, string? Description, long AmountMinor, string Currency, long TaxMinor,
     PaymentMethod PaymentMethod, string? Reference, Guid? ClientId, string? Notes, decimal ExchangeRate, long BaseAmountMinor,
-    string? ReceiptUrl, string? ClientName, DateTimeOffset CreatedAt);
+    string? ReceiptUrl, string? ClientName, DateTimeOffset CreatedAt, bool ReceiptIsPdf = false);
 
 public sealed class SaveExpenseRequestValidator : AbstractValidator<SaveExpenseRequest>
 {
@@ -36,7 +37,7 @@ public sealed class SaveExpenseRequestValidator : AbstractValidator<SaveExpenseR
     }
 }
 
-public sealed class ExpenseService(IAppDbContext db, InvoiceWorkspace ws, PlanService plans, IFileStorage storage)
+public sealed class ExpenseService(IAppDbContext db, InvoiceWorkspace ws, PlanService plans, IFileStorage storage, ILogger<ExpenseService> logger)
 {
     public static readonly string[] DefaultCategories =
     [
@@ -106,9 +107,14 @@ public sealed class ExpenseService(IAppDbContext db, InvoiceWorkspace ws, PlanSe
     {
         var expense = await LoadAsync(id, ct);
         db.Expenses.Remove(expense);
+        await RemoveFileRowAsync(expense.ReceiptKey, ct);
         await db.SaveChangesAsync(ct);
-        if (expense.ReceiptKey is not null) await storage.DeleteAsync(expense.ReceiptKey, ct);
+        await storage.DeleteQuietlyAsync(expense.ReceiptKey, logger, ct);
     }
+
+    /// <summary>Receipts can show bank and card details, so they are stored privately and read only through <see cref="ReceiptAsync"/>.</summary>
+    public static string ReceiptKey(Guid tenantId, Guid expenseId, string extension) =>
+        $"private/invoices/{tenantId}/expenses/{expenseId:N}/{Guid.CreateVersion7():N}{extension}";
 
     public async Task<ExpenseDto> UploadReceiptAsync(Guid id, Upload upload, CancellationToken ct)
     {
@@ -117,12 +123,14 @@ public sealed class ExpenseService(IAppDbContext db, InvoiceWorkspace ws, PlanSe
         var (buffer, ext, mime) = await ReadReceiptAsync(upload, ct);
         await using var _ = buffer;
         var oldKey = expense.ReceiptKey;
-        var key = $"{expense.TenantId}/expenses/{expense.Id:N}/{Guid.CreateVersion7():N}{ext}";
-        expense.ReceiptUrl = await storage.SaveAsync(key, buffer, mime, ct);
+        var key = ReceiptKey(expense.TenantId, expense.Id, ext);
+        await storage.SaveAsync(key, buffer, mime, ct);
         expense.ReceiptKey = key;
-        db.Files.Add(new StoredFile { Key = key, Url = expense.ReceiptUrl, MimeType = mime, SizeBytes = buffer.Length, Purpose = "expense-receipt" });
+        expense.ReceiptUrl = null; // private: there is no public URL
+        db.Files.Add(new StoredFile { Key = key, Url = key, MimeType = mime, SizeBytes = buffer.Length, Purpose = "expense-receipt" });
+        await RemoveFileRowAsync(oldKey, ct);
         await db.SaveChangesAsync(ct);
-        if (oldKey is not null) await storage.DeleteAsync(oldKey, ct);
+        await storage.DeleteQuietlyAsync(oldKey, logger, ct);
         return await GetAsync(id, ct);
     }
 
@@ -132,9 +140,38 @@ public sealed class ExpenseService(IAppDbContext db, InvoiceWorkspace ws, PlanSe
         var key = expense.ReceiptKey;
         expense.ReceiptKey = null;
         expense.ReceiptUrl = null;
+        await RemoveFileRowAsync(key, ct);
         await db.SaveChangesAsync(ct);
-        if (key is not null) await storage.DeleteAsync(key, ct);
+        await storage.DeleteQuietlyAsync(key, logger, ct);
         return await GetAsync(id, ct);
+    }
+
+    /// <summary>The receipt file of one of this business's expenses (the route limits it to owners, admins and accountants).</summary>
+    public async Task<(Stream Content, string ContentType, string FileName)?> ReceiptAsync(Guid id, CancellationToken ct)
+    {
+        var expense = await db.Expenses.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id, ct) ?? throw new NotFoundException("Expense");
+        if (expense.ReceiptKey is not { } key) return null;
+        var stream = await storage.OpenReadAsync(key, ct);
+        if (stream is null) return null;
+        var ext = Path.GetExtension(key).ToLowerInvariant();
+        return (stream, ContentTypeOf(ext), $"receipt-{expense.Date:yyyy-MM-dd}{ext}");
+    }
+
+    internal static string ContentTypeOf(string extension) => extension switch
+    {
+        ".pdf" => "application/pdf",
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".webp" => "image/webp",
+        ".gif" => "image/gif",
+        _ => "application/octet-stream",
+    };
+
+    private async Task RemoveFileRowAsync(string? key, CancellationToken ct)
+    {
+        if (key is null) return;
+        var row = await db.Files.FirstOrDefaultAsync(f => f.Key == key, ct);
+        if (row is not null) db.Files.Remove(row);
     }
 
     public async Task<byte[]> ExportCsvAsync(DateOnly? from, DateOnly? to, CancellationToken ct)
@@ -182,8 +219,11 @@ public sealed class ExpenseService(IAppDbContext db, InvoiceWorkspace ws, PlanSe
         var clientIds = rows.Where(e => e.ClientId is not null).Select(e => e.ClientId!.Value).Distinct().ToList();
         var names = await db.Clients.AsNoTracking().Where(c => clientIds.Contains(c.Id)).ToDictionaryAsync(c => c.Id, c => c.Name, ct);
         return rows.Select(e => new ExpenseDto(e.Id, e.Date, e.Category, e.Vendor, e.Description, e.AmountMinor, e.Currency, e.TaxMinor,
-            e.PaymentMethod, e.Reference, e.ClientId, e.Notes, e.ExchangeRate, e.BaseAmountMinor, e.ReceiptUrl,
-            e.ClientId is { } c ? names.GetValueOrDefault(c) : null, e.CreatedAt)).ToList();
+            e.PaymentMethod, e.Reference, e.ClientId, e.Notes, e.ExchangeRate, e.BaseAmountMinor,
+            // The API route that streams the private file (signed-in owners, admins and accountants only).
+            e.ReceiptKey is null ? null : $"/api/expenses/{e.Id}/receipt",
+            e.ClientId is { } c ? names.GetValueOrDefault(c) : null, e.CreatedAt,
+            e.ReceiptKey is not null && e.ReceiptKey.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))).ToList();
     }
 
     /// <summary>Receipts may be a photo or a PDF.</summary>
