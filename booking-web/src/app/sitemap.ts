@@ -2,8 +2,6 @@ import type { MetadataRoute } from "next";
 import { API_URL } from "@/lib/config";
 import { SITE_URL } from "@/lib/site";
 
-/** Rebuilt at most hourly; the list of booking pages changes slowly. */
-export const revalidate = 3600;
 
 interface SlugPage {
   items: { slug: string; updatedAt: string }[];
@@ -21,7 +19,7 @@ async function bookingSlugs(): Promise<SlugPage["items"]> {
     for (let page = 1; all.length < MAX_PAGES; page++) {
       const res = await fetch(`${API_URL}/api/public/book?page=${page}&pageSize=${PAGE_SIZE}`, {
         headers: { Accept: "application/json" },
-        next: { revalidate },
+        cache: "no-store", // read when the sitemap is requested, so the build never needs the API
       });
       if (!res.ok) break;
       const body = (await res.json()) as SlugPage;
