@@ -32,13 +32,20 @@ function toDraft(s: SearchState, locationName?: string): Draft {
   };
 }
 
-function Fields({ draft, set, types, amenities, options, compact }: {
+/** The price filter's unit: the API compares rents on a yearly basis (a monthly rent counts as twelve months). */
+function priceUnitFor(purpose: SearchState["purpose"]): string {
+  return purpose === "Rent" ? " a year" : purpose === "ShortLet" ? " a night" : "";
+}
+
+function Fields({ draft, set, types, amenities, options, compact, priceUnit }: {
   draft: Draft;
   set: (patch: Partial<Draft>) => void;
   types: RefItem[];
   amenities: RefItem[];
   options: LocationDto[];
   compact?: boolean;
+  /** "a year" for rent (monthly rents are compared as twelve months), "a night" for short-lets, nothing for sale. */
+  priceUnit: string;
 }) {
   const priceError = draft.minPrice && draft.maxPrice && Number(draft.minPrice) > Number(draft.maxPrice) ? "The lowest price is above the highest." : undefined;
   return (
@@ -60,9 +67,9 @@ function Fields({ draft, set, types, amenities, options, compact }: {
           </option>
         ))}
       </Select>
-      <Input label="Min price (₦)" inputMode="numeric" placeholder="No min" value={draft.minPrice} onChange={(e) => set({ minPrice: e.target.value.replace(/\D/g, "") })} />
+      <Input label={`Min price (₦${priceUnit})`} inputMode="numeric" placeholder="No min" value={draft.minPrice} onChange={(e) => set({ minPrice: e.target.value.replace(/\D/g, "") })} />
       <Input
-        label="Max price (₦)"
+        label={`Max price (₦${priceUnit})`}
         inputMode="numeric"
         placeholder="No max"
         value={draft.maxPrice}
@@ -155,7 +162,7 @@ export function SearchFilters({
       <form onSubmit={submit} className="hidden lg:block" aria-label="Filters">
         <div className="flex items-end gap-3">
           <div className="min-w-0 flex-1">
-            <Fields draft={draft} set={set} types={types} amenities={amenities} options={options} compact />
+            <Fields draft={draft} set={set} types={types} amenities={amenities} options={options} compact priceUnit={priceUnitFor(state.purpose)} />
           </div>
           <Button variant="secondary" onClick={() => setMore((m) => !m)} aria-expanded={more}>
             More{draft.amenities.length || draft.verified ? ` (${draft.amenities.length + (draft.verified ? 1 : 0)})` : ""}
@@ -217,7 +224,7 @@ export function SearchFilters({
         }
       >
         <form id="filter-sheet" onSubmit={submit}>
-          <Fields draft={draft} set={set} types={types} amenities={amenities} options={options} />
+          <Fields draft={draft} set={set} types={types} amenities={amenities} options={options} priceUnit={priceUnitFor(state.purpose)} />
         </form>
       </Modal>
     </div>

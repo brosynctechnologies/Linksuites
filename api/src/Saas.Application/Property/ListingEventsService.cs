@@ -22,7 +22,7 @@ public sealed class ListingEventsService(IAppDbContext db, ICurrentUser user, IM
     {
         var listing = await db.Listings.IgnoreQueryFilters().Where(l => l.Id == listingId && l.Status == ListingStatus.Active && db.Tenants.Any(t => t.Id == l.TenantId && t.Status == TenantStatus.Active))
             .Select(l => new { l.Id, l.TenantId }).FirstOrDefaultAsync(ct) ?? throw new NotFoundException("Listing");
-        var day = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
+        var day = StayService.Today(clock.GetUtcNow()); // the Lagos day, as the studio's "last N days" shows it
         if (kind == ListingEventKind.View)
         {
             var visitor = user.UserId?.ToString() ?? user.IpAddress ?? "unknown";
@@ -48,7 +48,7 @@ public sealed class ListingEventsService(IAppDbContext db, ICurrentUser user, IM
         if (!await plans.HasFeatureAsync(LimitKeys.ListingStats, ct))
             throw new PlanLimitException("Views and lead stats come with the Pro and Agency plans. Upgrade to see them.");
         days = Math.Clamp(days, 1, 365);
-        var since = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime).AddDays(-days + 1);
+        var since = StayService.Today(clock.GetUtcNow()).AddDays(-days + 1);
         var totals = await db.ListingStats.Where(s => s.Day >= since).GroupBy(s => s.ListingId)
             .Select(g => new { ListingId = g.Key, Views = g.Sum(s => s.Views), WhatsApp = g.Sum(s => s.WhatsAppClicks), Calls = g.Sum(s => s.CallClicks), Enquiries = g.Sum(s => s.Enquiries) })
             .ToListAsync(ct);

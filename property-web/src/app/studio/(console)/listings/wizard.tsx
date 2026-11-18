@@ -278,6 +278,7 @@ export function ListingWizard({ listing, initialStep = 0, onListing }: { listing
             ? `Preview of the listing page. Guests also see ${costLines.map((c) => `${c.label} ${formatMoney(c.amountMinor)}`).join(", ")} as paid to the host, not charged here: collect it yourself.`
             : "Preview of the listing page. Guests pay the nights and cleaning online."
         }
+        safety="Pay only through PropertyLink. Never send money to a host directly."
       />
     ) : (
       <Ledger

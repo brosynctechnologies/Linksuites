@@ -4,7 +4,9 @@ import { ShieldIcon } from "./icons";
 import { cx } from "./styles";
 
 // Server-safe. The true-cost ledger: a narrow, receipt-like panel where each line is joined to its amount by a
-// dotted leader, ending in a heavy rule and the total in Archivo 700, with the fixed "never pay before inspecting" line.
+// dotted leader, ending in a heavy rule and the total in Archivo 700, with a safety line ("never pay before inspecting" by default).
+
+const INSPECT_FIRST = "Never pay before you have inspected the property and met the agent.";
 
 export interface LedgerLine {
   label: ReactNode;
@@ -25,6 +27,7 @@ export function Ledger({
   className,
   live,
   busy,
+  safety = INSPECT_FIRST,
 }: {
   title?: ReactNode;
   lines: LedgerLine[];
@@ -38,6 +41,12 @@ export function Ledger({
   /** Announce total changes to screen readers (short-let quote). */
   live?: boolean;
   busy?: boolean;
+  /**
+   * The safety line under the total. The default suits rent and sale, where money goes to the agent. A short-let booked and paid
+   * through PropertyLink passes its own line (or false on a record of a stay), so the panel never says "never pay" right above
+   * "Reserve and pay".
+   */
+  safety?: ReactNode | false;
 }) {
   return (
     <section
@@ -73,10 +82,12 @@ export function Ledger({
         </div>
         {footnote && <p className="mt-1.5 text-xs text-muted">{footnote}</p>}
       </div>
-      <p className="mt-4 flex gap-2 border-t border-line-soft pt-3 text-sm font-medium text-asphalt">
-        <ShieldIcon className="mt-0.5 h-4 w-4 shrink-0 text-brick" />
-        Never pay before you have inspected the property and met the agent.
-      </p>
+      {safety !== false && (
+        <p className="mt-4 flex gap-2 border-t border-line-soft pt-3 text-sm font-medium text-asphalt">
+          <ShieldIcon className="mt-0.5 h-4 w-4 shrink-0 text-brick" />
+          <span>{safety}</span>
+        </p>
+      )}
     </section>
   );
 }

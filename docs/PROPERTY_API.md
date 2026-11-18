@@ -60,13 +60,17 @@ Seeker routes (`/api/me/...`, bookings, reviews) accept any signed-in token. `GE
 | GET | `/api/agents/{slug}` | `AgentPageDto` |
 | GET | `/api/agencies/{slug}` | `AgencyPageDto` |
 
+Prices (Wave 2): `minPrice`/`maxPrice` and the `price_asc`/`price_desc` sorts compare rents on a yearly basis, so a monthly rent counts
+as twelve months (₦1.5m a month is ₦18m on that scale). Short-lets compare the nightly price and sales the total. Saved-search alerts
+use the same rule.
+
 Errors: unknown `location` → 404; malformed `bbox` (not 4 finite numbers, out of range, w ≥ e or s ≥ n; `NaN` and `Infinity` are refused) → 400 on `bbox`; `minPrice > maxPrice` → 400; unknown `type`/`amenities` → 400.
 
 ```ts
 LocationDto { id, name, slug, kind, parentSlug, lat, lng }
 ListingCardDto { id, title, slug, agencySlug, agencyName, verified, purpose, typeName, priceMinor, currency, pricePeriod, bedrooms,
   bathrooms, sizeSqm, areaName, cityName, coverUrl, photoCount, featured, top, lat, lng, publishedAt }
-SearchResultDto { items: Paged<ListingCardDto>, pins: [{ id, lat, lng, priceMinor, slug, agencySlug }] (≤ 500; link a pin to `/listings/{agencySlug}/{slug}`), location: LocationDto | null }
+SearchResultDto { items: Paged<ListingCardDto>, pins: [{ id, lat, lng, priceMinor, pricePeriod, slug, agencySlug }] (≤ 500; link a pin to `/listings/{agencySlug}/{slug}`), location: LocationDto | null }
 Paged<T> { items: T[], page, pageSize, total }
 ListingDetailDto { id, title, slug, description, purpose, type: { name, slug }, breadcrumb: LocationDto[] (state → city → area),
   address, lat, lng, priceMinor, currency, pricePeriod, bedrooms, bathrooms, toilets, sizeSqm, furnished, tourUrl, videoUrl,
@@ -122,6 +126,9 @@ been cancelled." If Paystack refuses the refund, the stay goes back to Confirmed
 Payments that don't confirm a stay:
 - **Wrong amount or currency.** The stay isn't confirmed. The guest is emailed that the payment didn't go through (template
   "stay.payment_mismatch"), and every active Finance and SuperAdmin admin is emailed to sort it out ("payments.mismatch").
+- **Wrong amount for a boost.** Same emails ("boost.payment_mismatch" to the buyer, "payments.mismatch" to Finance), sent once per
+  boost: the alert is claimed with a conditional update (`boosts.mismatch_alerted_at`), so a webhook and the return page arriving
+  together can't both send it.
 - **Cancelled before the payment arrived.** The whole payment is refunded. The refund is claimed with a conditional update first, so
   the webhook and the return page refund it only once. The guest is emailed "stay.refunded".
 - **Paid after the hold ran out, and someone else took the dates.** Refunded in full, the stay is Cancelled, and the guest is emailed
@@ -155,7 +162,7 @@ unless noted (money: Owner/Admin; payouts and payout account: Owner).
 | POST | `/api/property/inspections/{id}/status` `{ status, proposedAt? }` | `InspectionDto` (proposedAt moves it) |
 | GET | `/api/property/stays?from=&to=` | `StudioStayDto[]` |
 | POST | `/api/property/stays/{id}/cancel` (Owner/Admin) | 204 (full refund to the guest; counted against the agency) |
-| GET | `/api/property/stats?days=30` | `ListingStatsDto`; 402 on Free |
+| GET | `/api/property/stats?days=30` | `ListingStatsDto`; 402 on Free. Days are Lagos days (views, clicks and enquiries count on the Lagos date; `days=1` is today in Lagos). |
 | GET | `/api/property/verification` | latest `VerificationDto` or 204 |
 | POST | `/api/property/verification` (Owner/Admin) | multipart `idDocument` (required), `businessDocument?`, `licenceNo?` (JPEG/PNG/WebP/PDF ≤ 10 MB) → `VerificationDto`; 409 while one is pending |
 | GET | `/api/property/boost-options` | `[{ code, kind, days, priceMinor, currency, name }]` |
@@ -219,6 +226,8 @@ Reference data for the wizard: `GET /api/locations` (states), `?parent=lagos` (a
 ModerationItemDto { listingId, title, status, note, agencyName, agencySlug, agencyVerified, hostCancellations, openReports, coverUrl,
   priceMinor, pricePeriod, areaName, duplicates: [{ myPhotoUrl, theirPhotoUrl, theirListingId, theirListingTitle, theirAgency }], submittedAt,
   photos: string[] (a URL per photo, full size where there is one), publicUrl /* the listing's public page */ }
+// submittedAt (Wave 2): when the listing entered the queue (sent for review, sent back by a duplicate photo, or hidden after
+// reports). Editing a listing while it waits doesn't change it, and the queue is ordered by it, oldest first.
 AdminVerificationDto { id, tenantId, agencyName, agencySlug, kind, status, licenceNo, note, submittedByName, submittedByEmail, documents, createdAt }
 ```
 

@@ -104,6 +104,8 @@ export interface MapPin {
   lat: number;
   lng: number;
   priceMinor: number;
+  /** A rent can be per month or per year (the price filter compares them on a yearly basis). */
+  pricePeriod: PricePeriod;
   slug: string;
   agencySlug: string;
 }

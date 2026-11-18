@@ -87,6 +87,19 @@ cd api && dotnet test
 
 Integration tests start a throwaway PostgreSQL container, so Docker must be running.
 
+### Shared copies
+
+Plan payment code is copied into each of the seven product apps rather than shared as a package (the apps build separately):
+`src/lib/plan-payment.ts`, `src/components/plan-payment-notice.tsx` and `src/components/plan-transfer.tsx` in `web`, `invoice-web`,
+`booking-web`, `course-web`, `property-web`, `school-web` and `care-web`. Change all seven together, then check they still match:
+
+```bash
+node scripts/check-shared-copies.mjs
+```
+
+It compares each copy with `property-web`'s and prints the lines that differ. `web` has its own UI kit, so its notice and transfer
+components differ in two known places (a `warning` notice tone, and `Panel` instead of `Card`); the script allows exactly those.
+
 ## How tenancy works
 
 - Every tenant-owned entity implements `ITenantEntity`. `AppDbContext` adds a global query filter

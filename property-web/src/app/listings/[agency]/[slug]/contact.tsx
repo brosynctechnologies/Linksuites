@@ -56,8 +56,9 @@ export function ContactButtons({ agent, listing, className }: { agent: AgentCard
         </a>
       )}
       {phone && (
-        <a href={`tel:+${phoneDigits(phone)}`} onClick={() => trackEvent(listing.id, "Call")} className={buttonClass("secondary")}>
-          <PhoneIcon className="h-4 w-4" /> Call {phone}
+        // In a narrow column (two buttons side by side, around 800px) the number drops under "Call" instead of overflowing.
+        <a href={`tel:+${phoneDigits(phone)}`} onClick={() => trackEvent(listing.id, "Call")} className={buttonClass("secondary", "min-w-0 flex-wrap")}>
+          <PhoneIcon className="h-4 w-4" /> <span>Call</span> <span>{phone}</span>
         </a>
       )}
     </div>

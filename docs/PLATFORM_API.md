@@ -216,7 +216,11 @@ the api. Only new plan checkouts move; course sales, short-lets and boosts stay 
 
 A plan activates only after the provider confirms the payment (callback, return check, or the background re-check, which asks about
 each Pending plan payment about every 10 minutes and marks it `Abandoned` after 24 hours; a later confirmation still applies). A
-mismatched amount or currency marks the payment `Failed` and leaves the plan alone. Confirmation is applied once: in a transaction under
+mismatched amount or currency marks the payment `Failed` and leaves the plan alone; only the call that marks it Failed emails the
+payer ("plan.payment_mismatch") and Finance ("payments.mismatch"). A plan payment's `paidAt` is when LinkSuite confirmed it (the
+moment it was claimed as Succeeded), not the provider's own payment time, so a late callback or re-check can put it hours after the
+customer paid. This is the same rule as CareLink's `paidAt`; CareLink also keeps Paystack's time as `providerPaidAt`, which plan
+payments don't store yet. Reconcile against the provider's report by `reference`. Confirmation is applied once: in a transaction under
 a per-business lock, the payment is claimed with a conditional update, and only the call that claimed it changes the subscription. The
 callback and the return check ask the provider about one payment at most every 30 seconds (otherwise they answer from what is stored).
 The re-check only looks at plan payments created in the last 48 hours. OPay answering `50003` (try again) or an authentication or
@@ -317,7 +321,14 @@ ErrorEventDto { id, source /* "api" or "web:{app}" */, kind /* exception type, o
   firstSeenAt, lastSeenAt, resolvedAt }
 ```
 A new API error emails active super and support admins once (template `platform.error_new`, at most 10 an hour per server; with no
-such admin, `Platform:AdminEmails`). Browser reports never email.
+such admin, `Platform:AdminEmails`). Browser reports never email. Wave 2: an API error marked fixed that happens again is reopened
+and emails like a new one ("Error back on LinkSuite", same template with payload `reopened: "true"`, inside the same hourly cap);
+the reopen is a conditional update, so two servers seeing it at once send one email.
+
+Secrets are taken out before an error is stored or emailed (message, path and stack): `Bearer …` tokens, `sk_live_`/`sk_test_`/
+`rk_…` keys, and the values of `password=`, `pwd=`, `secret=`, `client_secret=`, `token=`, `access_token=`, `api_key=`, `key=`,
+`signature=` (query strings, connection strings, form bodies) and of the same names as JSON string fields. Each becomes `[redacted]`.
+Other values (`page=2`, `Username=app`) stay.
 
 ### Admins (SuperAdmin)
 | Method | Path | Body | Returns |

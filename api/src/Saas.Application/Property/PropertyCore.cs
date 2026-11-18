@@ -111,6 +111,7 @@ public sealed class PropertyCore(IAppDbContext db, ITenantContext tenant, ICurre
             // No term yet: it starts when a moderator (or verification) puts the listing live.
             listing.ExpiresAt = null;
             listing.ExpiryWarnedAt = null;
+            if (listing.Status != ListingStatus.Pending) listing.SubmittedAt = Now; // a resubmission while waiting keeps its place
             listing.Status = ListingStatus.Pending;
             listing.ModerationNote = duplicate ? "A photo matches another agency's listing. A moderator will check it." : null;
         }

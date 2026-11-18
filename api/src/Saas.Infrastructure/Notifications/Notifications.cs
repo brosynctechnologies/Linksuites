@@ -125,8 +125,9 @@ public static class EmailTemplates
                 "If you didn't just sign in, change your password now and tell another super admin."),
             "admin.added" => ($"You're now a {P("role")} admin on {appName}",
                 $"Hi {P("name")},\n\nYou've been given the {P("role")} role in the admin panel. Sign in with your usual password and the code we email you: {P("link")}"),
-            "platform.error_new" => ($"New error on LinkSuite: {P("kind")}",
-                $"A new error just happened for the first time.\n\nWhere: {P("source")} {P("path")}\nWhat: {P("kind")}\n{P("message")}\n\n" +
+            "platform.error_new" => (P("reopened") == "true" ? $"Error back on LinkSuite: {P("kind")}" : $"New error on LinkSuite: {P("kind")}",
+                (P("reopened") == "true" ? "An error that was marked fixed just happened again, so it is open again." : "A new error just happened for the first time.") +
+                $"\n\nWhere: {P("source")} {P("path")}\nWhat: {P("kind")}\n{P("message")}\n\n" +
                 $"Repeats of it won't email you again. See all errors and mark this one fixed: {P("link")}"),
             "plan.transfer_claimed" => ($"Bank transfer to check: {P("business")}, {P("amount")}",
                 $"{P("claimedBy")} at {P("business")} ({P("productName")}) says they've sent {P("amount")} by bank transfer for the {P("plan")} plan.\n\n" +

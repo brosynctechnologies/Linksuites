@@ -37,7 +37,7 @@ public sealed class PropertyAdminService(IAppDbContext db, PropertyCore core, Lo
             from l in db.Listings.IgnoreQueryFilters().AsNoTracking()
             join a in db.AgencyProfiles.IgnoreQueryFilters().AsNoTracking() on l.TenantId equals a.TenantId
             where l.Status == ListingStatus.Pending || l.Status == ListingStatus.Hidden
-            orderby l.UpdatedAt ?? l.CreatedAt
+            orderby l.SubmittedAt ?? l.UpdatedAt ?? l.CreatedAt // oldest wait first; edits while waiting don't move a listing back
             select new { L = l, A = a }).Take(200).ToListAsync(ct);
         var ids = rows.Select(r => r.L.Id).ToList();
         var media = await db.ListingMedia.IgnoreQueryFilters().AsNoTracking().Where(m => ids.Contains(m.ListingId) && m.Status == MediaStatus.Ready).ToListAsync(ct);
@@ -59,7 +59,7 @@ public sealed class PropertyAdminService(IAppDbContext db, PropertyCore core, Lo
                 .Select(p => new DuplicatePairDto(p.Mine.CardUrl, p.Theirs!.CardUrl, p.Theirs.ListingId, p.Theirs.Title, p.Theirs.Agency)).ToList();
             return new ModerationItemDto(r.L.Id, r.L.Title, r.L.Status, r.L.ModerationNote, r.A.Name, r.A.Slug, r.A.VerifiedAt is not null,
                 r.A.HostCancellations, reports.GetValueOrDefault(r.L.Id), mine.FirstOrDefault()?.CardUrl, r.L.PriceMinor, r.L.PricePeriod,
-                tree.Find(r.L.LocationId)?.Name ?? "", pairs, r.L.UpdatedAt ?? r.L.CreatedAt,
+                tree.Find(r.L.LocationId)?.Name ?? "", pairs, r.L.SubmittedAt ?? r.L.UpdatedAt ?? r.L.CreatedAt,
                 mine.Select(m => m.FullUrl ?? m.CardUrl).OfType<string>().ToList(), $"{core.Web}/listings/{r.A.Slug}/{r.L.Slug}");
         }).ToList();
     }
@@ -191,6 +191,7 @@ public sealed class PropertyAdminService(IAppDbContext db, PropertyCore core, Lo
         if (r.Uphold && listing.Status == ListingStatus.Active)
         {
             listing.Status = ListingStatus.Hidden;
+            listing.SubmittedAt = core.Now;
             listing.ModerationNote = "Hidden after a report was upheld. Fix the listing and contact support.";
         }
         else if (!r.Uphold && listing.Status == ListingStatus.Hidden
