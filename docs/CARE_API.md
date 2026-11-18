@@ -86,8 +86,8 @@ A patient portal token gets 403 on every `/api/care` route. Staff tokens get 403
 | PUT | `/api/care/settings/logo` | Leaders write | Wave 1. Multipart `file` (JPEG, PNG or WebP, at most 5 MB) → `ClinicDto` (`hasLogo`). Resized to fit 600 × 600, re-encoded WebP, stored under `private/care/{tenant}/branding/`; the old file is deleted. 400 `file` for anything else. Printed on prescriptions, discharge summaries and receipts. |
 | DELETE | `/api/care/settings/logo` | Leaders write | Wave 1. 204; deletes the file. |
 | GET | `/api/care/settings/logo` | Everyone | Wave 1. The logo image (`image/webp`, `no-store`); 404 when there is none. |
-| PUT | `/api/care/staff/me/signature` | Everyone writes | Wave 1. The caller's own signature: multipart `file` as for the logo, fitted to 600 × 200, private (`private/care/{tenant}/signatures/`) → `{ hasSignature }`. Printed above the doctor's name on prescriptions and discharge summaries they sign, and above "Received by" on receipts for desk payments the member took. |
-| DELETE | `/api/care/staff/me/signature` | Everyone writes | Wave 1. 204; deletes the file. |
+| PUT | `/api/care/staff/me/signature` | Everyone writes | Wave 1. The caller's own signature: multipart `file` as for the logo, fitted to 600 × 200, private (`private/care/{tenant}/signatures/`) → `{ hasSignature }`. Printed above the doctor's name on prescriptions and discharge summaries they sign, and above "Received by" on receipts for desk payments the member took. Wave 2: the signature is frozen when the paper is signed (a consultation, which its prescriptions use; a prescription written outside one; a discharge summary; a desk payment), so a later new signature, its removal, or the member leaving changes no signed paper. A replaced file is kept while a signed paper uses it. |
+| DELETE | `/api/care/staff/me/signature` | Everyone writes | Wave 1. 204; deletes the file unless a signed paper uses it (Wave 2). |
 | GET | `/api/care/staff/me/signature` | Everyone | Wave 1. The caller's own signature image; 404 when they have none. Nobody reads another member's. |
 | PUT | `/api/care/staff/{userId}` | Leaders write | `{ clinicalRole, title?, licenceNumber? }`. |
 | GET | `/api/care/price-list?active=&category=` | Everyone | Price items. |
@@ -147,7 +147,7 @@ A patient portal token gets 403 on every `/api/care` route. Staff tokens get 403
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
-| POST | `/api/care/prescriptions` | Doctors | `CreatePrescriptionRequest` (items with drug, strength, dose, frequency, duration, quantity, route). 409 on an allergy match until `allergyAcknowledged`. Adds bill lines. |
+| POST | `/api/care/prescriptions` | Doctors | `CreatePrescriptionRequest` (items with drug, strength, dose, frequency, duration, quantity, route). 409 on an allergy match until `allergyAcknowledged`. Adds bill lines. Wave 2: the allergy classes also cover cephalosporins, heparins and statins, with PCN and ASA as class names (whole words only); a name inside an unrelated drug (Statin in Nystatin) no longer matches. |
 | GET | `/api/care/prescriptions/{id}/pdf` | Clinical | Logged open (area pdf). |
 | POST | `/api/care/tests` | Doctors | `{ patientId, consultationId?, admissionId?, kind, description, priceItemId? }`. |
 | POST | `/api/care/tests/{id}/result` | Clinical | JSON `{ text }` or multipart `text` and `file`. Post-build: the result then waits for a doctor's review; nobody is told yet. |
@@ -156,6 +156,7 @@ A patient portal token gets 403 on every `/api/care` route. Staff tokens get 403
 | POST | `/api/care/tests/{id}/review` | Doctors | Post-build (user decision). A doctor (an admin with the doctor role included) or the medical director reviews a recorded result → `{ id, reviewedBy, reviewedByName, reviewedAt }`. This releases it to the patient's portal and notifies the patient's portal users ("A new result for {First} is ready…"). 403 "Only doctors and nurses can see clinical notes." without clinical access; 403 "Only doctors can review results." for a nurse; 404 unknown or another clinic's; 409 `test_not_resulted` "This test has no result to review yet.". Idempotent: a reviewed result answers with its first review and writes or sends nothing. Audited (`care.result_reviewed`, ids only). |
 | GET | `/api/care/tests/awaiting-review` | Doctors | Post-build. Results not reviewed yet, oldest first (at most 200): `{ id, patientId, patientNumber, patientName, kind, consultationId, admissionId, recordedByName, recordedAt }[]`. No description or result text, so no access-log row; opening the record is the logged read. |
 | GET | `/api/care/tests/{id}/file` | Clinical | Logged open (area file) → a 2-minute signed link. |
+| GET | `/api/care/tests/{id}/superseded/{amendmentId}/file` | Clinical | Wave 2. The file of a result entered in error (an amendment of this test, from `superseded[]`): a logged open (area file) → `{ url, expiresAt, contentType }`, a 2-minute signed link to `/api/care/superseded-result-files/{amendmentId}/{expires}/{signature}`. 404 for an unknown test, an amendment of another test, or one without a file. |
 | GET | `/api/care/result-files/{id}/{expires}/{signature}` | Anyone holding the link | The signed link itself (outside the signed-in group). 404 when forged or expired. |
 
 ### Bills, payments and the clinic's Paystack key
@@ -168,7 +169,7 @@ A patient portal token gets 403 on every `/api/care` route. Staff tokens get 403
 | POST | `/api/care/bills/{id}/lines/{lineId}/remove` | Money | `{ reason }`. |
 | POST | `/api/care/bills/{id}/payments` | Money | `{ amountMinor, method, reference?, idempotencyKey? }` or the `Idempotency-Key` header: a retry returns the first payment. Overpaying puts the bill in credit. |
 | POST | `/api/care/payments/{id}/reverse` | Money | `{ reason }`. |
-| GET | `/api/care/payments/{id}/receipt.pdf` | Everyone | No bill lines, nothing clinical. |
+| GET | `/api/care/payments/{id}/receipt.pdf` | Everyone | No bill lines, nothing clinical. Wave 2: the balance printed is the one right after that payment (or "₦X in credit"), not today's; payments from before Wave 2 print the current balance less any credit. |
 | POST | `/api/care/bills/{id}/adjustments` | Leaders write | `{ kind: Discount\|Waiver, amountMinor, reason }`. |
 | POST | `/api/care/bills/{id}/reviewed` | Money | Clears the review flag (a mismatched online payment, a change after payment). |
 | POST | `/api/care/payments/online/{reference}/verify` | Money | Ask Paystack about an online checkout. |
@@ -195,7 +196,7 @@ A patient portal token gets 403 on every `/api/care` route. Staff tokens get 403
 | GET | `/api/care/admissions?status=` | Desk | Current and recent; demographics, bed and status only. |
 | GET | `/api/care/admissions/{id}` | Clinical | Logged open. |
 | POST | `/api/care/admissions/{id}/bed` | Everyone writes | `{ bedId, depositMinor, method, reference?, overrideByOwner? }`. The deposit is a real payment with a receipt. 409 "That bed is occupied." |
-| POST | `/api/care/admissions/{id}/transfer` | Desk writes | `{ bedId }`. |
+| POST | `/api/care/admissions/{id}/transfer` | Desk writes | `{ bedId, depositMinor?, method?, reference?, overrideByOwner? }`. Wave 2: moving to another ward checks its minimum deposit against the deposits already received on the admission plus `depositMinor` (recorded as a deposit with a receipt): 409 `deposit_below_minimum` naming the minimum and what was paid, unless the medical director sends `overrideByOwner` (audited `care.deposit_override`). A move within the same ward is not checked. |
 | GET | `/api/care/admissions/{id}/care-team` | Clinical | Doctors' names; not a logged open. |
 | POST | `/api/care/admissions/{id}/care-team` | Doctors (S) | `{ userId }` adds a covering doctor. The admitting doctor or the director. |
 | DELETE | `/api/care/admissions/{id}/care-team/{userId}` | Doctors (S) | 204. |
@@ -214,7 +215,7 @@ A patient portal token gets 403 on every `/api/care` route. Staff tokens get 403
 | POST | `/api/care/ward-rounds/{id}/sign` | Doctors (S) | |
 | POST | `/api/care/ward-rounds/{id}/discard` | Doctors (S) | 204. An unsigned draft, before discharge. |
 | GET | `/api/care/admissions/{id}/medication-chart?date=` | Clinical | Logged open. Never shown in the portal. |
-| POST | `/api/care/doses/{id}` | Clinical (S) | `{ status: Given\|Held\|Refused, note? }`. |
+| POST | `/api/care/doses/{id}` | Clinical (S) | `{ status: Given|Held|Refused, note? }`. Wave 2: Given is accepted from an hour before the dose is due; earlier is 409 `dose_not_due` "This dose is due at HH:mm on d MMMM. It can be given from an hour before." Held and Refused may be recorded ahead. |\|Held\|Refused, note? }`. |
 | POST | `/api/care/admissions/{id}/prn-doses` | Clinical (S) | Wave 1. An as-needed dose now: `{ prescriptionItemId, status: Given\|Held\|Refused, note? }` → `DoseRecordedDto`; it shows on today's chart. Write rules as nursing notes (404, 409 discharged, 403 "This patient isn't on your ward."); 400 `prescriptionItemId` unless it is a PRN item prescribed on this admission. |
 | POST | `/api/care/admissions/{id}/vitals` | Clinical (S) | Wave 1. Ward vital signs `{ vitals }`, the same checks and flags as triage (400 `vitals`, `vitals.{name}`); write rules as nursing notes. A critical reading tells the admitting doctor in-app (no value) unless they took it. Not an open. |
 | GET | `/api/care/admissions/{id}/vitals` | Clinical | Wave 1. The ward's sets, oldest first (500). Logged open (area `vitals`, "Ward vital signs"; portal "Vital signs on the ward"). |
@@ -232,7 +233,7 @@ A patient portal token gets 403 on every `/api/care` route. Staff tokens get 403
 |---|---|---|---|
 | GET | `/api/care/reports/takings?from=&to=` | Money reads | By day and method. Wave 1: a closed day never changes. A payment counts on the day it was taken even if reversed later (an online payment on the day the clinic confirmed it); a reversal is a negative row on the day it was made (`reversals` per day and for the range, negative amounts); `totalMinor` is net. The CSV writes reversals as "Reversal: {method}" rows. |
 | GET | `/api/care/reports/takings.csv?from=&to=` | Money reads | CSV (formula-safe cells, byte order mark). |
-| GET | `/api/care/reports/debtors` | Money reads | With WhatsApp reminder links. Bills flagged for review are left out. |
+| GET | `/api/care/reports/debtors` | Money reads | With WhatsApp reminder links. Bills flagged for review are left out. Wave 2: credit the patient holds on other bills (not flagged) is netted off; a patient whose credit covers the debt is not listed. |
 | GET | `/api/care/reports/debtors.csv` | Money reads | CSV. |
 | GET | `/api/care/reports/revenue?from=&to=` | Money reads | By price category; bed lines by charge day. |
 | GET | `/api/care/reports/revenue.csv?from=&to=` | Money reads | CSV. |
@@ -290,9 +291,9 @@ and support-view tokens get 403 "Sign in to your patient portal account to use t
 | GET | `/api/care-portal/patients/{id}/doctors` | portal account | `[{ userId, name }]` bookable doctors. |
 | GET | `/api/care-portal/patients/{id}/doctors/{doctorId}/slots?date=` | portal account | `[{ start, end }]`. 400 without a date. |
 | GET | `/api/care-portal/patients/{id}/appointments` | portal account | `{ reasonLabel: "Reason for visit (no medical details)", appointments: [{ id, doctorUserId, doctorName, start, end, reason, status, source, canCancel }] }`. `canCancel`: booked and at least 2 hours away. |
-| POST | `/api/care-portal/patients/{id}/appointments` | portal account | `{ doctorUserId, start, reason? }` → the appointment (source Portal). 409 `slot_taken`; 409 for a deceased patient. |
+| POST | `/api/care-portal/patients/{id}/appointments` | portal account | `{ doctorUserId, start, reason? }` → the appointment (source Portal). 409 `slot_taken`; 409 for a deceased patient. Wave 2: an account may hold at most 5 open (booked, not yet started) portal bookings across its patients and clinics: 409 `too_many_bookings` "You already have 5 appointments booked online. Cancel one, or call the clinic to book more." The desk can still book. |
 | POST | `/api/care-portal/patients/{id}/appointments/{appointmentId}/cancel` | portal account | → the appointment. 409 "This appointment starts soon. Call the clinic to change it." under 2 hours. |
-| POST | `/api/care-portal/patients/{id}/appointments/{appointmentId}/reschedule` | portal account | Wave 1 (rate limited `public-write`). `{ start, doctorUserId?, reason? }` → the appointment, moved under the booking rules (the doctor's slots and hours, 400 `start`; 409 `slot_taken`; 409 for a deceased patient). The patient's own booked appointment only (404 otherwise); 409 "This appointment starts soon. Call the clinic to change it." under 2 hours; the patient hears the new time. |
+| POST | `/api/care-portal/patients/{id}/appointments/{appointmentId}/reschedule` | portal account | Wave 1 (rate limited `public-write`). `{ start, doctorUserId?, reason? }` → the appointment, moved under the booking rules (the doctor's slots and hours, 400 `start`; 409 `slot_taken`; 409 for a deceased patient). The patient's own booked appointment only (404 otherwise); 409 "This appointment starts soon. Call the clinic to change it." under 2 hours; the patient hears the new time. | Wave 2: under the doctor's lock the appointment is re-read (409 `appointment_changed` when it moved to another doctor meanwhile) and the doctor is checked again (400 `doctorUserId` when they left the clinic or are no longer a doctor), also for the same doctor.
 | GET | `/api/care-portal/patients/{id}/contact` | portal account | Wave 1. `{ phone, email, address }` as stored. Not a record read. |
 | PUT | `/api/care-portal/patients/{id}/contact` | portal account | `{ phone, email, address }`, a full replace: a field left out is cleared. Audited with ids only. |
 | GET | `/api/care-portal/patients/{id}/notifications` | portal account | `[{ id, kind, title, body, link, createdAt, readAt }]`, newest 50: this account's care notices at this clinic for this patient. Mark one read with `POST /api/me/notifications/{id}/read`. |
@@ -310,7 +311,7 @@ There is no portal reschedule route: the portal cancels and books again (spec ga
 | `care.appointment_reminder` | the day before | "{First} has an appointment at {clinic} tomorrow at {time}." | `/portal/appointments?patient={id}` |
 | `care.result_ready` | a doctor or the medical director reviews a recorded result (post-build) | "A new result for {First} is ready in your CareLink portal." | `/portal/results?patient={id}` |
 | `care.summary_ready` | a discharge summary is signed | "{First}'s discharge summary is ready in your CareLink portal." | `/portal/record?patient={id}` |
-| `care.bill_due` | a bill waits for payment | "Bill {n} for {First} at {clinic} has {amount} to pay." | `/portal/bills?patient={id}` |
+| `care.bill_due` | a bill waits for payment | "Bill {n} for {First} at {clinic} has {amount} to pay." | `/portal/bills?patient={id}` (Wave 2: once per balance; going back to payment with the same amount owed sends nothing new) |
 | `care.payment_received` | a desk or online payment succeeds | "{clinic} received {amount} for {First} on bill {n}. Receipt {r}." | `/portal/bills?patient={id}` |
 
 Nothing goes to a deceased patient's portal accounts. Notices go in-app and by email.

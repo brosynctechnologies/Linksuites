@@ -293,10 +293,22 @@ public sealed class PortalService(
         return new PortalAppointmentsDto(AppointmentService.ReasonLabel, list.Select(ToDto).ToList());
     }
 
+    /// <summary>Wave 2: the most open (booked, not yet started) portal bookings one portal account may hold across its patients.</summary>
+    public const int MaxOpenPortalBookings = 5;
+
     /// <summary>Books through <see cref="AppointmentService.BookAsync"/> with source Portal, after the link check (a deceased patient gets 409).</summary>
     public async Task<PortalAppointmentDto> BookAsync(Guid patientId, PortalBookRequest r, CancellationToken ct)
     {
         await portal.RequirePatientAsync(patientId, ct);
+        // Wave 2: one account can't fill a clinic's diary. Open (booked, not yet started) portal bookings it made, across every patient
+        // and clinic it is linked to, are capped; the desk can still book more. Two bookings sent together may both pass the count.
+        var userId = user.UserId ?? throw new ForbiddenException();
+        var now = clock.GetUtcNow();
+        var open = await db.Appointments.IgnoreQueryFilters().CountAsync(a => a.BookedByUserId == userId && a.Source == AppointmentSource.Portal
+            && a.Status == AppointmentStatus.Booked && a.Start > now, ct);
+        if (open >= MaxOpenPortalBookings)
+            throw new ConflictException(
+                $"You already have {MaxOpenPortalBookings} appointments booked online. Cancel one, or call the clinic to book more.", "too_many_bookings");
         var booked = await appointments.BookAsync(new BookRequest(patientId, r.DoctorUserId, r.Start, r.Reason), AppointmentSource.Portal, ct);
         return ToDto(booked);
     }

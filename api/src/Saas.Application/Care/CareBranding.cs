@@ -71,7 +71,7 @@ public sealed class CareBrandingService(IAppDbContext db, ITenantContext tenant,
         var old = profile.SignatureKey;
         profile.SignatureKey = key;
         await db.SaveChangesAsync(ct);
-        await DeleteQuietlyAsync(old, ct);
+        if (old is not null && !await SignatureInUseAsync(old, ct)) await DeleteQuietlyAsync(old, ct);
         return new CareSignatureDto(true);
     }
 
@@ -84,7 +84,7 @@ public sealed class CareBrandingService(IAppDbContext db, ITenantContext tenant,
         if (profile?.SignatureKey is not { } old) return;
         profile.SignatureKey = null;
         await db.SaveChangesAsync(ct);
-        await DeleteQuietlyAsync(old, ct);
+        if (!await SignatureInUseAsync(old, ct)) await DeleteQuietlyAsync(old, ct);
     }
 
     /// <summary>The caller's own signature image; 404 when they have none. Nobody reads another member's signature.</summary>
@@ -95,13 +95,24 @@ public sealed class CareBrandingService(IAppDbContext db, ITenantContext tenant,
         return await ReadAsync(key, "Signature", ct);
     }
 
-    /// <summary>A staff member's signature bytes for a printed document, or null when they have none (or the file is gone).</summary>
-    internal static async Task<byte[]?> SignatureBytesAsync(IAppDbContext db, IFileStorage storage, Guid? userId, CancellationToken ct)
-    {
-        if (userId is not { } id) return null;
-        var key = await db.CareStaffProfiles.AsNoTracking().Where(p => p.UserId == id).Select(p => p.SignatureKey).FirstOrDefaultAsync(ct);
-        return await PrescriptionService.LogoAsync(storage, key, ct);
-    }
+    /// <summary>
+    /// Wave 2: the staff member's signature file now, to freeze on a record as it is signed (a consultation, a discharge summary, a
+    /// prescription outside a consultation, a desk payment). Null when they have none.
+    /// </summary>
+    internal static Task<string?> CurrentSignatureKeyAsync(IAppDbContext db, Guid? userId, CancellationToken ct) =>
+        userId is not { } id
+            ? Task.FromResult<string?>(null)
+            : db.CareStaffProfiles.AsNoTracking().Where(p => p.UserId == id).Select(p => p.SignatureKey).FirstOrDefaultAsync(ct);
+
+    /// <summary>The bytes of a signature frozen on a record, or null when it had none (or the file is gone).</summary>
+    internal static Task<byte[]?> FrozenSignatureAsync(IFileStorage storage, string? key, CancellationToken ct) => PrescriptionService.LogoAsync(storage, key, ct);
+
+    /// <summary>
+    /// Wave 2: a replaced or removed signature file stays while a signed record still prints it; otherwise it is deleted as before.
+    /// </summary>
+    private async Task<bool> SignatureInUseAsync(string key, CancellationToken ct) =>
+        await db.Consultations.AnyAsync(c => c.SignatureKey == key, ct) || await db.DischargeSummaries.AnyAsync(s => s.SignatureKey == key, ct)
+        || await db.Prescriptions.AnyAsync(p => p.SignatureKey == key, ct) || await db.CarePayments.AnyAsync(p => p.SignatureKey == key, ct);
 
     // ---------- Internals ----------
 

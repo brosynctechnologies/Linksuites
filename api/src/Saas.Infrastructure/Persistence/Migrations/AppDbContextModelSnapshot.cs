@@ -1514,6 +1514,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("amount_minor");
 
+                    b.Property<long?>("BalanceAfterMinor")
+                        .HasColumnType("bigint")
+                        .HasColumnName("balance_after_minor");
+
                     b.Property<Guid>("BillId")
                         .HasColumnType("uuid")
                         .HasColumnName("bill_id");
@@ -1603,6 +1607,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("ReversedByUserId")
                         .HasColumnType("uuid")
                         .HasColumnName("reversed_by_user_id");
+
+                    b.Property<string>("SignatureKey")
+                        .HasColumnType("text")
+                        .HasColumnName("signature_key");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -1860,6 +1868,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("plan");
 
+                    b.Property<string>("SignatureKey")
+                        .HasColumnType("text")
+                        .HasColumnName("signature_key");
+
                     b.Property<DateTimeOffset?>("SignedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("signed_at");
@@ -1995,6 +2007,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("PatientId")
                         .HasColumnType("uuid")
                         .HasColumnName("patient_id");
+
+                    b.Property<string>("SignatureKey")
+                        .HasColumnType("text")
+                        .HasColumnName("signature_key");
 
                     b.Property<DateTimeOffset?>("SignedAt")
                         .HasColumnType("timestamp with time zone")
@@ -2444,6 +2460,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("credit_minor");
 
+                    b.Property<long?>("DueNoticeBalanceMinor")
+                        .HasColumnType("bigint")
+                        .HasColumnName("due_notice_balance_minor");
+
                     b.Property<DateTimeOffset?>("FinalisedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("finalised_at");
@@ -2682,6 +2702,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("PatientId")
                         .HasColumnType("uuid")
                         .HasColumnName("patient_id");
+
+                    b.Property<string>("SignatureKey")
+                        .HasColumnType("text")
+                        .HasColumnName("signature_key");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")

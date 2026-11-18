@@ -72,11 +72,11 @@ public sealed partial class CareAccessTests(ApiFixture api)
     /// clinical GET is proved to write the access log (Review Focus 5).
     /// </summary>
     internal static IReadOnlySet<string> ClinicalReadRoutes =>
-        ClinicalReads(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid())
-            .Select(r => "GET " + Regex.Replace(r.Path, "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "{id:guid}"))
+        ClinicalReads(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid())
+            .Select(r => "GET " + Regex.Replace(r.Path, "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "{id:guid}").Replace("/superseded/{id:guid}/", "/superseded/{amendmentId:guid}/", StringComparison.Ordinal))
             .ToHashSet(StringComparer.Ordinal);
 
-    private static IEnumerable<(string Area, string Path)> ClinicalReads(Guid patientId, Guid visitId, Guid prescriptionId, Guid testId, Guid admissionId) =>
+    private static IEnumerable<(string Area, string Path)> ClinicalReads(Guid patientId, Guid visitId, Guid prescriptionId, Guid testId, Guid admissionId, Guid amendmentId) =>
     [
         ("record", $"/api/care/patients/{patientId}"),
         ("record", $"/api/care/visits/{visitId}/vitals"),
@@ -97,13 +97,15 @@ public sealed partial class CareAccessTests(ApiFixture api)
         // Task 7: the prescription PDF and the result file's signed link.
         ("pdf", $"/api/care/prescriptions/{prescriptionId}/pdf"),
         ("file", $"/api/care/tests/{testId}/file"),
+        // Wave 2: the file of a corrected (superseded) result.
+        ("file", $"/api/care/tests/{testId}/superseded/{amendmentId}/file"),
     ];
 
     /// <summary>
     /// Seeds a prescription and a resulted test with a file for the patient straight into the database (no visit, consultation or triage,
     /// so the access log holds only the reads under test). Returns their ids.
     /// </summary>
-    private async Task<(Guid Prescription, Guid Test, Guid Admission)> SeedOrdersAsync(CareKit.Clinic clinic, Guid patientId, Guid doctorId)
+    private async Task<(Guid Prescription, Guid Test, Guid Admission, Guid Amendment)> SeedOrdersAsync(CareKit.Clinic clinic, Guid patientId, Guid doctorId)
     {
         var text = api.Services.GetRequiredService<ClinicalText>();
         var storage = api.Services.GetRequiredService<IFileStorage>();
@@ -132,15 +134,22 @@ public sealed partial class CareAccessTests(ApiFixture api)
             Diagnoses = text.Protect("Seeded discharge diagnoses"), Condition = text.Protect("Seeded condition"), Status = NoteStatus.Signed,
             SignedAt = DateTimeOffset.UtcNow,
         };
+        // Wave 2: an earlier result of that test, entered in error, with its file kept (the superseded file read).
+        var amendment = new TestResultAmendment
+        {
+            TenantId = clinic.TenantId, TestRequestId = test.Id, PatientId = patientId, ResultFileKey = key, ResultFileType = "application/pdf",
+            ResultedBy = doctorId, ResultedAt = DateTimeOffset.UtcNow, SupersededBy = doctorId, SupersededAt = DateTimeOffset.UtcNow, Reason = text.Protect("Seeded reason"),
+        };
         await api.WithDbAsync(db =>
         {
             db.Prescriptions.Add(prescription);
             db.TestRequests.Add(test);
             db.Admissions.Add(admission);
             db.DischargeSummaries.Add(summary);
+            db.TestResultAmendments.Add(amendment);
             return db.SaveChangesAsync(Ct);
         });
-        return (prescription.Id, test.Id, admission.Id);
+        return (prescription.Id, test.Id, admission.Id, amendment.Id);
     }
 
     [Fact]
@@ -154,7 +163,7 @@ public sealed partial class CareAccessTests(ApiFixture api)
         var patientId = (await kit.PatientAsync(clinic, "Bisi", "Ade")).GetProperty("id").GetGuid();
         await kit.AssignAsync(clinic, patientId, doctorId);
         var visitId = (await kit.CheckInAsync(frontDesk, patientId)).GetProperty("id").GetGuid();
-        var (prescriptionId, testId, admissionId) = await SeedOrdersAsync(clinic, patientId, doctorId);
+        var (prescriptionId, testId, admissionId, amendmentId) = await SeedOrdersAsync(clinic, patientId, doctorId);
 
         // Demographics-only reads by non-clinical staff (front desk, an admin without a clinical role) are not clinical reads: no row.
         await Json(await frontDesk.GetAsync($"/api/care/patients/{patientId}", Ct));
@@ -173,7 +182,7 @@ public sealed partial class CareAccessTests(ApiFixture api)
         Assert.Empty(await AccessLogAsync(patientId));
 
         var expected = 0;
-        foreach (var (area, path) in ClinicalReads(patientId, visitId, prescriptionId, testId, admissionId))
+        foreach (var (area, path) in ClinicalReads(patientId, visitId, prescriptionId, testId, admissionId, amendmentId))
         {
             var read = await doctor.GetAsync(path, Ct);
             Assert.True(read.IsSuccessStatusCode, $"{path}: {(int)read.StatusCode} {await read.Content.ReadAsStringAsync(Ct)}");
@@ -572,6 +581,10 @@ public sealed partial class CareAccessTests(ApiFixture api)
         // carries its own proof and no sign-in; called without a valid signature it must refuse (403).
         ["GET /api/care/prescriptions/{id:guid}/pdf"] = w => $"/api/care/prescriptions/{w.Ids["prescription"]}/pdf",
         ["GET /api/care/tests/{id:guid}/file"] = w => $"/api/care/tests/{w.Ids["test"]}/file",
+        // Wave 2: the file of a corrected result is a clinical read too; its signed link refuses a forged signature.
+        ["GET /api/care/tests/{id:guid}/superseded/{amendmentId:guid}/file"] = w => $"/api/care/tests/{w.Ids["correctedTest"]}/superseded/{w.Ids["amendment"]}/file",
+        ["GET /api/care/superseded-result-files/{id:guid}/{expires:long}/{signature}"] = w =>
+            $"/api/care/superseded-result-files/{w.Ids["amendment"]}/{DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds()}/forged-signature-forged-signature",
         // Post-build: the doctors' list of results awaiting review (403 for non-clinical staff; no description or result for anyone).
         ["GET /api/care/tests/awaiting-review"] = _ => "/api/care/tests/awaiting-review",
         ["GET /api/care/result-files/{id:guid}/{expires:long}/{signature}"] = w =>
@@ -740,6 +753,21 @@ public sealed partial class CareAccessTests(ApiFixture api)
         pending.EnsureSuccessStatusCode();
         ids["unreviewedTest"] = (await pending.Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct)).GetProperty("id").GetGuid();
         (await clinic.Owner.PostAsJsonAsync($"/api/care/tests/{ids["unreviewedTest"]}/result", new { text = "Walk unreviewed parasites" }, Ct)).EnsureSuccessStatusCode();
+        // Wave 2: a result with a file corrected once, so the superseded file's route has an amendment to open.
+        var corrected = await walkDoctor.PostAsJsonAsync("/api/care/tests", new { patientId, consultationId, kind = "Lab", description = "Walk corrected smear" }, Ct);
+        corrected.EnsureSuccessStatusCode();
+        ids["correctedTest"] = (await corrected.Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct)).GetProperty("id").GetGuid();
+        using (var form = new MultipartFormDataContent())
+        {
+            var file = new ByteArrayContent("%PDF-1.4 walk first result"u8.ToArray());
+            file.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+            form.Add(file, "file", "walk-first.pdf");
+            (await clinic.Owner.PostAsync($"/api/care/tests/{ids["correctedTest"]}/result", form, Ct)).EnsureSuccessStatusCode();
+        }
+        (await clinic.Owner.PostAsJsonAsync($"/api/care/tests/{ids["correctedTest"]}/amend", new { text = "Walk corrected parasites", reason = "Walk wrong slide" }, Ct))
+            .EnsureSuccessStatusCode();
+        var correctedTest = ids["correctedTest"];
+        ids["amendment"] = await api.WithDbAsync(db => db.TestResultAmendments.IgnoreQueryFilters().Where(a => a.TestRequestId == correctedTest).Select(a => a.Id).SingleAsync(Ct));
 
         // Task 8: the visit's doctor admits the patient (clinical reason and diagnosis); the director assigns a bed with a deposit; a
         // second patient waits for a bed (the bed board's waiting list).

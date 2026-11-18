@@ -190,11 +190,17 @@ public sealed class CareReportService(IAppDbContext db, CareAccess access, ITena
                           select new { p.Id, p.Number, p.FirstName, p.LastName, p.Phone, p.Status, b.BalanceMinor, b.CreatedAt }).ToListAsync(ct);
         var clinic = await db.ClinicProfiles.AsNoTracking().Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
         var currency = await db.Tenants.Where(t => t.Id == TenantId).Select(t => t.Currency).FirstAsync(ct);
-        var debtors = rows.GroupBy(r => r.Id).Select(g =>
+        // Wave 2: credit the patient holds on other bills (a deposit left over, an overpayment) is netted against what they owe; a patient
+        // whose credit covers their debt is not a debtor. Credit on a bill flagged for review is left out, as that bill is.
+        var debtorIds = rows.Select(r => r.Id).Distinct().ToList();
+        var credits = (await db.PatientBills.AsNoTracking().Where(b => debtorIds.Contains(b.PatientId) && b.CreditMinor > 0 && !b.NeedsReview)
+                .Select(b => new { b.PatientId, b.CreditMinor }).ToListAsync(ct))
+            .GroupBy(b => b.PatientId).ToDictionary(g => g.Key, g => g.Sum(b => b.CreditMinor));
+        var debtors = rows.GroupBy(r => r.Id).Where(g => g.Sum(r => r.BalanceMinor) > credits.GetValueOrDefault(g.Key)).Select(g =>
             {
                 var p = g.First();
                 var name = $"{p.FirstName} {p.LastName}";
-                var balance = g.Sum(r => r.BalanceMinor);
+                var balance = g.Sum(r => r.BalanceMinor) - credits.GetValueOrDefault(g.Key);
                 // Never a reminder to the phone of a patient recorded as deceased.
                 var url = p.Status == PatientStatus.Deceased
                     ? null

@@ -196,20 +196,30 @@ public sealed class CareBrandingTests(ApiFixture api)
         await Json(await doctor.PostAsync($"/api/care/admissions/{admissionId}/discharge-summary/sign", null, Ct));
         async Task<byte[]> DischargePdfAsync() => await (await doctor.GetAsync($"/api/care/admissions/{admissionId}/discharge.pdf", Ct)).Content.ReadAsByteArrayAsync(Ct);
         var withSignature = Images(await DischargePdfAsync());
+        var signedPrescription = Images(await PrescriptionPdfAsync());
+        // Wave 2: the signature is frozen at signing. Removing it (or a new one, or the doctor leaving) changes no signed paper.
         Assert.Equal(HttpStatusCode.NoContent, (await doctor.DeleteAsync("/api/care/staff/me/signature", Ct)).StatusCode);
-        Assert.True(withSignature > Images(await DischargePdfAsync()), "the signing doctor's signature prints on the discharge summary");
+        Assert.Equal(withSignature, Images(await DischargePdfAsync()));
+        Assert.Equal(signedPrescription, Images(await PrescriptionPdfAsync()));
+        Assert.True(withSignature > 0);
 
-        // A receipt carries the signature of the cashier who took the money.
+        // A receipt carries the signature the cashier had when they took the money: none here, and a later one doesn't appear.
         var billId = (await kit.CheckInAsync(desk, (await kit.PatientAsync(clinic, "Receipt", "Payer")).GetProperty("id").GetGuid())).GetProperty("billId").GetGuid();
         var item = await kit.PriceItemAsync(clinic, "Card fee", "Other", 100_000);
         await Json(await cashier.PostAsJsonAsync($"/api/care/bills/{billId}/lines", new { priceItemId = item, quantity = 1, reason = "Card" }, Ct));
-        var paymentId = (await Json(await cashier.PostAsJsonAsync($"/api/care/bills/{billId}/payments", new { amountMinor = 100_000, method = "Cash" }, Ct)))
+        var paymentId = (await Json(await cashier.PostAsJsonAsync($"/api/care/bills/{billId}/payments", new { amountMinor = 50_000, method = "Cash" }, Ct)))
             .GetProperty("id").GetGuid();
-        async Task<byte[]> ReceiptAsync() => await (await desk.GetAsync($"/api/care/payments/{paymentId}/receipt.pdf", Ct)).Content.ReadAsByteArrayAsync(Ct);
-        var plain = Images(await ReceiptAsync());
+        async Task<byte[]> ReceiptAsync(Guid id) => await (await desk.GetAsync($"/api/care/payments/{id}/receipt.pdf", Ct)).Content.ReadAsByteArrayAsync(Ct);
+        var plain = Images(await ReceiptAsync(paymentId));
         await Json(await cashier.PutAsync("/api/care/staff/me/signature", ImageForm(PngOf(300, 100, SKColors.DarkGreen)), Ct));
-        var signed = await ReceiptAsync();
+        Assert.Equal(plain, Images(await ReceiptAsync(paymentId)));
+        var second = (await Json(await cashier.PostAsJsonAsync($"/api/care/bills/{billId}/payments", new { amountMinor = 50_000, method = "Cash" }, Ct)))
+            .GetProperty("id").GetGuid();
+        var signed = await ReceiptAsync(second);
         Assert.True(Images(signed) > plain, "the cashier's signature prints on the receipt");
         Assert.StartsWith("%PDF", Encoding.ASCII.GetString(signed, 0, 4));
+        // A newer signature leaves the old file in place while a signed paper uses it, and that paper keeps printing it.
+        await Json(await cashier.PutAsync("/api/care/staff/me/signature", ImageForm(PngOf(300, 100, SKColors.Black)), Ct));
+        Assert.Equal(Images(signed), Images(await ReceiptAsync(second)));
     }
 }

@@ -238,6 +238,8 @@ public sealed class ConsultationService(
         var now = clock.GetUtcNow();
         consultation.Status = NoteStatus.Signed;
         consultation.SignedAt = now;
+        // Wave 2: the signature printed on this consultation's prescriptions is the one the doctor has now; a later change doesn't touch it.
+        consultation.SignatureKey = await CareBrandingService.CurrentSignatureKeyAsync(db, consultation.DoctorUserId, ct);
         db.AuditLogs.Add(new AuditLog
         {
             TenantId = TenantId, ActorId = caller.UserId, Action = "care.note_signed", EntityType = nameof(Consultation), EntityId = id.ToString(),

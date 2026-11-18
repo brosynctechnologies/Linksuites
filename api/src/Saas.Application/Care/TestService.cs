@@ -80,6 +80,22 @@ public sealed class CareFileSigner(Saas.Application.Courses.MediaOptions options
         && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
             System.Text.Encoding.ASCII.GetBytes(Sign(ResultPurpose, testId, expires)), System.Text.Encoding.ASCII.GetBytes(signature));
 
+    private const string SupersededPurpose = "care-superseded-file";
+
+    /// <summary>Wave 2: the signed link to the file of a corrected (superseded) result, by its amendment row.</summary>
+    public (string Url, DateTimeOffset ExpiresAt) SupersededFileUrl(Guid amendmentId)
+    {
+        var expiresAt = clock.GetUtcNow().Add(Lifetime);
+        var expires = expiresAt.ToUnixTimeSeconds();
+        return ($"{urls.ApiBaseUrl.TrimEnd('/')}/api/care/superseded-result-files/{amendmentId}/{expires}/{Sign(SupersededPurpose, amendmentId, expires)}",
+            DateTimeOffset.FromUnixTimeSeconds(expires));
+    }
+
+    public bool IsSupersededFileValid(Guid amendmentId, long expires, string signature) =>
+        expires >= clock.GetUtcNow().ToUnixTimeSeconds()
+        && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.ASCII.GetBytes(Sign(SupersededPurpose, amendmentId, expires)), System.Text.Encoding.ASCII.GetBytes(signature));
+
     private string Sign(string purpose, Guid id, long expires)
     {
         var mac = System.Security.Cryptography.HMACSHA256.HashData(
@@ -353,6 +369,37 @@ public sealed class TestService(
         if (row?.ResultFileKey is null) return null;
         var type = row.ResultFileType ?? "application/octet-stream";
         // The presigned redirect lives only for what is left of this link (ruling M1), never a fresh window.
+        if (storage.TemporaryUrl(row.ResultFileKey, signer.Remaining(expires)) is { } url) return new CareFile(null, url, type);
+        var stream = await storage.OpenReadAsync(row.ResultFileKey, ct);
+        return stream is null ? null : new CareFile(stream, null, type);
+    }
+
+    /// <summary>
+    /// Wave 2: a short-lived link to the file of a corrected (superseded) result, as for the current file: a clinical read (403 without
+    /// clinical access before anything is looked up; 404 for an unknown test or an amendment of another test), logged through
+    /// <see cref="RecordGuard.OpenAsync"/> (area file), then 404 when that superseded result had no file.
+    /// </summary>
+    public async Task<TestFileLinkDto> SupersededFileLinkAsync(Guid id, Guid amendmentId, string? reason, CancellationToken ct)
+    {
+        access.EnsureClinical(await access.CallerAsync(ct));
+        var patientId = await db.TestRequests.AsNoTracking().Where(t => t.Id == id).Select(t => (Guid?)t.PatientId).FirstOrDefaultAsync(ct)
+            ?? throw new NotFoundException("Test");
+        var file = await db.TestResultAmendments.AsNoTracking().Where(a => a.Id == amendmentId && a.TestRequestId == id)
+            .Select(a => new { a.ResultFileKey, a.ResultFileType }).FirstOrDefaultAsync(ct) ?? throw new NotFoundException("Test");
+        await guard.OpenAsync(patientId, RecordGuard.Areas.File, reason, ct);
+        if (file.ResultFileKey is null) throw new NotFoundException("Result file");
+        var (url, expiresAt) = signer.SupersededFileUrl(amendmentId);
+        return new TestFileLinkDto(url, expiresAt, file.ResultFileType ?? "application/octet-stream");
+    }
+
+    /// <summary>The superseded file behind a valid signed link (403 otherwise), or null when it is gone. As <see cref="FileByLinkAsync"/>.</summary>
+    public async Task<CareFile?> SupersededFileByLinkAsync(Guid amendmentId, long expires, string signature, CancellationToken ct)
+    {
+        if (!signer.IsSupersededFileValid(amendmentId, expires, signature)) throw new ForbiddenException("This link has expired. Open the result again.");
+        var row = await db.TestResultAmendments.IgnoreQueryFilters().AsNoTracking().Where(a => a.Id == amendmentId)
+            .Select(a => new { a.ResultFileKey, a.ResultFileType }).FirstOrDefaultAsync(ct);
+        if (row?.ResultFileKey is null) return null;
+        var type = row.ResultFileType ?? "application/octet-stream";
         if (storage.TemporaryUrl(row.ResultFileKey, signer.Remaining(expires)) is { } url) return new CareFile(null, url, type);
         var stream = await storage.OpenReadAsync(row.ResultFileKey, ct);
         return stream is null ? null : new CareFile(stream, null, type);

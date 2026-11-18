@@ -571,7 +571,7 @@ export function TestRow({ test: given, run, canRecord, onResulted }: { test: Tes
           {link && <p className="text-xs text-muted">The link works for two minutes. Opening it is logged.</p>}
           <ErrorBox error={file.error} />
           {test.amendedAt && <p className="text-xs text-muted">Corrected {formatStamp(test.amendedAt)}. The earlier result was entered in error.</p>}
-          {test.superseded.length > 0 && <SupersededResults items={test.superseded} />}
+          {test.superseded.length > 0 && <SupersededResults testId={test.id} items={test.superseded} run={run} />}
           {canRecord &&
             (amending ? (
               <ResultForm
@@ -644,7 +644,7 @@ export function TestRow({ test: given, run, canRecord, onResulted }: { test: Tes
 }
 
 /** Wave 1: earlier results of a test that were entered in error, newest first, with who recorded them and who corrected them, when and why. */
-function SupersededResults({ items }: { items: TestSupersededDto[] }) {
+function SupersededResults({ testId, items, run }: { testId: string; items: TestSupersededDto[]; run: ClinicalRun }) {
   return (
     <details className="rounded-control border border-dashed border-rule px-3 py-2">
       <summary className="cursor-pointer text-xs font-semibold text-slate-700">
@@ -655,7 +655,7 @@ function SupersededResults({ items }: { items: TestSupersededDto[] }) {
           <li key={s.id} className="text-xs">
             <Badge tone="arterial">Entered in error</Badge>
             {s.resultText && <p className="mt-1 whitespace-pre-wrap text-slate-700 line-through decoration-slate-400">{s.resultText}</p>}
-            {s.hasFile && <p className="mt-1 text-muted">It had a result file, kept on record.</p>}
+            {s.hasFile && <SupersededFile testId={testId} amendmentId={s.id} run={run} />}
             <p className="mt-1 text-muted">
               Recorded by {s.resultedByName ?? "staff"}, {formatStamp(s.resultedAt)}. Marked entered in error by {s.supersededByName ?? "staff"},{" "}
               {formatStamp(s.supersededAt)}.
@@ -665,6 +665,34 @@ function SupersededResults({ items }: { items: TestSupersededDto[] }) {
         ))}
       </ul>
     </details>
+  );
+}
+
+/** Wave 2: the file of a result entered in error, kept on record: a logged clinical read that gives a two-minute link, as for the current file. */
+function SupersededFile({ testId, amendmentId, run }: { testId: string; amendmentId: string; run: ClinicalRun }) {
+  const [link, setLink] = useState<TestFileLinkDto | null>(null);
+  const file = useAction();
+
+  async function openFile() {
+    const res = await file.run(() => run((headers) => api<TestFileLinkDto>(`/api/care/tests/${testId}/superseded/${amendmentId}/file`, { headers })));
+    if (res.ok) setLink(res.data);
+  }
+
+  return (
+    <div className="mt-1 space-y-1">
+      <p className="text-muted">It had a result file, kept on record.</p>
+      {link ? (
+        <a href={link.url} target="_blank" rel="noopener noreferrer" className={linkClass}>
+          Open that file
+        </a>
+      ) : (
+        <Button variant="secondary" className="min-h-10" loading={file.busy} onClick={openFile}>
+          Get that file
+        </Button>
+      )}
+      {link && <p className="text-muted">The link works for two minutes. Opening it is logged.</p>}
+      <ErrorBox error={file.error} />
+    </div>
   );
 }
 

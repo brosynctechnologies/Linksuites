@@ -92,13 +92,14 @@ public sealed class PaymentService(
         {
             TenantId = TenantId, BillId = bill.Id, PatientId = bill.PatientId, AmountMinor = amountMinor, Method = method, Reference = cleanReference,
             ReceiptNumber = await NextReceiptAsync(now, ct), IsDeposit = deposit, RecordedByUserId = user.UserId, PaidAt = now, IdempotencyKey = key,
-            Status = CarePaymentStatus.Succeeded,
+            Status = CarePaymentStatus.Succeeded, SignatureKey = await CareBrandingService.CurrentSignatureKeyAsync(db, user.UserId, ct),
         };
         db.CarePayments.Add(payment);
         bill.PaidMinor = checked(bill.PaidMinor + amountMinor);
         // Callers save payment changes before recalculating.
         await db.SaveChangesAsync(ct);
         await billing.RecalculateAsync(bill.Id, ct);
+        await StampBalanceAfterAsync(db, payment, ct);
         // The patient's portal users hear the amount, the bill and the receipt number (Task 14), committed with the payment.
         await notices.PaymentReceivedAsync(bill.PatientId, bill.Number, amountMinor, payment.ReceiptNumber!, ct);
         await db.SaveChangesAsync(ct);
@@ -214,7 +215,7 @@ public sealed class PaymentService(
         var row = await (from b in db.PatientBills.AsNoTracking()
                          join p in db.Patients on b.PatientId equals p.Id
                          where b.Id == payment.BillId
-                         select new { b.Number, b.BalanceMinor, p.FirstName, p.MiddleName, p.LastName, PatientNumber = p.Number }).FirstAsync(ct);
+                         select new { b.Number, b.BalanceMinor, b.CreditMinor, p.FirstName, p.MiddleName, p.LastName, PatientNumber = p.Number }).FirstAsync(ct);
         var clinic = await db.ClinicProfiles.AsNoTracking().FirstAsync(ct);
         var reversed = payment.ReversedAt is { } at
             // M5: the free-text reason stays off the receipt (every member and, from Task 15, the patient can print it).
@@ -223,11 +224,26 @@ public sealed class PaymentService(
         var name = string.Join(' ', new[] { row.FirstName, row.MiddleName, row.LastName }.Where(n => !string.IsNullOrWhiteSpace(n)));
         // Wave 1: a desk payment prints who took the money and, when they have one, their signature (an online payment has no recorder).
         var receivedBy = payment.RecordedByUserId is { } by ? await db.Users.AsNoTracking().Where(u => u.Id == by).Select(u => u.FullName).FirstOrDefaultAsync(ct) : null;
-        var signature = await CareBrandingService.SignatureBytesAsync(db, storage, payment.RecordedByUserId, ct);
+        // Wave 2: the signature the recorder had when they took the money (frozen on the payment), not their current one.
+        var signature = await CareBrandingService.FrozenSignatureAsync(storage, payment.SignatureKey, ct);
         return new CareReceiptData(clinic.Name, clinic.Address, clinic.Phone, await PrescriptionService.LogoAsync(storage, clinic.LogoKey, ct),
             payment.ReceiptNumber!, CareCalendar.Today(payment.PaidAt).ToString("d MMMM yyyy", CultureInfo.InvariantCulture), name, row.PatientNumber,
             row.Number, Money.Format(payment.AmountMinor, payment.Currency), MethodLabel(payment.Method), payment.ProviderRef ?? payment.Reference,
-            Money.Format(row.BalanceMinor, payment.Currency), reversed, !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct), receivedBy, signature);
+            BalanceText(payment.BalanceAfterMinor ?? row.BalanceMinor - row.CreditMinor, payment.Currency), reversed, !await plans.HasFeatureAsync(LimitKeys.RemoveBranding, ct), receivedBy, signature);
+    }
+
+    /// <summary>Wave 2: what the receipt says is left: the balance, or the credit when the bill is overpaid.</summary>
+    private static string BalanceText(long balanceLessCredit, string currency) =>
+        balanceLessCredit >= 0 ? Money.Format(balanceLessCredit, currency) : $"{Money.Format(-balanceLessCredit, currency)} in credit";
+
+    /// <summary>
+    /// Wave 2: stamps the bill's balance (less any credit) right after this payment, for its receipt. The caller holds the bill lock,
+    /// has recalculated the bill, and saves.
+    /// </summary>
+    internal static async Task StampBalanceAfterAsync(IAppDbContext db, CarePayment payment, CancellationToken ct)
+    {
+        var after = await db.PatientBills.AsNoTracking().Where(b => b.Id == payment.BillId).Select(b => new { b.BalanceMinor, b.CreditMinor }).FirstAsync(ct);
+        payment.BalanceAfterMinor = after.BalanceMinor - after.CreditMinor;
     }
 
     public static string MethodLabel(PayMethod method) => method switch

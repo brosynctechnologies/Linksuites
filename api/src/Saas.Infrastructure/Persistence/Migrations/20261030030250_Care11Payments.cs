@@ -200,6 +200,16 @@ namespace Saas.Infrastructure.Persistence.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            // Wave 2: before this migration every payment had a receipt number. Online checkouts (pending, abandoned, mismatched) have none,
+            // and making the column required again would fail half way. Refuse with a clear message while any exist.
+            migrationBuilder.Sql("""
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM care_payments WHERE receipt_number IS NULL) THEN
+                        RAISE EXCEPTION 'Care11Payments cannot be rolled back: some care payments are online checkouts without a receipt number (pending, abandoned or mismatched), which the earlier schema cannot hold. Restore a backup taken before this migration instead.';
+                    END IF;
+                END $$;
+                """);
             migrationBuilder.DropTable(
                 name: "bill_adjustments");
 

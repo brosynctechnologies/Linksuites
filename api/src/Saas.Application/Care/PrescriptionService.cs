@@ -138,7 +138,9 @@ internal static class CareOrders
     {
         if (context.VisitId is not { } visitId) return;
         if (!await db.Visits.AsNoTracking().AnyAsync(v => v.Id == visitId && v.Stage == VisitStage.Done, ct)) return;
-        var due = await db.PatientBills.AsNoTracking().Where(b => b.Id == billId).Select(b => new { b.Number, b.BalanceMinor }).FirstAsync(ct);
+        var due = await db.PatientBills.AsNoTracking().Where(b => b.Id == billId).Select(b => new { b.Number, b.BalanceMinor, b.DueNoticeBalanceMinor }).FirstAsync(ct);
+        if (due.BalanceMinor <= 0 || due.DueNoticeBalanceMinor == due.BalanceMinor) return;
+        await db.PatientBills.Where(b => b.Id == billId).ExecuteUpdateAsync(s => s.SetProperty(b => b.DueNoticeBalanceMinor, (long?)due.BalanceMinor), ct);
         await notices.BillDueAsync(context.PatientId, due.Number, due.BalanceMinor, ct);
         await db.SaveChangesAsync(ct);
     }
@@ -222,6 +224,8 @@ public sealed class PrescriptionService(
                 Frequency = i.Frequency, DurationDays = i.DurationDays, Quantity = i.Quantity, Route = Stored(i.Route), Instructions = Stored(i.Instructions),
                 PriceItemId = i.PriceItemId,
             }).ToList(),
+            // Wave 2: outside a consultation the prescription is signed as written, so the prescriber's signature is frozen now.
+            SignatureKey = context.ConsultationId is null ? await CareBrandingService.CurrentSignatureKeyAsync(db, caller.UserId, ct) : null,
         };
         db.Prescriptions.Add(prescription);
         if (prescription.AllergyAcknowledged)
@@ -276,9 +280,15 @@ public sealed class PrescriptionService(
         var logo = await LogoAsync(storage, clinic.LogoKey, ct);
         // The doctor's handwritten signature only goes on a prescription whose consultation has been signed (or one written outside a
         // consultation): a draft printed by the desk must not look authorised.
-        var signed = await db.Prescriptions.AsNoTracking().Where(p => p.Id == id)
-            .AnyAsync(p => p.ConsultationId == null || db.Consultations.Any(c => c.Id == p.ConsultationId && c.Status == NoteStatus.Signed), ct);
-        var signature = signed ? await CareBrandingService.SignatureBytesAsync(db, storage, dto.DoctorUserId, ct) : null;
+        // Wave 2: the signature is the one frozen when it was signed (the consultation's at its signing, or this prescription's when it
+        // was written outside one), never the doctor's current one.
+        var frozen = await db.Prescriptions.AsNoTracking().Where(p => p.Id == id)
+            .Select(p => new
+            {
+                Signed = p.ConsultationId == null || db.Consultations.Any(c => c.Id == p.ConsultationId && c.Status == NoteStatus.Signed),
+                Key = p.ConsultationId == null ? p.SignatureKey : db.Consultations.Where(c => c.Id == p.ConsultationId).Select(c => c.SignatureKey).FirstOrDefault(),
+            }).FirstAsync(ct);
+        var signature = frozen.Signed ? await CareBrandingService.FrozenSignatureAsync(storage, frozen.Key, ct) : null;
 
         var written = CareCalendar.Today(dto.CreatedAt);
         var today = CareCalendar.Today(clock.GetUtcNow());
