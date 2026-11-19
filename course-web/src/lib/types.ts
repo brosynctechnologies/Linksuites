@@ -62,8 +62,9 @@ export type QuestionType = "SingleChoice" | "MultipleChoice" | "TrueFalse" | "Sh
 export type Channel = "Marketplace" | "Academy";
 /** How a learner got into a course (server EnrollmentSource). */
 export type EnrollmentSource = "Purchase" | "Free" | "Coupon";
-export type PayoutStatus = "Requested" | "Paid" | "Rejected";
-export type EarningStatus = "Pending" | "Available" | "PartlyAvailable" | "Requested" | "PaidOut" | "Reversed";
+/** Processing: Paystack is sending it. Failed: the transfer failed; the amount is back in the available balance. */
+export type PayoutStatus = "Requested" | "Processing" | "Paid" | "Failed" | "Rejected";
+export type EarningStatus = "Pending" | "Available" | "PartlyAvailable" | "Requested" | "PaidOut" | "Reversed" | "Settled";
 export type DiscountType = "Percent" | "Fixed";
 
 // ---- Academy ----
@@ -71,6 +72,12 @@ export interface PayoutAccount {
   bankName: string;
   accountNumber: string;
   accountName: string;
+  /** Paystack's code for the bank, when it was picked from the list. */
+  bankCode?: string | null;
+  /** The bank confirmed the account name. */
+  verified?: boolean;
+  /** Paystack settles this seller's sales straight to the account (a subaccount). */
+  directSettlement?: boolean;
 }
 export interface AcademyDto {
   name: string;
@@ -286,6 +293,8 @@ export interface EarningsDto {
   availableMinor: number;
   pendingMinor: number;
   paidOutMinor: number;
+  /** Sales Paystack settled to the bank directly (direct settlement). */
+  settledMinor?: number;
   entries: Paged<EarningEntry>;
 }
 export interface PayoutDto {
@@ -551,4 +560,18 @@ export interface MyBusinessDto {
   name: string;
   role: Role;
   current: boolean;
+}
+
+/** How payouts work on the platform right now (GET /api/payouts/settings). */
+export interface PayoutSettings {
+  /** Payouts are sent by Paystack Transfer once the platform approves them. */
+  automaticTransfers: boolean;
+  /** Direct settlement (a Paystack subaccount) can be turned on. */
+  directSettlement: boolean;
+  /** Bank accounts can be checked with the bank. */
+  canVerify: boolean;
+}
+export interface BankOption {
+  name: string;
+  code: string;
 }

@@ -32,14 +32,15 @@ public sealed record BlockRequest(DateOnly Start, DateOnly End, string? Note);
 public sealed record BlockDto(Guid Id, DateOnly Start, DateOnly End, string? Note);
 public sealed record PropertyEarningDto(Guid Id, Guid StayId, string Description, long GrossMinor, long FeeMinor, long NetMinor,
     DateTimeOffset AvailableAt, DateTimeOffset CreatedAt, string Status);
-public sealed record PropertyEarningsDto(string Currency, long AvailableMinor, long PendingMinor, long PaidOutMinor, IReadOnlyList<PropertyEarningDto> Entries);
+public sealed record PropertyEarningsDto(string Currency, long AvailableMinor, long PendingMinor, long PaidOutMinor, IReadOnlyList<PropertyEarningDto> Entries,
+    long SettledMinor = 0);
 
 /// <summary>
 /// Short-let bookings for guests. Dates are held for 15 minutes while the guest pays the platform; a PostgreSQL exclusion
 /// constraint makes sure two guests can never hold or confirm overlapping nights.
 /// </summary>
 public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCore core, IPaymentGateway gateway, PaymentSettings payments, IDbErrors errors,
-    NotificationQueue notifications, LocationTree locations, ILogger<StayService> logger)
+    NotificationQueue notifications, LocationTree locations, ILogger<StayService> logger, PaymentSplits splits)
 {
     public const int MaxNights = 90;
     public static DateOnly Today(DateTimeOffset now) => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, InspectionService.Zone).DateTime);
@@ -106,8 +107,10 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
         {
             throw new ConflictException("Those dates were just booked. Choose other dates.");
         }
+        // A host with direct settlement: Paystack splits the payment, keeping the platform's commission.
+        var split = await splits.ForCheckoutAsync(gateway.Name, listing.TenantId, stay.Reference, stay.TotalMinor, stay.CommissionMinor, ct);
         var url = await gateway.InitializeAsync(new PaymentInit(guest.Email!, stay.TotalMinor, stay.Currency, stay.Reference,
-            $"{core.Web}/trips/{stay.Id}", new() { ["listing"] = listing.Title, ["tenantId"] = listing.TenantId.ToString() }), ct);
+            $"{core.Web}/trips/{stay.Id}", new() { ["listing"] = listing.Title, ["tenantId"] = listing.TenantId.ToString() }, split), ct);
         return new StayBookingDto(stay.Id, url, stay.TotalMinor, stay.HoldExpiresAt);
     }
 
@@ -180,11 +183,14 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
         stay.Status = StayStatus.Confirmed;
         stay.PaidAt = now;
         var midnight = stay.CheckIn.ToDateTime(TimeOnly.MinValue);
+        // Paid with a Paystack split: Paystack kept the commission agreed at checkout and settles the rest to the host directly.
+        var split = await splits.FindAsync(reference, ct);
+        var fee = split?.FeeMinor ?? stay.CommissionMinor;
         db.Earnings.Add(new Earning
         {
             Source = EarningSource.Stay, SourceId = stay.Id, Description = $"{listing.Title}, {stay.CheckIn:d MMM} to {stay.CheckOut:d MMM yyyy}",
-            UserId = stay.GuestUserId, GrossMinor = stay.TotalMinor, FeePercent = PropertyRules.CommissionPercent, FeeMinor = stay.CommissionMinor,
-            NetMinor = stay.TotalMinor - stay.CommissionMinor,
+            UserId = stay.GuestUserId, GrossMinor = stay.TotalMinor, FeePercent = PropertyRules.CommissionPercent, FeeMinor = fee,
+            NetMinor = stay.TotalMinor - fee, SettledByProvider = split is not null,
             AvailableAt = (new DateTimeOffset(midnight, InspectionService.Zone.GetUtcOffset(midnight)) + PropertyRules.HostPayoutDelay).ToUniversalTime(),
         });
         await NotifyConfirmedAsync(stay, listing, ct);
@@ -422,7 +428,8 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
 }
 
 /// <summary>The host's side of short-lets: stays, closed dates, cancellations, earnings and payouts.</summary>
-public sealed class HostStayService(IAppDbContext db, PropertyCore core, IPaymentGateway gateway, PayoutService payouts, StayService stays, ICurrentUser user)
+public sealed class HostStayService(IAppDbContext db, PropertyCore core, IPaymentGateway gateway, PayoutService payouts, StayService stays, ICurrentUser user,
+    PayoutAccountService accounts)
 {
     public async Task<IReadOnlyList<StudioStayDto>> ListAsync(DateOnly? from, DateOnly? to, CancellationToken ct)
     {
@@ -484,7 +491,7 @@ public sealed class HostStayService(IAppDbContext db, PropertyCore core, IPaymen
         var rows = await db.Earnings.AsNoTracking().Where(e => e.Source == EarningSource.Stay).OrderByDescending(e => e.CreatedAt).Take(200).ToListAsync(ct);
         return new PropertyEarningsDto(agency.Currency, ledger.AvailableMinor, ledger.PendingMinor, ledger.PaidOutMinor, rows.Select(e =>
             new PropertyEarningDto(e.Id, e.SourceId, e.Description, e.GrossMinor, e.FeeMinor, e.NetMinor, e.AvailableAt, e.CreatedAt,
-                ledger.States.GetValueOrDefault(e.Id, LedgerRules.EarningState.Pending).ToString())).ToList());
+                ledger.States.GetValueOrDefault(e.Id, LedgerRules.EarningState.Pending).ToString())).ToList(), ledger.SettledMinor);
     }
 
     public async Task<PayoutDto> RequestPayoutAsync(PayoutRequest r, CancellationToken ct)
@@ -496,13 +503,29 @@ public sealed class HostStayService(IAppDbContext db, PropertyCore core, IPaymen
     public async Task<PayoutAccountDto> SetPayoutAccountAsync(PayoutAccountDto r, CancellationToken ct)
     {
         var agency = await core.AgencyAsync(ct);
-        agency.PayoutAccount = new PayoutAccount { BankName = r.BankName.Trim(), AccountNumber = r.AccountNumber.Trim(), AccountName = r.AccountName.Trim() };
+        agency.PayoutAccount = await accounts.BuildAsync(r, agency.PayoutAccount, agency.Currency, ct);
         await db.SaveChangesAsync(ct);
-        return r;
+        return PayoutAccountService.ToDto(agency.PayoutAccount, user.IsSupportView);
+    }
+
+    /// <summary>Turns on direct settlement: a Paystack subaccount whose default share for the platform is the stay commission.</summary>
+    public async Task<PayoutAccountDto> EnableDirectSettlementAsync(CancellationToken ct)
+    {
+        var agency = await core.AgencyAsync(ct);
+        agency.PayoutAccount = await accounts.EnableDirectSettlementAsync(agency.PayoutAccount, agency.Name, PropertyRules.CommissionPercent,
+            await core.OwnerEmailAsync(agency.TenantId, ct), ct);
+        await db.SaveChangesAsync(ct);
+        return PayoutAccountService.ToDto(agency.PayoutAccount, user.IsSupportView);
+    }
+
+    public async Task<PayoutAccountDto?> DisableDirectSettlementAsync(CancellationToken ct)
+    {
+        var agency = await core.AgencyAsync(ct);
+        agency.PayoutAccount = PayoutAccountService.DisableDirectSettlement(agency.PayoutAccount);
+        await db.SaveChangesAsync(ct);
+        return agency.PayoutAccount is { } p ? PayoutAccountService.ToDto(p, user.IsSupportView) : null;
     }
 
     public async Task<PayoutAccountDto?> PayoutAccountAsync(CancellationToken ct) =>
-        (await core.AgencyAsync(ct)).PayoutAccount is { } p
-            ? new PayoutAccountDto(p.BankName, user.IsSupportView ? AccountMask.Last4(p.AccountNumber) : p.AccountNumber, p.AccountName)
-            : null;
+        (await core.AgencyAsync(ct)).PayoutAccount is { } p ? PayoutAccountService.ToDto(p, user.IsSupportView) : null;
 }

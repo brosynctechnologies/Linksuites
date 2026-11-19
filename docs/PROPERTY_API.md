@@ -169,9 +169,10 @@ unless noted (money: Owner/Admin; payouts and payout account: Owner).
 | POST | `/api/property/listings/{id}/boosts` `{ code }` | `{ boostId, authorizationUrl, amountMinor }`; 409 unless Active |
 | POST | `/api/property/boosts/{id}/verify` `{ reference }` | `BoostDto` (Paystack returns to `{web}/studio/boosts/{id}?reference=…`) |
 | GET | `/api/property/boosts` | `BoostDto[]`. Each paid boost adds its days in the database (from the current end, or now if none), so two boosts paid at the same moment both count. |
-| GET | `/api/property/earnings` (Owner/Admin) | `{ currency, availableMinor, pendingMinor, paidOutMinor, entries: [{ id, stayId, description, grossMinor, feeMinor, netMinor, availableAt, createdAt, status }] }` |
+| GET | `/api/property/earnings` (Owner/Admin) | `{ currency, availableMinor, pendingMinor, paidOutMinor, settledMinor, entries: [{ id, stayId, description, grossMinor, feeMinor, netMinor, availableAt, createdAt, status }] }` |
 | GET (Owner/Admin) / POST (Owner) | `/api/property/payouts` | `PayoutDto[]` / `{ amountMinor }` (minimum ₦5,000; 409 without a bank account) |
-| GET (Owner/Admin) / PUT (Owner) | `/api/property/payout-account` | `{ bankName, accountNumber, accountName }` or 204 |
+| GET (Owner/Admin) / PUT (Owner) | `/api/property/payout-account` | `{ bankName, accountNumber, accountName, bankCode, verified, directSettlement }` or 204 / `{ bankName, bankCode?, accountNumber, accountName }` (with `bankCode` the name is checked with the bank; see "Bank accounts" in `COURSES_API.md`) |
+| POST / DELETE (Owner) | `/api/property/payout-account/direct-settlement` | payout account (DELETE: or 204): Paystack direct settlement (subaccount) on or off; 409 when `Payouts:PaystackSubaccounts` is off or the account isn't checked. Stays paid with Paystack are then split at checkout (the 10% commission stays with the platform) and their earnings show `status: Settled` |
 
 In a support view (see `docs/PLATFORM_API.md`), `accountNumber` in the payout account and the payouts list is masked as `••••1234`.
 
@@ -219,7 +220,7 @@ Reference data for the wizard: `GET /api/locations` (states), `?parent=lagos` (a
 | GET | `/api/admin/property/reviews` | hidden reviews `[{ id, agentName, agentSlug, userName, rating, comment, reportCount, status, createdAt }]` |
 | POST | `/api/admin/property/reviews/{id}/decision` `{ restore }` | 204 |
 | GET / POST / PUT | `/api/admin/property/locations[/{id}]` | `[{ id, parentId, kind, name, slug, lat, lng, position }]` / `{ name, slug?, kind, parentId?, lat?, lng?, position? }` |
-| GET | `/api/admin/payouts?status=Requested` | shared queue (courses and property): `PayoutDto & { product, businessName, currency }` |
+| GET | `/api/admin/payouts?status=Requested` | shared queue (courses and property): `PayoutDto & { product, businessName, currency }`; automatic Paystack transfers (`/settings`, `/{id}/send`): see `PLATFORM_API.md` |
 | POST | `/api/admin/payouts/{id}/paid` `{ reference }` · `/reject` `{ note }` | `PayoutDto` |
 
 ```ts

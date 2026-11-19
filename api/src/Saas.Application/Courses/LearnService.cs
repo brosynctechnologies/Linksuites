@@ -7,7 +7,8 @@ using Saas.Domain.Courses;
 namespace Saas.Application.Courses;
 
 /// <summary>A signed-in learner: buying, the lesson player, progress, quizzes, Q&amp;A, notes, reviews and certificates.</summary>
-public sealed class LearnService(IAppDbContext db, CourseCore core, IPaymentGateway gateway, PaymentSettings payments, ICurrentUser user, AppUrls urls)
+public sealed class LearnService(IAppDbContext db, CourseCore core, IPaymentGateway gateway, PaymentSettings payments, ICurrentUser user, AppUrls urls,
+    Saas.Application.Payouts.PaymentSplits splits)
 {
     private static readonly TimeSpan QuizGrace = TimeSpan.FromSeconds(60);
 
@@ -55,8 +56,11 @@ public sealed class LearnService(IAppDbContext db, CourseCore core, IPaymentGate
         await db.SaveChangesAsync(ct);
 
         var email = await db.Users.Where(u => u.Id == userId).Select(u => u.Email).FirstAsync(ct);
+        // A tutor with direct settlement: Paystack splits the payment, keeping the platform fee this sale would earn.
+        var (_, fee, _) = CourseRules.Split(total, channel, await core.PlanLimitForTenantAsync(LimitKeys.AcademyFeePercent, ct));
+        var split = await splits.ForCheckoutAsync(gateway.Name, course.TenantId, order.Reference, total, fee, ct);
         var url = await gateway.InitializeAsync(new PaymentInit(email!, total, course.Currency, order.Reference,
-            $"{urls.Web(Products.Courses)}/checkout/{order.Id}", new() { ["course"] = course.Title, ["tenantId"] = course.TenantId.ToString() }), ct);
+            $"{urls.Web(Products.Courses)}/checkout/{order.Id}", new() { ["course"] = course.Title, ["tenantId"] = course.TenantId.ToString() }, split), ct);
         return new CheckoutResultDto(false, url, order.Id, course.PriceMinor, discount, total);
     }
 

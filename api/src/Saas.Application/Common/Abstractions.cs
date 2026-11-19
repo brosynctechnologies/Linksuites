@@ -104,6 +104,7 @@ public interface IAppDbContext
     DbSet<CourseCoupon> CourseCoupons { get; }
     DbSet<CourseOrder> CourseOrders { get; }
     DbSet<Earning> Earnings { get; }
+    DbSet<PaymentSplit> PaymentSplits { get; }
     DbSet<Payout> Payouts { get; }
     DbSet<Certificate> Certificates { get; }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { BankAccountForm, DirectSettlement, PayoutModeNote, usePayoutSettings } from "@/components/bank-account-form";
 import { api, asList, toApiError, type ApiError } from "@/lib/api";
 import { MARKETPLACE_FEE_PCT, MIN_PAYOUT_MINOR, REFUND_WINDOW_DAYS } from "@/lib/config";
 import { formatDay } from "@/lib/format";
@@ -36,6 +37,7 @@ export default function EarningsPage() {
   const earnings = useApi<EarningsDto>(allowed ? `/api/studio/earnings${qs({ page })}` : null);
   const payouts = useApi<PayoutDto[]>(allowed ? "/api/studio/payouts" : null);
   const academy = useApi<AcademyDto>(allowed ? "/api/academy" : null);
+  const payoutSettings = usePayoutSettings(allowed);
   const [requestOpen, setRequestOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -54,7 +56,7 @@ export default function EarningsPage() {
   const e = earnings.data;
   const currency = e?.currency || academy.data?.currency || "NGN";
   const account = academy.data?.payoutAccount ?? null;
-  const pendingPayout = asList(payouts.data).some((p) => p.status === "Requested");
+  const pendingPayout = asList(payouts.data).some((p) => p.status === "Requested" || p.status === "Processing");
 
   async function refund(entry: EarningEntry) {
     const orderId = entry.orderId;
@@ -106,6 +108,11 @@ export default function EarningsPage() {
         />
       )}
 
+      {e && !!e.settledMinor && (
+        <p className="text-sm text-muted">Paystack has also paid {formatMoney(e.settledMinor, currency)} of your sales straight to your bank (direct settlement).</p>
+      )}
+      <PayoutModeNote settings={payoutSettings.data} account={account} />
+
       {notice && <Notice tone="success">{notice}</Notice>}
       {actionError && <ApiErrorView error={actionError} />}
 
@@ -135,7 +142,10 @@ export default function EarningsPage() {
                 </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-muted">Account name</dt>
-                  <dd className="font-medium text-ink">{account.accountName}</dd>
+                  <dd className="font-medium text-ink">
+                    {account.accountName}
+                    {account.verified && <span className="ml-1.5 text-xs font-normal text-muted">(checked with the bank)</span>}
+                  </dd>
                 </div>
               </dl>
             ) : canManage ? (
@@ -148,6 +158,17 @@ export default function EarningsPage() {
             <ErrorBox error={academy.error} onRetry={academy.reload} />
           ) : (
             <PageLoader />
+          )}
+          {canManage && (
+            <DirectSettlement
+              settings={payoutSettings.data}
+              account={account}
+              path="/api/academy/payout-account"
+              onChanged={(a) => {
+                academy.setData(a as AcademyDto);
+                setNotice((a as AcademyDto).payoutAccount?.directSettlement ? "Direct settlement is on." : "Direct settlement is off.");
+              }}
+            />
           )}
         </Card>
         <Card>
@@ -182,7 +203,15 @@ export default function EarningsPage() {
                   <p className="truncate text-right text-sm text-slate-700 md:text-left">
                     {p.bankName}, {p.accountNumber}
                   </p>
-                  <p className="truncate text-sm text-muted">{p.status === "Rejected" ? (p.note ?? "Rejected") : (p.reference ?? (p.paidAt ? `Paid ${formatDay(p.paidAt)}` : "—"))}</p>
+                  <p className="truncate text-sm text-muted">
+                    {p.status === "Rejected"
+                      ? (p.note ?? "Rejected")
+                      : p.status === "Failed"
+                        ? "The transfer didn't go through; the amount is back in your balance."
+                        : p.status === "Processing"
+                          ? "Paystack is sending it"
+                          : (p.reference ?? (p.paidAt ? `Paid ${formatDay(p.paidAt)}` : "—"))}
+                  </p>
                   <p className="tnum text-right font-semibold text-ink">{formatMoney(p.amountMinor, currency)}</p>
                 </li>
               );
@@ -257,10 +286,10 @@ export default function EarningsPage() {
       </Modal>
       <Modal open={accountOpen} title="Payout account" onClose={() => setAccountOpen(false)}>
         {accountOpen && (
-          <AccountForm
+          <BankAccountForm
             account={account}
-            onSaved={(a) => {
-              academy.setData(a);
+            save={async (body) => {
+              academy.setData(await api<AcademyDto>("/api/academy/payout-account", { method: "PUT", body }));
               setAccountOpen(false);
               setNotice("Payout account saved.");
             }}
@@ -329,50 +358,6 @@ function PayoutForm({
       {error && <ErrorBox error={error} />}
       <Button type="submit" className="w-full" loading={busy}>
         Request payout
-      </Button>
-    </form>
-  );
-}
-
-function AccountForm({ account, onSaved }: { account: PayoutAccount | null; onSaved: (a: AcademyDto) => void }) {
-  const [form, setForm] = useState<PayoutAccount>(account ?? { bankName: "", accountNumber: "", accountName: "" });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<ApiError | null>(null);
-  const set = (k: keyof PayoutAccount) => (ev: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: ev.target.value }));
-
-  async function submit(ev: FormEvent) {
-    ev.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      onSaved(
-        await api<AcademyDto>("/api/academy/payout-account", {
-          method: "PUT",
-          body: { bankName: form.bankName.trim(), accountNumber: form.accountNumber.replace(/\s/g, ""), accountName: form.accountName.trim() },
-        }),
-      );
-    } catch (err) {
-      setError(toApiError(err));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="space-y-4">
-      <Input label="Bank" required value={form.bankName} onChange={set("bankName")} placeholder="e.g. GTBank" error={error?.field("bankName")} />
-      <Input
-        label="Account number"
-        required
-        inputMode="numeric"
-        value={form.accountNumber}
-        onChange={set("accountNumber")}
-        placeholder="10-digit NUBAN"
-        error={error?.field("accountNumber")}
-      />
-      <Input label="Account name" required value={form.accountName} onChange={set("accountName")} hint="As your bank shows it." error={error?.field("accountName")} />
-      {error && <ErrorBox error={error} />}
-      <Button type="submit" className="w-full" loading={busy}>
-        Save account
       </Button>
     </form>
   );

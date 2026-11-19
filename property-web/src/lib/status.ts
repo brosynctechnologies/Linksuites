@@ -54,6 +54,8 @@ export const BOOST_STATUS: Map = {
 
 export const PAYOUT_STATUS: Map = {
   Requested: { label: "Requested", tone: "ochre" },
+  Processing: { label: "Sending", tone: "ochre" },
+  Failed: { label: "Transfer failed", tone: "brick" },
   Paid: { label: "Paid", tone: "seal" },
   Rejected: { label: "Rejected", tone: "brick" },
 };
@@ -65,6 +67,7 @@ export const EARNING_STATUS: Map = {
   Requested: { label: "In payout", tone: "ochre" },
   PaidOut: { label: "Paid out", tone: "neutral" },
   Reversed: { label: "Refunded", tone: "brick" },
+  Settled: { label: "Paid by Paystack", tone: "neutral" },
 };
 
 export const MEDIA_STATUS: Map = {

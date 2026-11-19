@@ -153,6 +153,12 @@ public static class CoreEndpoints
                 logger.LogWarning("Rejected Paystack webhook with an invalid signature");
                 return Results.Unauthorized();
             }
+            // Automatic payouts: Paystack reports each transfer's outcome on the same webhook.
+            if (PaystackClient.ParseTransferEvent(body) is { } transfer)
+            {
+                await request.HttpContext.RequestServices.GetRequiredService<Saas.Application.Payouts.PayoutAdminService>().ApplyTransferEventAsync(transfer, ct);
+                return Results.Ok();
+            }
             if (PaystackClient.ParseChargeSuccess(body) is { } charge)
             {
                 // Course purchases (crs_...) and plan subscriptions both arrive on the platform account.

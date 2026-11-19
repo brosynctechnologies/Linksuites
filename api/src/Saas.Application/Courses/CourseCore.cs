@@ -218,10 +218,13 @@ public sealed class CourseCore(
         if (order.CouponCode is { } code)
             await db.CourseCoupons.Where(c => c.Code == code).ExecuteUpdateAsync(s => s.SetProperty(c => c.Uses, c => c.Uses + 1), ct);
         var (pct, fee, net) = CourseRules.Split(order.TotalMinor, order.Channel, await PlanLimitForTenantAsync(LimitKeys.AcademyFeePercent, ct));
+        // Paid with a Paystack split: Paystack kept the fee agreed at checkout and settles the rest to the tutor directly.
+        var split = await db.PaymentSplits.AsNoTracking().FirstOrDefaultAsync(s => s.Reference == reference, ct);
+        if (split is not null) (fee, net) = (split.FeeMinor, order.TotalMinor - split.FeeMinor);
         db.Earnings.Add(new Earning
         {
             Source = EarningSource.CourseOrder, SourceId = order.Id, Description = course.Title, CourseId = course.Id, UserId = order.UserId, Channel = order.Channel, GrossMinor = order.TotalMinor,
-            FeePercent = pct, FeeMinor = fee, NetMinor = net, AvailableAt = Now.Add(CourseRules.RefundWindow),
+            FeePercent = pct, FeeMinor = fee, NetMinor = net, AvailableAt = Now.Add(CourseRules.RefundWindow), SettledByProvider = split is not null,
         });
         try
         {

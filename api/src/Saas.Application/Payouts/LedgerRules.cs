@@ -7,29 +7,33 @@ public static class LedgerRules
 
     /// <summary>
     /// <c>Requested</c>: wholly covered by payouts (at least partly one still waiting to be paid). <c>PartlyAvailable</c>:
-    /// some of it is covered by payouts, the rest can still be requested.
+    /// some of it is covered by payouts, the rest can still be requested. <c>Settled</c>: Paystack split the payment and settled the
+    /// seller's share straight to their bank (a subaccount), so it never passes through payouts.
     /// </summary>
-    public enum EarningState { Pending, Available, PaidOut, Reversed, Requested, PartlyAvailable }
+    public enum EarningState { Pending, Available, PaidOut, Reversed, Requested, PartlyAvailable, Settled }
 
-    public sealed record LedgerEntry(Guid Id, long NetMinor, DateTimeOffset AvailableAt, bool Reversed, DateTimeOffset CreatedAt);
+    public sealed record LedgerEntry(Guid Id, long NetMinor, DateTimeOffset AvailableAt, bool Reversed, DateTimeOffset CreatedAt, bool SettledByProvider = false);
 
-    public sealed record Ledger(long PendingMinor, long AvailableMinor, long PaidOutMinor, IReadOnlyDictionary<Guid, EarningState> States);
+    /// <param name="SettledMinor">Earnings Paystack settled to the seller directly (subaccounts); not part of the other balances.</param>
+    public sealed record Ledger(long PendingMinor, long AvailableMinor, long PaidOutMinor, IReadOnlyDictionary<Guid, EarningState> States, long SettledMinor = 0);
 
     /// <summary>
-    /// Balances from earnings and payouts. Payouts that are requested or paid are taken from available money in
-    /// first-in, first-out order, so the oldest earnings show as paid out first.
+    /// Balances from earnings and payouts. Payouts that are requested, being sent or paid are taken from available money in
+    /// first-in, first-out order, so the oldest earnings show as paid out first. Earnings settled by Paystack stand apart.
     /// </summary>
     public static Ledger Balance(IReadOnlyList<LedgerEntry> earnings, long requestedOrPaidMinor, long paidMinor, DateTimeOffset now)
     {
         var states = new Dictionary<Guid, EarningState>();
         var pending = 0L;
         var matured = 0L;
+        var settled = 0L;
         // Paid payouts cover the oldest earnings first, then payouts still waiting cover the next ones.
         var paidLeft = paidMinor;
         var requestedLeft = Math.Max(0, requestedOrPaidMinor - paidMinor);
         foreach (var e in earnings.OrderBy(e => e.AvailableAt).ThenBy(e => e.CreatedAt))
         {
             if (e.Reversed) { states[e.Id] = EarningState.Reversed; continue; }
+            if (e.SettledByProvider) { states[e.Id] = EarningState.Settled; settled += e.NetMinor; continue; }
             if (e.AvailableAt > now) { states[e.Id] = EarningState.Pending; pending += e.NetMinor; continue; }
             matured += e.NetMinor;
             if (paidLeft >= e.NetMinor) { states[e.Id] = EarningState.PaidOut; paidLeft -= e.NetMinor; continue; }
@@ -41,6 +45,10 @@ public static class LedgerRules
             requestedLeft = 0;
             states[e.Id] = covered > 0 ? EarningState.PartlyAvailable : EarningState.Available;
         }
-        return new Ledger(pending, Math.Max(0, matured - requestedOrPaidMinor), paidMinor, states);
+        return new Ledger(pending, Math.Max(0, matured - requestedOrPaidMinor), paidMinor, states, settled);
     }
+
+    /// <summary>Payout statuses that hold money back from the available balance: requested, being sent, or paid.</summary>
+    public static bool Holds(Saas.Domain.Payouts.PayoutStatus status) =>
+        status is Saas.Domain.Payouts.PayoutStatus.Requested or Saas.Domain.Payouts.PayoutStatus.Processing or Saas.Domain.Payouts.PayoutStatus.Paid;
 }

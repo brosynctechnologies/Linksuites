@@ -215,6 +215,8 @@ public static class DependencyInjection
         services.AddScoped<LearnService>();
         services.AddScoped<CourseAdminService>();
         services.AddScoped<PayoutService>();
+        services.AddScoped<PayoutAccountService>();
+        services.AddScoped<PaymentSplits>();
         services.AddScoped<Platform.PlatformAccess>();
         services.AddScoped<Platform.PlatformViewer>();
         services.AddScoped<Platform.AuthSessions>();

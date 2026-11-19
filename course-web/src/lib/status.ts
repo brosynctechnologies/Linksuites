@@ -28,6 +28,8 @@ export const VIDEO_STATUS: Record<VideoStatus, { label: string; tone: Tone }> = 
 
 export const PAYOUT_STATUS: Record<PayoutStatus, { label: string; tone: Tone }> = {
   Requested: { label: "Requested", tone: "lagoon" },
+  Processing: { label: "Sending", tone: "lagoon" },
+  Failed: { label: "Transfer failed", tone: "brick" },
   Paid: { label: "Paid", tone: "lime" },
   Rejected: { label: "Rejected", tone: "brick" },
 };
@@ -39,6 +41,7 @@ export const EARNING_STATUS: Record<EarningStatus, { label: string; tone: Tone }
   Requested: { label: "In payout", tone: "lagoon" },
   PaidOut: { label: "Paid out", tone: "neutral" },
   Reversed: { label: "Refunded", tone: "brick" },
+  Settled: { label: "Paid by Paystack", tone: "neutral" },
 };
 
 export function statusOf<K extends string>(map: Record<K, { label: string; tone: Tone }>, key: string | null | undefined) {

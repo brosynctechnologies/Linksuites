@@ -112,6 +112,24 @@ public class CourseMoneyTests
         Assert.Equal(LedgerRules.EarningState.Requested, mixed.States[b.Id]);
     }
 
+    [Fact]
+    public void Ledger_keeps_earnings_settled_by_Paystack_out_of_the_payout_balances()
+    {
+        var plain = new LedgerRules.LedgerEntry(Guid.NewGuid(), 500_000, Now.AddDays(-10), false, Now.AddDays(-17));
+        var settled = new LedgerRules.LedgerEntry(Guid.NewGuid(), 900_000, Now.AddDays(-9), false, Now.AddDays(-16), SettledByProvider: true);
+        var settledFresh = new LedgerRules.LedgerEntry(Guid.NewGuid(), 300_000, Now.AddDays(3), false, Now.AddDays(-4), SettledByProvider: true);
+        var settledRefunded = new LedgerRules.LedgerEntry(Guid.NewGuid(), 200_000, Now.AddDays(-1), true, Now.AddDays(-8), SettledByProvider: true);
+
+        var ledger = LedgerRules.Balance([plain, settled, settledFresh, settledRefunded], requestedOrPaidMinor: 0, paidMinor: 0, Now);
+        Assert.Equal(500_000, ledger.AvailableMinor);
+        Assert.Equal(0, ledger.PendingMinor);
+        Assert.Equal(1_200_000, ledger.SettledMinor);
+        Assert.Equal(LedgerRules.EarningState.Settled, ledger.States[settled.Id]);
+        Assert.Equal(LedgerRules.EarningState.Settled, ledger.States[settledFresh.Id]);
+        Assert.Equal(LedgerRules.EarningState.Reversed, ledger.States[settledRefunded.Id]);
+        Assert.Equal(LedgerRules.EarningState.Available, ledger.States[plain.Id]);
+    }
+
     [Theory]
     [InlineData(0, 0, 0)]
     [InlineData(1, 3, 33)]

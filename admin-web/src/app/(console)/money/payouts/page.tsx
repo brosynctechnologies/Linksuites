@@ -8,12 +8,14 @@ import { useToast } from "@/components/toast";
 import { Button, EmptyState, ErrorPanel, Input, Loading, Mono, PageHeader, Panel, ProductChip, StatusBadge, TableScroll, Tabs } from "@/components/ui";
 import { api } from "@/lib/api";
 import { money, possessive, stamp } from "@/lib/format";
-import type { PayoutRow, PayoutStatus } from "@/lib/types";
+import type { PayoutRow, PayoutSettings, PayoutStatus } from "@/lib/types";
 import { qs, useApi } from "@/lib/use-api";
 import { useUrlFilters } from "@/lib/use-filters";
 
 const KEYS = ["status"] as const;
-const STATUSES: PayoutStatus[] = ["Requested", "Paid", "Rejected"];
+const STATUSES: PayoutStatus[] = ["Requested", "Processing", "Paid", "Failed", "Rejected"];
+/** Tabs whose rows Finance can act on. */
+const ACTIONABLE: PayoutStatus[] = ["Requested", "Failed"];
 
 export default function PayoutsPage() {
   return (
@@ -23,24 +25,62 @@ export default function PayoutsPage() {
   );
 }
 
+/** Paystack's transfer status in words. */
+function transferLabel(status: string | null | undefined) {
+  switch (status) {
+    case "otp":
+      return "Waiting for OTP";
+    case "pending":
+    case "received":
+      return "Paystack is sending";
+    case "success":
+      return "Sent by Paystack";
+    case "reversed":
+      return "Reversed";
+    case "failed":
+      return "Transfer failed";
+    default:
+      return status ?? null;
+  }
+}
+
 function Payouts() {
   const toast = useToast();
   const { refresh } = useQueues();
   const f = useUrlFilters(KEYS);
   const status = (STATUSES.includes(f.values.status as PayoutStatus) ? f.values.status : "Requested") as PayoutStatus;
   const { data, error, reload, setData } = useApi<PayoutRow[]>(`/api/admin/payouts${qs({ status })}`);
+  const settings = useApi<PayoutSettings>("/api/admin/payouts/settings");
+  const automatic = settings.data?.automaticTransfers ?? false;
   const [paying, setPaying] = useState<PayoutRow | null>(null);
   const [rejecting, setRejecting] = useState<PayoutRow | null>(null);
+  const [sending, setSending] = useState<PayoutRow | null>(null);
   const [reference, setReference] = useState("");
   const [note, setNote] = useState("");
   const list = data ?? [];
   const total = list.reduce((s, p) => s + p.amountMinor, 0);
+  const actions = ACTIONABLE.includes(status);
 
   const remove = (id: string) => setData((xs) => (xs ?? []).filter((x) => x.id !== id));
 
   return (
     <>
-      <PageHeader title="Payouts" subtitle="Course and short-let earnings businesses asked to withdraw. Pay them from the bank, then record the transfer reference here." />
+      <PageHeader
+        title="Payouts"
+        subtitle={
+          automatic
+            ? "Course and short-let earnings businesses asked to withdraw. Approve a payout to send it by Paystack Transfer; Paystack confirms it here."
+            : "Course and short-let earnings businesses asked to withdraw. Pay them from the bank, then record the transfer reference here."
+        }
+      />
+      {settings.data && (
+        <p className="mb-3 text-sm text-muted">
+          {automatic
+            ? "Automatic transfers are on: “Send” pays from the platform's Paystack balance. Failed or reversed transfers come back here under Failed, and Finance is emailed."
+            : "Automatic transfers are off, so payouts are sent by hand."}
+          {settings.data.directSettlement && " Sellers with direct settlement are paid by Paystack at checkout and don't request payouts for those sales."}
+        </p>
+      )}
       <FilterBar>
         <Tabs<PayoutStatus>
           label="Payout status"
@@ -69,7 +109,7 @@ function Payouts() {
                   <th>Status</th>
                   <th>{status === "Rejected" ? "Note" : "Reference"}</th>
                   <th className="num">Amount</th>
-                  {status === "Requested" && (
+                  {actions && (
                     <th>
                       <span className="sr-only">Actions</span>
                     </th>
@@ -89,24 +129,42 @@ function Payouts() {
                       <span className="text-xs text-muted">
                         {p.bankName ?? "—"} <Mono>{p.accountNumber ?? ""}</Mono>
                       </span>
+                      {automatic && !p.accountVerified && <span className="block text-xs font-medium text-stop">Not checked with the bank</span>}
                     </td>
                     <td>
                       <StatusBadge status={p.status} />
+                      {transferLabel(p.transferStatus) && <span className="block text-xs text-muted">{transferLabel(p.transferStatus)}</span>}
                       {p.paidAt && <span className="tnum block text-xs text-muted">{stamp(p.paidAt)}</span>}
+                      {p.failureReason && <span className="block max-w-64 text-xs text-stop">{p.failureReason}</span>}
                     </td>
-                    <td className="max-w-64">{status === "Rejected" ? p.note || "—" : p.reference ? <Mono>{p.reference}</Mono> : "—"}</td>
+                    <td className="max-w-64">
+                      {status === "Rejected" ? (
+                        p.note || "—"
+                      ) : p.reference || p.transferReference ? (
+                        <Mono>{p.reference ?? p.transferReference}</Mono>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className="num font-medium">{money(p.amountMinor, p.currency)}</td>
-                    {status === "Requested" && (
+                    {actions && (
                       <td className="whitespace-nowrap">
                         <div className="flex gap-2">
-                          <Button
-                            onClick={() => {
-                              setReference("");
-                              setPaying(p);
-                            }}
-                          >
-                            Mark paid
-                          </Button>
+                          {automatic && (
+                            <Button onClick={() => setSending(p)} disabled={!p.accountVerified}>
+                              {p.status === "Failed" ? "Retry" : "Send"}
+                            </Button>
+                          )}
+                          {!automatic && p.status === "Requested" && (
+                            <Button
+                              onClick={() => {
+                                setReference("");
+                                setPaying(p);
+                              }}
+                            >
+                              Mark paid
+                            </Button>
+                          )}
                           <Button
                             variant="secondary"
                             onClick={() => {
@@ -128,13 +186,36 @@ function Payouts() {
                     Total of {list.length} {list.length === 1 ? "payout" : "payouts"}
                   </td>
                   <td className="num border-t border-line font-semibold">{money(total, list[0]?.currency)}</td>
-                  {status === "Requested" && <td className="border-t border-line" />}
+                  {actions && <td className="border-t border-line" />}
                 </tr>
               </tfoot>
             </table>
           </TableScroll>
         )}
       </Panel>
+
+      <ConfirmDialog
+        open={!!sending}
+        onClose={() => setSending(null)}
+        title={sending?.status === "Failed" ? "Retry payout transfer" : "Send payout"}
+        effect={
+          sending && (
+            <>
+              Sends {money(sending.amountMinor, sending.currency)} from the platform&apos;s Paystack balance to {sending.accountName ?? "the account"} ({sending.bankName}{" "}
+              {sending.accountNumber}) for {sending.businessName || sending.academyName}. Paystack confirms it within minutes. It can&apos;t be called back from here.
+            </>
+          )
+        }
+        confirmLabel={sending?.status === "Failed" ? "Retry transfer" : "Send payout"}
+        onConfirm={async () => {
+          if (!sending) return;
+          const updated = await api<PayoutRow>(`/api/admin/payouts/${sending.id}/send`, { method: "POST" });
+          remove(sending.id);
+          setSending(null);
+          refresh();
+          toast(updated.status === "Failed" ? `Paystack refused the transfer: ${updated.failureReason ?? "see the Failed tab"}` : "Payout sent to Paystack");
+        }}
+      />
 
       <ConfirmDialog
         open={!!paying}

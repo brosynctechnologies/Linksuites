@@ -65,7 +65,7 @@ public sealed record SaveCouponRequest(string Code, Guid? CourseId, CouponDiscou
 
 public sealed record EarningDto(Guid Id, Guid OrderId, string CourseTitle, string StudentName, SaleChannel Channel, long GrossMinor, long FeeMinor,
     long NetMinor, DateTimeOffset AvailableAt, DateTimeOffset CreatedAt, string Status, bool Refundable);
-public sealed record EarningsDto(string Currency, long AvailableMinor, long PendingMinor, long PaidOutMinor, Paged<EarningDto> Entries);
+public sealed record EarningsDto(string Currency, long AvailableMinor, long PendingMinor, long PaidOutMinor, Paged<EarningDto> Entries, long SettledMinor = 0);
 
 // Catalogue
 

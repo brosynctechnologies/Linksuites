@@ -36,10 +36,17 @@ Earnings become available **7 days** after the sale (refund window).
 |---|---|---|
 | GET / PUT | `/api/academy` | `AcademyDto` / `UpdateAcademyRequest` |
 | POST | `/api/academy/logo` | multipart `file` → `AcademyDto` |
-| PUT | `/api/academy/payout-account` | `{ bankName, accountNumber, accountName }` → `AcademyDto` |
+| PUT | `/api/academy/payout-account` | `{ bankName, bankCode?, accountNumber, accountName }` → `AcademyDto` (Owner) |
+| POST / DELETE | `/api/academy/payout-account/direct-settlement` | → `AcademyDto`: turns Paystack direct settlement on (creates a subaccount; 409 when `Payouts:PaystackSubaccounts` is off or the account isn't checked) or off (Owner) |
 
-`AcademyDto = { name, slug, headline, bio, logoUrl, brandColor, currency, payoutAccount: { bankName, accountNumber, accountName } | null, academyUrl }`
+`AcademyDto = { name, slug, headline, bio, logoUrl, brandColor, currency, payoutAccount: { bankName, accountNumber, accountName, bankCode, verified, directSettlement } | null, academyUrl }`
 `UpdateAcademyRequest = { name, slug, headline, bio, brandColor }`
+
+Bank accounts (shared with PropertyLink; Owner/Admin, resolve: Owner): `GET /api/payouts/settings` → `{ automaticTransfers, directSettlement, canVerify }`;
+`GET /api/payouts/banks?currency=NGN` → `[{ name, code }]` (Paystack's active banks, cached 6 hours); `POST /api/payouts/resolve-account`
+`{ bankCode, accountNumber }` → `{ accountName }` (400 on `accountNumber` when the bank doesn't know it). Saving the account with a
+`bankCode` asks the bank for the name (the bank's name replaces what was typed), creates a Paystack transfer recipient, and sets
+`verified`; changing the bank or number turns direct settlement off. With `Payouts:AutomaticTransfers` on, `bankCode` is required.
 
 ## Studio: courses, curriculum, lessons (tutor)
 
@@ -85,14 +92,14 @@ Question `type`: `SingleChoice`, `MultipleChoice`, `TrueFalse`, `ShortAnswer`. `
 | POST | `/api/studio/questions/{id}/answers` | `{ body }` → `QuestionDto` |
 | GET | `/api/studio/reviews?courseId=` | `[{ id, courseTitle, studentName, rating, comment, createdAt }]` |
 | GET / POST, PUT / DELETE `{id}` | `/api/studio/coupons` | `CouponDto` (Pro+) |
-| GET | `/api/studio/earnings?page=` | `{ currency, availableMinor, pendingMinor, paidOutMinor, entries: Paged<{ id, orderId, courseTitle, studentName, channel, grossMinor, feeMinor, netMinor, availableAt, createdAt, status }> }` |
+| GET | `/api/studio/earnings?page=` | `{ currency, availableMinor, pendingMinor, paidOutMinor, settledMinor, entries: Paged<{ id, orderId, courseTitle, studentName, channel, grossMinor, feeMinor, netMinor, availableAt, createdAt, status }> }` |
 | GET | `/api/studio/payouts` | `PayoutDto[]` |
 | POST | `/api/studio/payouts` | `{ amountMinor }` → `PayoutDto` (needs a payout account; up to `availableMinor`; minimum ₦5,000) |
 | POST | `/api/studio/orders/{id}/refund` | → 204 (within 7 days of purchase; removes access and the earning) |
 
 `CouponDto = { id, code, courseId, discountType, value, maxUses, uses, expiresAt, isActive }` (`courseId` null = all courses; `discountType` `Percent` or `Fixed`)
-`PayoutDto = { id, amountMinor, status, bankName, accountNumber, accountName, reference, requestedAt, paidAt, note }`; `status`: `Requested`, `Paid`, `Rejected`.
-Earning `status`: `Pending` (in the 7-day window), `Available`, `PartlyAvailable` (part of it is in a payout, the rest can be requested), `Requested` (wholly in a payout request not yet paid), `PaidOut`, `Reversed`. Paid payouts cover the oldest earnings first, then requested ones. `channel`: `Marketplace` or `Academy`.
+`PayoutDto = { id, amountMinor, status, bankName, accountNumber, accountName, reference, requestedAt, paidAt, note, transferReference, transferStatus, failureReason, transferAttempts, accountVerified }`; `status`: `Requested`, `Processing` (Paystack is sending it), `Paid`, `Failed` (the transfer failed or was reversed; the amount is available again), `Rejected`.
+Earning `status`: `Pending` (in the 7-day window), `Available`, `PartlyAvailable` (part of it is in a payout, the rest can be requested), `Requested` (wholly in a payout request not yet paid), `PaidOut`, `Reversed`, `Settled` (paid with a Paystack split: Paystack settled the tutor's share directly; counted in `settledMinor` only). Paid payouts cover the oldest earnings first, then requested ones. `channel`: `Marketplace` or `Academy`.
 `enrolmentsThisMonth` and `revenueThisMonthMinor` count from midnight on the 1st in Africa/Lagos; refunded (revoked) enrolments are not counted. A learner who re-enrols after a refund is counted in the course's student count again.
 `QuestionDto = { id, courseId, courseTitle, lessonId, lessonTitle, authorName, body, createdAt, answers: [{ id, authorName, isTutor, body, createdAt }] }`
 
@@ -149,7 +156,7 @@ A course is complete when every lesson is completed and every quiz passed; a cer
 |---|---|---|---|
 | GET | `/api/admin/course-reviews` | | `[{ courseId, title, academyName, submittedAt, lessonsCount, priceMinor, courseUrl }]` |
 | POST | `/api/admin/course-reviews/{courseId}` | `{ approve, note }` | 204 |
-| GET | `/api/admin/payouts?status=Requested` | | `[PayoutDto & { academyName, product, businessName, currency }]` (shared queue: courses and property payouts) |
+| GET | `/api/admin/payouts?status=Requested` | | `[PayoutDto & { academyName, product, businessName, currency }]` (shared queue: courses and property payouts; also `/settings` and `/{id}/send`, see `PLATFORM_API.md`) |
 | POST | `/api/admin/payouts/{id}/paid` | `{ reference }` | `PayoutDto` |
 | POST | `/api/admin/payouts/{id}/reject` | `{ note }` | `PayoutDto` (the money returns to the tutor's available balance) |
 | GET / POST, PUT `{id}` | `/api/admin/categories` | `{ name, slug, parentId }` | category |

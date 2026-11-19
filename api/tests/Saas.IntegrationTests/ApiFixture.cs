@@ -83,6 +83,7 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Storage:LocalPath", Path.Combine(Path.GetTempPath(), "saas-it-uploads"));
         builder.UseSetting("Jobs:InvoicesEnabled", "false");
         builder.UseSetting("Jobs:BookingsEnabled", "false");
+        builder.UseSetting("Jobs:PayoutsEnabled", "false"); // tests run the transfer re-check by hand
         builder.UseSetting("RateLimits:AuthPerMinute", "100000");
         builder.UseSetting("RateLimits:PublicWritesPerMinute", "100000");
         builder.UseSetting("RateLimits:WebhooksPerMinute", "10000");
@@ -109,8 +110,23 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
             // OPay is faked at the HTTP level, so the real client's signing, headers and parsing are exercised.
             services.AddHttpClient<Saas.Infrastructure.Payments.OpayClient>()
                 .ConfigurePrimaryHttpMessageHandler(() => Opay).SetHandlerLifetime(Timeout.InfiniteTimeSpan);
+            // Paystack transfers, recipients and subaccounts are faked at the HTTP level too.
+            services.AddHttpClient<Saas.Infrastructure.Payments.PaystackTransfersClient>()
+                .ConfigurePrimaryHttpMessageHandler(() => PaystackTransfers).SetHandlerLifetime(Timeout.InfiniteTimeSpan);
         });
     }
+
+    /// <summary>Stands in for Paystack's transfer, recipient and subaccount API, shared by every host of this fixture.</summary>
+    public FakePaystackTransfers PaystackTransfers { get; } = new();
+
+    private WebApplicationFactory<Program>? payoutsHost;
+
+    /// <summary>The same API and database with automatic Paystack transfers and Paystack subaccounts switched on.</summary>
+    public WebApplicationFactory<Program> PayoutsHost => payoutsHost ??= WithWebHostBuilder(b =>
+    {
+        b.UseSetting("Payouts:AutomaticTransfers", "true");
+        b.UseSetting("Payouts:PaystackSubaccounts", "true");
+    });
 
     /// <summary>Stands in for OPay's cashier API (create and status), shared by every host of this fixture.</summary>
     public FakeOpay Opay { get; } = new();

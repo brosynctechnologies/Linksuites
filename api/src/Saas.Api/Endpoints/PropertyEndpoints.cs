@@ -172,6 +172,10 @@ public static class PropertyEndpoints
             .RequireAuthorization(Policies.Admin);
         money.MapPut("/payout-account", (Saas.Application.Payouts.PayoutAccountDto r, HostStayService s, CancellationToken ct) => s.SetPayoutAccountAsync(r, ct))
             .Validate<Saas.Application.Payouts.PayoutAccountDto>().RequireAuthorization(Policies.Owner);
+        money.MapPost("/payout-account/direct-settlement", (HostStayService s, CancellationToken ct) => s.EnableDirectSettlementAsync(ct))
+            .RequireAuthorization(Policies.Owner);
+        money.MapDelete("/payout-account/direct-settlement", async (HostStayService s, CancellationToken ct) =>
+            await s.DisableDirectSettlementAsync(ct) is { } a ? Results.Ok(a) : Results.NoContent()).RequireAuthorization(Policies.Owner);
 
         studio.MapGet("/stats", (int? days, ListingEventsService s, CancellationToken ct) => s.StatsAsync(days ?? 30, ct));
 
