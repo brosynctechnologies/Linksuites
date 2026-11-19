@@ -58,7 +58,23 @@ namespace Saas.Infrastructure.Persistence.Migrations
                 table: "tenants",
                 type: "timestamp with time zone",
                 nullable: true);
+
+            migrationBuilder.Sql(ShowCustomDomainSql);
         }
+
+        /// <summary>
+        /// HideCustomDomain in reverse, now that custom domains work: "Custom domain" goes back on every OrderLink plan whose limits include
+        /// it (Pro), and on the frozen copies of subscriptions whose own limits include it. Safe to run twice.
+        /// </summary>
+        public const string ShowCustomDomainSql = """
+            UPDATE plans SET features = array_append(features, 'Custom domain')
+            WHERE product = 'whatsapp-orders' AND COALESCE((limits ->> 'custom_domain')::bigint, 0) <> 0
+              AND NOT ('Custom domain' = ANY (features));
+            UPDATE subscriptions s SET features = array_append(s.features, 'Custom domain')
+            FROM plans p
+            WHERE s.plan_id = p.id AND p.product = 'whatsapp-orders' AND s.features IS NOT NULL
+              AND COALESCE((s.limits ->> 'custom_domain')::bigint, 0) <> 0 AND NOT ('Custom domain' = ANY (s.features));
+            """;
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)

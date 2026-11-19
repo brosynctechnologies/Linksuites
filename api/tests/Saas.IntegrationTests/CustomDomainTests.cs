@@ -361,6 +361,33 @@ public sealed class CustomDomainTests(ApiFixture api)
     }
 
     [Fact]
+    public async Task Migration_puts_custom_domain_back_on_plans_and_snapshots_that_include_it()
+    {
+        var (_, tenantId, _) = await ProStoreAsync("DomainShow");
+        const string Feature = "Custom domain";
+        await api.WithDbAsync(async db =>
+        {
+            await using var tx = await db.Database.BeginTransactionAsync(Ct);
+            // As HideCustomDomain left things: off the plan and off a paid snapshot (which includes the limit).
+            await db.Database.ExecuteSqlRawAsync(Saas.Infrastructure.Persistence.Migrations.HideCustomDomain.Sql, Ct);
+            await db.Database.ExecuteSqlAsync($$"""
+                UPDATE subscriptions SET features = ARRAY['Unlimited products'], limits = '{"custom_domain": 1}'::jsonb WHERE tenant_id = {{tenantId}}
+                """, Ct);
+
+            await db.Database.ExecuteSqlRawAsync(Saas.Infrastructure.Persistence.Migrations.Wave3CustomDomains.ShowCustomDomainSql, Ct);
+            await db.Database.ExecuteSqlRawAsync(Saas.Infrastructure.Persistence.Migrations.Wave3CustomDomains.ShowCustomDomainSql, Ct); // twice
+
+            var plans = await db.Plans.AsNoTracking().Where(p => p.Product == Products.WhatsAppOrders).ToListAsync(Ct);
+            Assert.Single(plans.Single(p => p.Code == "pro").Features, f => f == Feature);
+            Assert.DoesNotContain(Feature, plans.Single(p => p.Code == "free").Features);
+            var sub = await db.Subscriptions.IgnoreQueryFilters().AsNoTracking().Where(s => s.TenantId == tenantId).SingleAsync(Ct);
+            Assert.Single(sub.Features!, f => f == Feature);
+            await tx.RollbackAsync(Ct);
+            return true;
+        });
+    }
+
+    [Fact]
     public async Task Staff_cannot_change_the_domain()
     {
         var (_, auth) = await api.SignupAsync("DomainStaff");
