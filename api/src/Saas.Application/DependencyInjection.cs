@@ -242,6 +242,9 @@ public static class DependencyInjection
         services.AddScoped<Platform.PlatformAuditService>();
         services.AddScoped<Platform.PlatformAdminsService>();
         services.AddScoped<PayoutAdminService>();
+        services.AddScoped<FinanceAlerts>();
+        services.AddScoped<Clawbacks>();
+        services.AddScoped<Saas.Application.Courses.CourseRefunds>();
         return services;
     }
 }

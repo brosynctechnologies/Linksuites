@@ -1,5 +1,6 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Saas.Application.Billing;
 using Saas.Application.Common;
@@ -214,7 +215,7 @@ public sealed class PaymentSplits(IAppDbContext db, PayoutOptions options)
 /// </summary>
 public sealed class PayoutAdminService(IAppDbContext db, ITenantContext tenant, ICurrentUser user, NotificationQueue notifications, TimeProvider clock,
     PayoutService ledger, IPayoutProvider provider, PayoutOptions options, Saas.Application.Auth.PlatformOptions platform, AppUrls urls,
-    ILogger<PayoutAdminService> logger)
+    ILogger<PayoutAdminService> logger, IServiceScopeFactory scopes)
 {
     public PayoutSettingsDto Settings() => new(options.AutomaticTransfers, options.PaystackSubaccounts, provider.IsConfigured);
 
@@ -287,11 +288,15 @@ public sealed class PayoutAdminService(IAppDbContext db, ITenantContext tenant, 
         logger.LogInformation("Payout {PayoutId}: sending transfer {Reference} (attempt {Attempt})", id, reference, attempt);
 
         var outcome = await provider.TransferAsync(payout.AmountMinor, recipient, reference, Narration(business), business.Currency, CancellationToken.None);
+        outcome = await ConfirmRefusalAsync(reference, outcome, CancellationToken.None);
         await ApplyAsync(id, reference, outcome, CancellationToken.None);
         return await DtoAsync(id, ct);
     }
 
-    /// <summary>A signed transfer webhook. Unknown references (an older attempt, another integration) and wrong amounts are ignored.</summary>
+    /// <summary>
+    /// A signed transfer webhook. Wrong amounts and references no payout has are ignored; a success for an earlier attempt of a payout
+    /// (its reference was replaced by a retry) means the business may have been paid twice, so Finance is told.
+    /// </summary>
     public async Task ApplyTransferEventAsync(TransferEvent e, CancellationToken ct)
     {
         var payout = await db.Payouts.IgnoreQueryFilters().AsNoTracking().Where(p => p.TransferReference == e.Reference)
@@ -299,6 +304,15 @@ public sealed class PayoutAdminService(IAppDbContext db, ITenantContext tenant, 
         if (payout is null)
         {
             logger.LogInformation("Paystack {Event} for {Reference}: no payout has that transfer reference", e.Event, e.Reference);
+            if (e.Status == "success" && PayoutIdOf(e.Reference) is { } earlier
+                && await db.Payouts.IgnoreQueryFilters().AnyAsync(p => p.Id == earlier && p.AmountMinor == e.AmountMinor, ct))
+            {
+                logger.LogError("Paystack transfer.success for {Reference}, an earlier attempt of payout {PayoutId}", e.Reference, earlier);
+                var (old, business) = await LoadAsync(earlier, ct);
+                await AlertFinanceAsync(old, business, "payout.transfer_late_success", ct, e.Reference,
+                    $"This was an earlier attempt ({e.Reference}); the payout's current attempt is {old.TransferReference}.");
+                await db.SaveChangesAsync(ct);
+            }
             return;
         }
         if (payout.AmountMinor != e.AmountMinor)
@@ -310,31 +324,69 @@ public sealed class PayoutAdminService(IAppDbContext db, ITenantContext tenant, 
     }
 
     /// <summary>
-    /// The re-check job: asks Paystack about transfers still in flight after <see cref="PayoutOptions.RecheckAfter"/>. One Paystack never
-    /// got (verify finds nothing) is sent again with the same reference, which Paystack treats as the same transfer.
+    /// The re-check job: asks Paystack about transfers still in flight after <see cref="PayoutOptions.RecheckAfter"/>. Each payout is
+    /// checked in its own scope (each belongs to its own business), and one that fails doesn't stop the rest. Runs whether automatic
+    /// transfers are on or off, so transfers in flight when they are switched off are still settled.
     /// </summary>
     public async Task<int> RecheckTransfersAsync(DateTimeOffset now, CancellationToken ct)
     {
         if (!provider.IsConfigured) return 0;
         var due = now - options.RecheckAfter;
-        var rows = await db.Payouts.IgnoreQueryFilters().AsNoTracking()
+        var ids = await db.Payouts.IgnoreQueryFilters().AsNoTracking()
             .Where(p => p.Status == PayoutStatus.Processing && p.TransferReference != null && p.TransferSentAt <= due)
-            .OrderBy(p => p.TransferSentAt).Take(100).ToListAsync(ct);
+            .OrderBy(p => p.TransferSentAt).Take(100).Select(p => p.Id).ToListAsync(ct);
         var settled = 0;
-        foreach (var p in rows)
+        foreach (var id in ids)
         {
-            var outcome = await provider.VerifyTransferAsync(p.TransferReference!, ct);
-            if (outcome.State == TransferState.NotFound)
+            ct.ThrowIfCancellationRequested();
+            try
             {
-                if (p.Account.RecipientCode is not { } recipient) continue;
-                var business = await db.Tenants.AsNoTracking().FirstAsync(t => t.Id == p.TenantId, ct);
-                logger.LogWarning("Payout {PayoutId}: Paystack has no transfer {Reference}; sending it again with the same reference", p.Id, p.TransferReference);
-                outcome = await provider.TransferAsync(p.AmountMinor, recipient, p.TransferReference!, Narration(business), business.Currency, ct);
+                using var scope = scopes.CreateScope();
+                if (await scope.ServiceProvider.GetRequiredService<PayoutAdminService>().RecheckTransferAsync(id, ct)) settled++;
             }
-            if (outcome.State is TransferState.Success or TransferState.Failed) settled++;
-            await ApplyAsync(p.Id, p.TransferReference!, outcome, ct);
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogError(ex, "Payout {PayoutId}: the transfer re-check failed", id);
+            }
         }
         return settled;
+    }
+
+    /// <summary>
+    /// One payout of the re-check (call it on a fresh scope). One Paystack definitely never got (verify: 404 or "transfer not found") is
+    /// sent again with the same reference, which Paystack treats as the same transfer, but only while automatic transfers are on.
+    /// True when the transfer ended (paid or failed).
+    /// </summary>
+    public async Task<bool> RecheckTransferAsync(Guid id, CancellationToken ct)
+    {
+        var p = await db.Payouts.IgnoreQueryFilters().AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.Status == PayoutStatus.Processing, ct);
+        if (p?.TransferReference is not { } reference) return false;
+        var outcome = await provider.VerifyTransferAsync(reference, ct);
+        if (outcome.State == TransferState.NotFound)
+        {
+            if (!options.AutomaticTransfers || p.Account.RecipientCode is not { } recipient) return false;
+            var business = await db.Tenants.AsNoTracking().FirstAsync(t => t.Id == p.TenantId, ct);
+            logger.LogWarning("Payout {PayoutId}: Paystack has no transfer {Reference}; sending it again with the same reference", p.Id, reference);
+            outcome = await ConfirmRefusalAsync(reference, await provider.TransferAsync(p.AmountMinor, recipient, reference, Narration(business), business.Currency, ct), ct);
+        }
+        await ApplyAsync(p.Id, reference, outcome, ct);
+        return outcome.State is TransferState.Success or TransferState.Failed;
+    }
+
+    /// <summary>
+    /// A refused POST /transfer only fails the payout when Paystack has no transfer with that reference: a refused re-send (a duplicate
+    /// reference, say) may stand for a transfer that exists, so verify decides. No clear answer from verify keeps it in flight.
+    /// </summary>
+    private async Task<TransferOutcome> ConfirmRefusalAsync(string reference, TransferOutcome sent, CancellationToken ct)
+    {
+        if (sent.State != TransferState.Failed) return sent;
+        var check = await provider.VerifyTransferAsync(reference, ct);
+        return check.State switch
+        {
+            TransferState.NotFound => sent,
+            TransferState.Unknown => new TransferOutcome(TransferState.Unknown, null, null, null),
+            _ => check,
+        };
     }
 
     /// <summary>
@@ -349,13 +401,25 @@ public sealed class PayoutAdminService(IAppDbContext db, ITenantContext tenant, 
         switch (o.State)
         {
             case TransferState.Success:
-                if (await current.Where(p => p.Status == PayoutStatus.Processing).ExecuteUpdateAsync(s => s
+                // The money left. In flight, it is simply paid. Marked Failed or Rejected earlier (a failure that wasn't, a reversal
+                // that was itself reversed), it is paid too, which holds the amount again, and Finance checks nobody was paid twice.
+                // A success after a reversal is a stale report (a reversal follows the success), so it never undoes the reversal.
+                var before = await current.Where(p => p.Status == PayoutStatus.Processing
+                        || ((p.Status == PayoutStatus.Failed || p.Status == PayoutStatus.Rejected) && p.TransferStatus != "reversed"))
+                    .Select(p => (PayoutStatus?)p.Status).FirstOrDefaultAsync(ct);
+                if (before is not { } was) break;
+                if (await current.Where(p => p.Status == was).ExecuteUpdateAsync(s => s
                         .SetProperty(p => p.Status, PayoutStatus.Paid).SetProperty(p => p.PaidAt, now).SetProperty(p => p.Reference, reference)
                         .SetProperty(p => p.TransferStatus, "success").SetProperty(p => p.TransferCode, p => code ?? p.TransferCode)
                         .SetProperty(p => p.FailureReason, (string?)null).SetProperty(p => p.UpdatedAt, now), ct) == 1)
                 {
                     var (payout, business) = await LoadAsync(id, ct);
                     await NotifyAsync(payout, business, "payout.paid", ct);
+                    if (was != PayoutStatus.Processing)
+                    {
+                        logger.LogError("Payout {PayoutId}: transfer {Reference} succeeded after the payout was marked {Status}", id, reference, was);
+                        await AlertFinanceAsync(payout, business, "payout.transfer_late_success", ct, reason: $"The payout had been marked {was}.");
+                    }
                     await db.SaveChangesAsync(ct);
                 }
                 break;
@@ -449,7 +513,7 @@ public sealed class PayoutAdminService(IAppDbContext db, ITenantContext tenant, 
     }
 
     /// <summary>Emails Finance (and super admins); with nobody in Finance yet, the configured platform addresses, so it is never missed.</summary>
-    private async Task AlertFinanceAsync(Payout payout, Tenant business, string template, CancellationToken ct)
+    private async Task AlertFinanceAsync(Payout payout, Tenant business, string template, CancellationToken ct, string? reference = null, string? reason = null)
     {
         var finance = await (from a in db.PlatformAdmins join u in db.Users on a.UserId equals u.Id
                              where a.RemovedAt == null && (a.Role == PlatformRole.Finance || a.Role == PlatformRole.SuperAdmin) && u.Email != null
@@ -459,10 +523,15 @@ public sealed class PayoutAdminService(IAppDbContext db, ITenantContext tenant, 
         foreach (var email in finance)
             notifications.Email(email, template, new()
             {
-                ["business"] = business.Name, ["amount"] = Money.Format(payout.AmountMinor, business.Currency), ["reference"] = payout.TransferReference ?? "",
-                ["status"] = payout.TransferStatus ?? "", ["reason"] = payout.FailureReason ?? "", ["link"] = $"{urls.Web("admin")}/money/payouts",
+                ["business"] = business.Name, ["amount"] = Money.Format(payout.AmountMinor, business.Currency),
+                ["reference"] = reference ?? payout.TransferReference ?? "", ["status"] = payout.TransferStatus ?? "",
+                ["reason"] = reason ?? payout.FailureReason ?? "", ["link"] = $"{urls.Web("admin")}/money/payouts",
             });
     }
+
+    /// <summary>The payout a transfer reference was made for (<c>po_{id}</c> or <c>po_{id}_{attempt}</c>), if it is one of ours.</summary>
+    private static Guid? PayoutIdOf(string reference) =>
+        reference.StartsWith("po_", StringComparison.Ordinal) && reference.Length >= 35 && Guid.TryParseExact(reference[3..35], "N", out var id) ? id : null;
 }
 
 /// <summary>Bank account numbers shown in a support view (and other places that only need to recognise the account).</summary>

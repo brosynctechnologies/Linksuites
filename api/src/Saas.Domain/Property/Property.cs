@@ -327,7 +327,8 @@ public class StayBlock : TenantEntity
 }
 
 public enum StayStatus { Pending, Confirmed, Completed, Cancelled, Expired }
-public enum StayCanceller { Guest, Host }
+/// <summary><c>Platform</c>: Finance refunded it from the admin console.</summary>
+public enum StayCanceller { Guest, Host, Platform }
 
 /// <summary>A short-let booking, paid to the platform. Check-out is exclusive (the guest leaves that morning).</summary>
 [Audited]
@@ -357,4 +358,10 @@ public class Stay : TenantEntity
     public DateTimeOffset? CancelledAt { get; set; }
     public StayCanceller? CancelledBy { get; set; }
     public long RefundMinor { get; set; }
+    /// <summary>Refunds sent for this stay; a retry after the provider definitely refused one is a new attempt (OPay: a new refund reference).</summary>
+    public int RefundAttempts { get; set; }
+    /// <summary>The provider didn't give a clear answer to the refund (timeout, 5xx): the sales re-check asks it until it can tell.</summary>
+    public DateTimeOffset? RefundPendingSince { get; set; }
+    /// <summary>When Finance was told the refund couldn't be confirmed (once).</summary>
+    public DateTimeOffset? RefundAlertedAt { get; set; }
 }

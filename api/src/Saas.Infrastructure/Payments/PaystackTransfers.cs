@@ -95,7 +95,10 @@ public sealed class PaystackTransfersClient(HttpClient http, IOptions<PaystackOp
             return new TransferOutcome(TransferState.Unknown, null, null, null);
         }
         if (Unanswered(status)) return new TransferOutcome(TransferState.Unknown, null, null, null);
-        if (status is HttpStatusCode.NotFound || (Success(status) && body.ValueKind == JsonValueKind.Object && !Ok(body)) || status == HttpStatusCode.BadRequest)
+        // Only a clear "no such transfer" may lead to a re-send: HTTP 404, or Paystack's own "Transfer not found" message. Any other
+        // refusal (400, a 200 with status false, a bad key) says nothing about whether the transfer exists.
+        if (status is HttpStatusCode.NotFound
+            || (!Ok(body) && Text(body, "message") is { } message && message.Contains("transfer not found", StringComparison.OrdinalIgnoreCase)))
             return new TransferOutcome(TransferState.NotFound, null, null, Text(body, "message"));
         if (!Success(status) || !body.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
             return new TransferOutcome(TransferState.Unknown, null, null, null);

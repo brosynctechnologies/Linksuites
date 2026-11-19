@@ -30,7 +30,19 @@ public interface IPlanPaymentGateway : IPaymentGateway
     /// (5xx, 429, network, timeout, not configured), so callers keep the payment Pending and try again later.
     /// </summary>
     Task<ProviderChargeStatus> GetStatusAsync(string reference, CancellationToken ct);
+
+    /// <summary>
+    /// What the provider says about refund <paramref name="attempt"/> of <paramref name="reference"/>. Never throws for a provider that
+    /// can't answer: that is <see cref="RefundState.Unknown"/>.
+    /// </summary>
+    Task<RefundState> RefundStatusAsync(string reference, int attempt, CancellationToken ct);
 }
+
+/// <summary>
+/// A refund at the provider. <c>Refunded</c>: taken (pending, processing or done; the money is on its way back). <c>Failed</c>: the
+/// provider says that refund failed. <c>NotFound</c>: the provider has no such refund. <c>Unknown</c>: no clear answer.
+/// </summary>
+public enum RefundState { Refunded, Failed, NotFound, Unknown }
 
 /// <summary><c>Billing:PlanProvider</c> (env <c>BILLING_PROVIDER</c>): which provider new plan checkouts use.</summary>
 public sealed class BillingOptions

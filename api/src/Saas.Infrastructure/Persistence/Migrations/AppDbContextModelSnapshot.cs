@@ -5074,6 +5074,18 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("reference");
 
+                    b.Property<DateTimeOffset?>("RefundAlertedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("refund_alerted_at");
+
+                    b.Property<int>("RefundAttempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("refund_attempts");
+
+                    b.Property<DateTimeOffset?>("RefundPendingSince")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("refund_pending_since");
+
                     b.Property<DateTimeOffset?>("RefundedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("refunded_at");
@@ -9145,9 +9157,21 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("reference");
 
+                    b.Property<DateTimeOffset?>("RefundAlertedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("refund_alerted_at");
+
+                    b.Property<int>("RefundAttempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("refund_attempts");
+
                     b.Property<long>("RefundMinor")
                         .HasColumnType("bigint")
                         .HasColumnName("refund_minor");
+
+                    b.Property<DateTimeOffset?>("RefundPendingSince")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("refund_pending_since");
 
                     b.Property<string>("Status")
                         .IsRequired()

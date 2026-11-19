@@ -193,19 +193,28 @@ public sealed class OpayClient
         }
     }
 
-    /// <summary>"Duplicate merchant order number": a refund with this reference was already sent, so it isn't sent twice.</summary>
+    /// <summary>
+    /// "Duplicate merchant order number": OPay already has a refund with this reference. That says nothing about how it went, so the
+    /// refund's status is asked (refund query) before anything is concluded.
+    /// </summary>
     public const string DuplicateCode = "20000";
+    /// <summary>"Not found" (refund query: no refund with that reference).</summary>
+    public const string NotFoundCode = "02006";
 
-    /// <summary>The refund's own reference with OPay: one per payment, so a retry after a timeout can't refund twice.</summary>
-    public static string RefundReference(string reference) => $"{reference}_rf";
+    /// <summary>
+    /// The refund's own reference with OPay. Attempt 1 is <c>{reference}_rf</c>, so a retry after a timeout can't refund twice; a genuine
+    /// retry after OPay definitely refused or failed one is a new attempt, <c>{reference}_rf{attempt}</c>.
+    /// </summary>
+    public static string RefundReference(string reference, int attempt = 1) => attempt <= 1 ? $"{reference}_rf" : $"{reference}_rf{attempt}";
 
     /// <summary>
     /// Refunds <paramref name="amountMinor"/> of the payment <paramref name="reference"/> (OPay's international refund API, doc.opaycheckout.com
     /// "Refund Payment": POST <c>/api/v1/international/payment/refund/create</c>, signed like the status call). OPay is asked for the
-    /// payment first, so the refund names its real currency and never exceeds what was paid. Accepted (INITIAL, PENDING or SUCCESS) returns;
-    /// anything else throws <see cref="ServiceUnavailableException"/> with what to do next.
+    /// payment first, so the refund names its real currency and never exceeds what was paid. Accepted (INITIAL, PENDING or SUCCESS) returns.
+    /// A definite refusal throws <see cref="RefundRefusedException"/>; no clear answer (5xx, timeout, a duplicate whose status can't be
+    /// read) throws <see cref="ServiceUnavailableException"/>, which callers treat as "may have gone through".
     /// </summary>
-    public async Task RefundAsync(string reference, long amountMinor, CancellationToken ct)
+    public async Task RefundAsync(string reference, long amountMinor, int attempt, CancellationToken ct)
     {
         if (UsesLocalFixture) return;
 
@@ -216,14 +225,14 @@ public sealed class OpayClient
         }
         catch (HttpRequestException)
         {
-            throw new ServiceUnavailableException("OPay didn't answer, so the refund wasn't sent. Please try again in a few minutes.");
+            throw new RefundRefusedException("OPay didn't answer, so the refund wasn't sent. Please try again in a few minutes.");
         }
         if (paid.State != ProviderChargeState.Success || paid.Currency is null)
-            throw new ServiceUnavailableException("OPay doesn't show this payment as paid, so it can't be refunded there. Check it in the OPay dashboard.");
+            throw new RefundRefusedException("OPay doesn't show this payment as paid, so it can't be refunded there. Check it in the OPay dashboard.");
         if (amountMinor <= 0 || amountMinor > paid.AmountMinor)
-            throw new ServiceUnavailableException("The refund is more than OPay took for this payment. Check it in the OPay dashboard.");
+            throw new RefundRefusedException("The refund is more than OPay took for this payment. Check it in the OPay dashboard.");
 
-        var refundReference = RefundReference(reference);
+        var refundReference = RefundReference(reference, attempt);
         // Signed over these exact bytes: the fields (and amount's) in alphabetical order, as OPay checks them.
         var body = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -254,24 +263,78 @@ public sealed class OpayClient
 
         if (code == DuplicateCode)
         {
-            logger.LogInformation("OPay refund {RefundReference} for {Reference} was already sent", refundReference, reference);
-            return;
+            // OPay already has this refund reference. Only its status says whether the money went back: a duplicate is never success.
+            var earlier = await RefundStatusAsync(reference, attempt, ct);
+            logger.LogInformation("OPay refund {RefundReference} for {Reference} was already sent; OPay reports it {State}", refundReference, reference, earlier);
+            switch (earlier)
+            {
+                case RefundState.Refunded:
+                    return;
+                case RefundState.Failed:
+                    throw new RefundRefusedException("OPay reports that this refund failed. Please try again; it will be sent as a new refund.");
+                default:
+                    throw new ServiceUnavailableException("OPay already has this refund but couldn't say how it went. It is being checked.");
+            }
         }
         if (code is not null && MisconfiguredCodes.Contains(code))
         {
             logger.LogError("OPay refused the refund for {Reference} with {Code} ({Message}): check Opay:MerchantId, Opay:SecretKey and Opay:BaseUrl",
                 reference, code, message);
-            throw new ServiceUnavailableException("OPay refused the refund because our OPay setup is wrong. Refund it from the OPay dashboard and tell the platform team.");
+            throw new RefundRefusedException("OPay refused the refund because our OPay setup is wrong. Refund it from the OPay dashboard and tell the platform team.");
         }
         if (code == TryAgainCode)
-            throw new ServiceUnavailableException("OPay is busy and didn't take the refund. Please try again in a few minutes.");
+            throw new RefundRefusedException("OPay is busy and didn't take the refund. Please try again in a few minutes.");
         var status = data is { } d && d.TryGetProperty("orderStatus", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString()?.ToUpperInvariant() : null;
-        if (code != SuccessCode || status is null or "FAIL")
+        if (code == SuccessCode && status is null)
+        {
+            // Accepted, but without a status: not a refusal. The re-check asks OPay how it went.
+            logger.LogWarning("OPay refund {RefundReference} for {Reference}: accepted without a status", refundReference, reference);
+            throw new ServiceUnavailableException("OPay took the refund but didn't say how it went. It is being checked.");
+        }
+        if (code != SuccessCode || status == "FAIL")
         {
             logger.LogWarning("OPay refused the refund for {Reference}: code {Code}, status {Status}, {Message}", reference, code, status, message);
-            throw new ServiceUnavailableException($"OPay didn't accept the refund{(string.IsNullOrWhiteSpace(message) || code == SuccessCode ? "." : $": {message}")}");
+            throw new RefundRefusedException($"OPay didn't accept the refund{(string.IsNullOrWhiteSpace(message) || code == SuccessCode ? "." : $": {message}")}");
         }
         logger.LogInformation("OPay refund {RefundReference} for {Reference}: {Amount} {Currency}, {Status}", refundReference, reference, amountMinor, paid.Currency, status);
+    }
+
+    /// <summary>
+    /// OPay's word on refund <paramref name="attempt"/> of <paramref name="reference"/> (doc.opaycheckout.com "Query Refund Status": POST
+    /// <c>/api/v1/international/payment/refund/query</c> with the refund's reference, signed like the status call). INITIAL, PENDING and
+    /// SUCCESS are a refund OPay took; FAIL failed; 02006 is no such refund; anything else (5xx, timeout, other codes) is unknown.
+    /// </summary>
+    public async Task<RefundState> RefundStatusAsync(string reference, int attempt, CancellationToken ct)
+    {
+        if (UsesLocalFixture) return RefundState.Refunded;
+        var refundReference = RefundReference(reference, attempt);
+        var body = JsonSerializer.SerializeToUtf8Bytes(new { country = "NG", reference = refundReference });
+        var signature = Convert.ToHexStringLower(HMACSHA512.HashData(Encoding.UTF8.GetBytes(options.SecretKey ?? ""), body));
+        try
+        {
+            using var request = Request("/api/v1/international/payment/refund/query", body, signature);
+            using var response = await http.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode) return RefundState.Unknown;
+            var (code, message, data) = await ReadAsync(response, ct);
+            if (code == NotFoundCode) return RefundState.NotFound;
+            var status = data is { } d && d.TryGetProperty("orderStatus", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString()?.ToUpperInvariant() : null;
+            if (code != SuccessCode || status is null)
+            {
+                logger.LogWarning("OPay refund query for {RefundReference}: code {Code}, {Message}", refundReference, code, message);
+                return RefundState.Unknown;
+            }
+            return status switch
+            {
+                "SUCCESS" or "PENDING" or "INITIAL" => RefundState.Refunded,
+                "FAIL" => RefundState.Failed,
+                _ => RefundState.Unknown,
+            };
+        }
+        catch (Exception ex) when (IsTimeout(ex, ct) || ex is HttpRequestException || ex is JsonException)
+        {
+            logger.LogWarning("OPay refund query for {RefundReference} failed: {Error}", refundReference, ex.GetType().Name);
+            return RefundState.Unknown;
+        }
     }
 
     private static string Clip(string value, int max) => value.Length <= max ? value : value[..max];
@@ -337,9 +400,12 @@ public sealed class OpayGateway(OpayClient client, AppUrls urls) : IPlanPaymentG
         catch (HttpRequestException) { return null; }
     }
 
-    public Task RefundAsync(string reference, long amountMinor, CancellationToken ct) =>
-        IsConfigured ? client.RefundAsync(reference, amountMinor, ct)
-            : throw new ServiceUnavailableException("OPay isn't set up on this server, so the refund can't be sent. Refund it from the OPay dashboard.");
+    public Task RefundAsync(string reference, long amountMinor, int attempt, CancellationToken ct) =>
+        IsConfigured ? client.RefundAsync(reference, amountMinor, attempt, ct)
+            : throw new RefundRefusedException("OPay isn't set up on this server, so the refund can't be sent. Refund it from the OPay dashboard.");
+
+    public Task<RefundState> RefundStatusAsync(string reference, int attempt, CancellationToken ct) =>
+        IsConfigured ? client.RefundStatusAsync(reference, attempt, ct) : Task.FromResult(RefundState.Unknown);
 
     public Task<ProviderChargeStatus> GetStatusAsync(string reference, CancellationToken ct) =>
         IsConfigured ? client.StatusAsync(reference, ct) : throw new HttpRequestException("OPay is not configured.");

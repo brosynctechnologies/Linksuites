@@ -255,6 +255,12 @@ public class CourseOrder : TenantEntity
     public DateTimeOffset? RecheckedAt { get; set; }
     public DateTimeOffset? PaidAt { get; set; }
     public DateTimeOffset? RefundedAt { get; set; }
+    /// <summary>Refunds sent for this order; a retry after the provider definitely refused one is a new attempt (OPay: a new refund reference).</summary>
+    public int RefundAttempts { get; set; }
+    /// <summary>The provider didn't give a clear answer to the refund (timeout, 5xx): the sales re-check asks it until it can tell.</summary>
+    public DateTimeOffset? RefundPendingSince { get; set; }
+    /// <summary>When Finance was told the refund couldn't be confirmed (once).</summary>
+    public DateTimeOffset? RefundAlertedAt { get; set; }
 }
 
 public enum SaleChannel { Marketplace, Academy }

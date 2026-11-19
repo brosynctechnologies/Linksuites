@@ -332,7 +332,228 @@ public sealed class PaystackPayoutTests(ApiFixture api)
         Assert.Equal(HttpStatusCode.Conflict, (await ApiFixture.On(api, tutor).PostAsync("/api/academy/payout-account/direct-settlement", null, Ct)).StatusCode);
     }
 
+    // Fix round: refunds of sales Paystack settled directly (C2)
+
+    [Fact]
+    public async Task A_tutor_cannot_refund_a_directly_settled_sale_and_Finance_refunds_it_with_a_clawback()
+    {
+        var (tutor, tenantId, orderId, reference) = await SplitCourseSaleAsync("Clawback");
+        var earning = await api.WithDbAsync(db => db.Earnings.IgnoreQueryFilters().AsNoTracking().SingleAsync(e => e.SourceId == orderId, Ct));
+        Assert.True(earning.SettledByProvider);
+
+        var refused = await tutor.PostAsync($"/api/studio/orders/{orderId}/refund", null, Ct);
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        Assert.Contains("Ask LinkSuite support to refund it", await refused.Content.ReadAsStringAsync(Ct));
+        Assert.DoesNotContain(api.Gateway.Refunds, r => r.Reference == reference);
+        Assert.Equal(OrderState.Paid, (await OrderAsync(orderId)).Status);
+
+        // Finance refunds it from the platform's balance; the tutor's settled share is taken back from their next payouts.
+        await SeedEarningAsync(tenantId, 2_000_000);
+        var admin = ApiFixture.On(Host, await AdminAsync());
+        (await admin.PostAsync($"/api/admin/course-orders/{orderId}/refund", null, Ct)).EnsureSuccessStatusCode();
+        Assert.Single(api.Gateway.Refunds, r => r.Reference == reference && r.AmountMinor == 1_000_000);
+        Assert.Equal(OrderState.Refunded, (await OrderAsync(orderId)).Status);
+        var clawback = await api.WithDbAsync(db => db.Earnings.IgnoreQueryFilters().AsNoTracking()
+            .SingleAsync(e => e.SourceId == orderId && e.Source == EarningSource.CourseClawback, Ct));
+        Assert.Equal(-earning.NetMinor, clawback.NetMinor);
+        Assert.Equal(tenantId, clawback.TenantId);
+        var ledger = await LedgerAsync(tenantId);
+        Assert.Equal(2_000_000 - earning.NetMinor, ledger.AvailableMinor);
+        Assert.Equal(LedgerRules.EarningState.Clawback, ledger.States[clawback.Id]);
+        var alert = Assert.Single(await ClawbackAlertsAsync(), n => n.Payload["reference"] == reference);
+        Assert.Contains("Clawback Academy", alert.Payload["business"]);
+
+        // Refunding again changes nothing.
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync($"/api/admin/course-orders/{orderId}/refund", null, Ct)).StatusCode);
+        Assert.Single(api.Gateway.Refunds, r => r.Reference == reference);
+    }
+
+    [Fact]
+    public async Task A_host_cannot_cancel_a_directly_settled_stay_and_a_guest_cancellation_claws_the_share_back()
+    {
+        var (host, guest, stay) = await SplitStayAsync("Clawback Homes");
+        var earning = await api.WithDbAsync(db => db.Earnings.IgnoreQueryFilters().AsNoTracking().SingleAsync(e => e.SourceId == stay.Id, Ct));
+
+        var refused = await host.PostAsync($"/api/property/stays/{stay.Id}/cancel", null, Ct);
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        Assert.Contains("Ask LinkSuite support to refund it", await refused.Content.ReadAsStringAsync(Ct));
+        Assert.DoesNotContain(api.Gateway.Refunds, r => r.Reference == stay.Reference);
+
+        // The guest cancels a month ahead: all of it back, from the platform's balance; the host's settled share is clawed back.
+        (await guest.PostAsync($"/api/stays/{stay.Id}/cancel", null, Ct)).EnsureSuccessStatusCode();
+        Assert.Single(api.Gateway.Refunds, r => r.Reference == stay.Reference && r.AmountMinor == stay.TotalMinor);
+        var clawback = await api.WithDbAsync(db => db.Earnings.IgnoreQueryFilters().AsNoTracking()
+            .SingleAsync(e => e.SourceId == stay.Id && e.Source == EarningSource.StayClawback, Ct));
+        Assert.Equal(-earning.NetMinor, clawback.NetMinor);
+        Assert.Contains(await ClawbackAlertsAsync(), n => n.Payload["reference"] == stay.Reference);
+        var states = await Json(await host.GetAsync("/api/property/earnings", Ct));
+        Assert.Equal("Clawback", states.GetProperty("entries").EnumerateArray().Single(e => e.GetProperty("id").GetGuid() == clawback.Id).GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task A_split_payment_that_lands_after_the_guest_cancelled_is_refunded_and_clawed_back()
+    {
+        var (_, guest, stay) = await SplitStayAsync("Late Split Homes", pay: false);
+        (await guest.PostAsync($"/api/stays/{stay.Id}/cancel", null, Ct)).EnsureSuccessStatusCode(); // cancelled while unpaid
+        api.Gateway.Charges[stay.Reference] = new VerifiedCharge(stay.Reference, stay.TotalMinor, "NGN", DateTimeOffset.UtcNow);
+
+        using (var scope = Host.Services.CreateScope())
+            Assert.True(await scope.ServiceProvider.GetRequiredService<SalesPaymentChecks>().CheckAsync(stay.Reference, TimeSpan.Zero, Ct));
+
+        Assert.Single(api.Gateway.Refunds, r => r.Reference == stay.Reference && r.AmountMinor == stay.TotalMinor);
+        var clawback = await api.WithDbAsync(db => db.Earnings.IgnoreQueryFilters().AsNoTracking()
+            .SingleAsync(e => e.SourceId == stay.Id && e.Source == EarningSource.StayClawback, Ct));
+        Assert.Equal(-(stay.TotalMinor - stay.CommissionMinor), clawback.NetMinor); // what Paystack settled to the host
+        Assert.Contains(await ClawbackAlertsAsync(), n => n.Payload["reference"] == stay.Reference);
+    }
+
+    // Fix round: transfers that may have been sent (I1) and the re-check across businesses (I2)
+
+    [Fact]
+    public async Task A_verify_answer_that_is_not_not_found_never_resends_the_transfer()
+    {
+        var (_, _, payoutId) = await RequestedPayoutAsync("VerifyBad", 500_000);
+        var admin = ApiFixture.On(Host, await AdminAsync());
+        var reference = (await Json(await admin.PostAsync($"/api/admin/payouts/{payoutId}/send", null, Ct))).GetProperty("transferReference").GetString()!;
+
+        // Paystack answers verify with a 400 (or a 200 with status false) that isn't "transfer not found": nothing can be concluded.
+        Paystack.AnswerNextVerify(reference, HttpStatusCode.BadRequest, "Invalid key");
+        await RecheckAsync(DateTimeOffset.UtcNow.AddHours(1));
+        Paystack.AnswerNextVerify(reference, HttpStatusCode.OK, "Something went wrong");
+        await RecheckAsync(DateTimeOffset.UtcNow.AddHours(1));
+        Assert.Single(Paystack.TransferCalls, r => r == reference);
+        Assert.Equal(PayoutStatus.Processing, (await PayoutAsync(payoutId)).Status);
+    }
+
+    [Fact]
+    public async Task A_refused_resend_is_checked_with_Paystack_before_the_payout_is_failed()
+    {
+        var (_, _, payoutId) = await RequestedPayoutAsync("ResendRefused", 500_000);
+        var admin = ApiFixture.On(Host, await AdminAsync());
+        var reference = (await Json(await admin.PostAsync($"/api/admin/payouts/{payoutId}/send", null, Ct))).GetProperty("transferReference").GetString()!;
+
+        // Verify says not found once (Paystack was still writing it), so the re-check sends it again; Paystack refuses the duplicate.
+        Paystack.AnswerNextVerify(reference, HttpStatusCode.NotFound, "Transfer not found");
+        Paystack.RefuseNextTransfer = "Duplicate Transaction Reference";
+        await RecheckAsync(DateTimeOffset.UtcNow.AddHours(1));
+        Assert.Equal(PayoutStatus.Processing, (await PayoutAsync(payoutId)).Status); // the transfer exists and is pending: not failed
+
+        Paystack.Transfers[reference].Status = "success";
+        await RecheckAsync(DateTimeOffset.UtcNow.AddHours(1));
+        Assert.Equal(PayoutStatus.Paid, (await PayoutAsync(payoutId)).Status);
+    }
+
+    [Fact]
+    public async Task A_success_after_a_failure_marks_the_payout_paid_and_alerts_Finance()
+    {
+        var (tutor, tenantId, payoutId) = await RequestedPayoutAsync("LateSuccess", 500_000);
+        var admin = ApiFixture.On(Host, await AdminAsync());
+        var reference = (await Json(await admin.PostAsync($"/api/admin/payouts/{payoutId}/send", null, Ct))).GetProperty("transferReference").GetString()!;
+        (await TransferWebhookAsync("transfer.failed", reference, 500_000, "Timeout at the bank")).EnsureSuccessStatusCode();
+        Assert.Equal(PayoutStatus.Failed, (await PayoutAsync(payoutId)).Status);
+        Assert.Equal(800_000, (await LedgerAsync(tenantId)).AvailableMinor);
+
+        (await TransferWebhookAsync("transfer.success", reference, 500_000)).EnsureSuccessStatusCode();
+        var payout = await PayoutAsync(payoutId);
+        Assert.Equal(PayoutStatus.Paid, payout.Status);
+        Assert.Equal("success", payout.TransferStatus);
+        var ledger = await LedgerAsync(tenantId);
+        Assert.Equal(300_000, ledger.AvailableMinor); // the money left after all: held again
+        Assert.Equal(500_000, ledger.PaidOutMinor);
+        Assert.Contains(await api.WithDbAsync(db => db.Notifications.AsNoTracking().Where(n => n.TemplateKey == "payout.transfer_late_success").ToListAsync(Ct)),
+            n => n.Payload["reference"] == reference);
+        _ = tutor;
+    }
+
+    [Fact]
+    public async Task The_recheck_settles_payouts_of_several_businesses_in_one_run()
+    {
+        var admin = ApiFixture.On(Host, await AdminAsync());
+        var references = new List<(Guid PayoutId, string Reference)>();
+        foreach (var name in new[] { "RecheckOne", "RecheckTwo", "RecheckThree" })
+        {
+            var (_, _, payoutId) = await RequestedPayoutAsync(name, 500_000);
+            references.Add((payoutId, (await Json(await admin.PostAsync($"/api/admin/payouts/{payoutId}/send", null, Ct))).GetProperty("transferReference").GetString()!));
+        }
+        foreach (var (_, reference) in references) Paystack.Transfers[reference].Status = "success";
+
+        await RecheckAsync(DateTimeOffset.UtcNow.AddHours(1));
+        foreach (var (payoutId, _) in references) Assert.Equal(PayoutStatus.Paid, (await PayoutAsync(payoutId)).Status);
+    }
+
+    [Fact]
+    public async Task With_automatic_transfers_off_the_recheck_still_settles_but_never_resends()
+    {
+        var (_, _, payoutId) = await RequestedPayoutAsync("OffRecheck", 500_000);
+        var admin = ApiFixture.On(Host, await AdminAsync());
+        Paystack.UnavailableNextTransfer = true; // Paystack never got it
+        var reference = (await Json(await admin.PostAsync($"/api/admin/payouts/{payoutId}/send", null, Ct))).GetProperty("transferReference").GetString()!;
+
+        // Automatic transfers are switched off while it is in flight: the default host's re-check keeps asking, but doesn't send.
+        using (var scope = api.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<PayoutAdminService>().RecheckTransfersAsync(DateTimeOffset.UtcNow.AddHours(1), Ct);
+        Assert.Single(Paystack.TransferCalls, r => r == reference);
+        Assert.Equal(PayoutStatus.Processing, (await PayoutAsync(payoutId)).Status);
+    }
+
     // Helpers
+
+    private Task<List<Saas.Domain.Core.Notification>> ClawbackAlertsAsync() =>
+        api.WithDbAsync(db => db.Notifications.AsNoTracking().Where(n => n.TemplateKey == "payout.clawback").ToListAsync(Ct));
+
+    private Task<CourseOrder> OrderAsync(Guid id) => api.WithDbAsync(db => db.CourseOrders.IgnoreQueryFilters().AsNoTracking().SingleAsync(o => o.Id == id, Ct));
+
+    private Task SeedEarningAsync(Guid tenantId, long amount) => api.WithDbAsync(async db =>
+    {
+        db.Earnings.Add(new Earning
+        {
+            TenantId = tenantId, Source = EarningSource.CourseOrder, SourceId = Guid.NewGuid(), Description = "Seeded sale",
+            UserId = Guid.NewGuid(), Channel = SaleChannel.Academy, GrossMinor = amount, NetMinor = amount, AvailableAt = DateTimeOffset.UtcNow.AddDays(-1),
+        });
+        return await db.SaveChangesAsync(Ct);
+    });
+
+    /// <summary>A tutor with direct settlement and a ₦10,000 course sale Paystack split (paid and confirmed).</summary>
+    private async Task<(HttpClient Tutor, Guid TenantId, Guid OrderId, string Reference)> SplitCourseSaleAsync(string name)
+    {
+        var (tutor, tenantId) = await TutorAsync(name, Host);
+        await VerifiedAccountAsync(tutor);
+        (await tutor.PostAsync("/api/academy/payout-account/direct-settlement", null, Ct)).EnsureSuccessStatusCode();
+        var course = await PublishedCourseAsync(tutor, $"{name} course", 1_000_000);
+        var learner = ApiFixture.On(Host, await LearnerAsync($"{name}Buyer"));
+        var checkout = await Json(await learner.PostAsJsonAsync("/api/learn/checkout", new { courseId = course }, Ct));
+        var init = api.Gateway.Initialized.Single(i => checkout.GetProperty("authorizationUrl").GetString()!.EndsWith(i.Reference));
+        Assert.NotNull(init.Split);
+        api.Gateway.Charges[init.Reference] = new VerifiedCharge(init.Reference, 1_000_000, "NGN", DateTimeOffset.UtcNow);
+        var orderId = checkout.GetProperty("orderId").GetGuid();
+        (await learner.PostAsJsonAsync($"/api/learn/orders/{orderId}/verify", new { reference = init.Reference }, Ct)).EnsureSuccessStatusCode();
+        return (tutor, tenantId, orderId, init.Reference);
+    }
+
+    /// <summary>A host with direct settlement and a stay a month ahead, booked with a Paystack split (and paid, unless told not to).</summary>
+    private async Task<(HttpClient Host, HttpClient Guest, Stay Stay)> SplitStayAsync(string name, bool pay = true)
+    {
+        var kit = new PropertyKit(api);
+        var agency = await kit.AgencyAsync(name, verified: true);
+        var client = ApiFixture.On(Host, agency.Client);
+        (await client.PutAsJsonAsync("/api/property/payout-account",
+            new { bankName = "Guaranty Trust Bank", bankCode = "058", accountNumber = "0987654321", accountName = "Grace" }, Ct)).EnsureSuccessStatusCode();
+        (await client.PostAsync("/api/property/payout-account/direct-settlement", null, Ct)).EnsureSuccessStatusCode();
+        var listing = await kit.LiveListingAsync(agency.Client, await kit.ListingBodyAsync(title: $"{name} apartment", purpose: ListingPurpose.ShortLet, price: 5_000_000));
+        var guest = ApiFixture.On(Host, await kit.SeekerAsync($"{name} Guest"));
+        var checkIn = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(30);
+        var booking = await Json(await guest.PostAsJsonAsync("/api/stays",
+            new { listingId = listing, checkIn = checkIn.ToString("yyyy-MM-dd"), checkOut = checkIn.AddDays(2).ToString("yyyy-MM-dd"), guests = 2, phone = "+2348066666666" }, Ct));
+        var init = api.Gateway.Initialized.Last(i => booking.GetProperty("authorizationUrl").GetString()!.EndsWith(i.Reference));
+        Assert.NotNull(init.Split);
+        var stay = await api.WithDbAsync(db => db.Stays.IgnoreQueryFilters().AsNoTracking().SingleAsync(s => s.Reference == init.Reference, Ct));
+        if (pay)
+        {
+            api.Gateway.Charges[init.Reference] = new VerifiedCharge(init.Reference, stay.TotalMinor, "NGN", DateTimeOffset.UtcNow);
+            (await guest.PostAsJsonAsync($"/api/stays/{stay.Id}/verify", new { reference = init.Reference }, Ct)).EnsureSuccessStatusCode();
+        }
+        return (client, guest, stay);
+    }
 
     private async Task<(HttpClient Client, Guid TenantId)> TutorAsync(string name, WebApplicationFactory<Program> host)
     {

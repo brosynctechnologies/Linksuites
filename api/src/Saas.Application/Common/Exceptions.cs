@@ -27,3 +27,9 @@ public sealed class BadRequestException(string message, IDictionary<string, stri
 }
 
 public sealed class ServiceUnavailableException(string message) : AppException(message, 503, "unavailable");
+
+/// <summary>
+/// A refund the provider definitely did not take: it refused it, or it was never sent (provider not set up, payment not paid there).
+/// Anything else a gateway throws from a refund (timeout, 5xx, network) is ambiguous: the refund may have gone through.
+/// </summary>
+public sealed class RefundRefusedException(string message) : AppException(message, 503, "unavailable");

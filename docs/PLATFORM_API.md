@@ -214,9 +214,32 @@ taken before a switch keep working.
 OPay refunds (stay cancellations, late-payment refunds, course refunds) use OPay's international refund API: `POST {Opay:BaseUrl}/api/v1/international/payment/refund/create`
 with `MerchantId` and `Authorization: Bearer {HMAC-SHA512 hex of the body, Opay:SecretKey}`, body `{ amount: { currency, total }, country: "NG",
 originalReference, reference }` with the fields in alphabetical order (as the status call). OPay is asked for the payment first, so the
-refund uses its currency and never exceeds what was paid. The refund's own reference is `{reference}_rf`, one per payment, so a retry
-after a timeout can't refund twice (OPay's `20000` duplicate answer counts as already sent). `orderStatus` INITIAL, PENDING or SUCCESS
-is accepted; FAIL, `50003`, `02006` (original payment not found) or any other code answers 503 and the stay or order stays as it was.
+refund uses its currency and never exceeds what was paid. The refund's own reference is `{reference}_rf` for the first attempt, so a
+retry after a timeout can't refund twice; a genuine retry after OPay definitely refused or failed a refund is a new attempt with
+`{reference}_rf{n}` (the attempt count is kept on the order or stay). OPay's `20000` (duplicate reference) is **not** success: the refund's
+status is asked (`POST /api/v1/international/payment/refund/query` `{ country, reference }`, signed the same way): INITIAL, PENDING or
+SUCCESS counts as refunded, FAIL as refused, anything else as no clear answer. `orderStatus` INITIAL, PENDING or SUCCESS is accepted;
+FAIL, `50003`, `02006` (original payment not found) or any other code is a refusal: 503 and the stay or order stays as it was.
+
+**Refunds without a clear answer.** Only a definite refusal from the provider (Paystack 4xx / `status: false`, OPay FAIL or an error
+code, provider not set up) puts the order or stay back. A timeout, 5xx or network error may have refunded the money, so the cancellation
+stands (access removed, earning reversed) and the record is marked refund pending (`refundPendingSince`; course refund answers 202,
+a guest cancel answers with `refundPending: true`). The sales re-check (every minute with `Jobs:BillingEnabled`) asks the provider about
+each pending refund about every 10 minutes (Paystack: `GET /transaction/verify` then `GET /refund?transaction={id}`; OPay: the refund
+query): refunded clears the flag; if the provider says the refund failed, or it still can't tell after 24 hours, Finance is emailed
+once (`refund.unconfirmed`) to send it by hand.
+
+**Refunds of directly settled sales.** A sale Paystack split to a seller's subaccount was settled to the seller already, so a refund
+comes out of the platform's balance. The seller can't refund it (tutor refund, host cancellation: 409 "This sale was paid to you
+directly by Paystack. Ask LinkSuite support to refund it."). Refunds the platform makes (Finance's refund below, guest cancellations,
+payments that landed after the guest cancelled or after the hold ran out) post a **clawback**: a negative earning (`CourseClawback` /
+`StayClawback`, ledger state `Clawback`, available at once) for the seller's settled share less what they keep, so it comes off the
+seller's next payouts, and Finance is emailed the amount to recover (`payout.clawback`).
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/api/admin/course-orders/{id}/refund` | Finance | refunds a `Paid` course order in full through the provider that took it (any age), removes access, reverses the earning, claws back a settled share. 204, 202 when the refund is pending, 409 when not `Paid`, 503 when the provider refuses. |
+| POST | `/api/admin/stays/{id}/refund` | Finance | cancels a `Confirmed` stay with a full refund (`cancelledBy: Platform`), same rules. 204 / 202 / 409 / 503. |
 
 | Method | Path | Notes |
 |---|---|---|
@@ -278,8 +301,14 @@ transfer recipient and reference `po_{payoutId}` (`po_{payoutId}_{n}` for retry 
 must match) and the re-check job (`GET /transfer/verify/{reference}` for transfers in flight over `Payouts:RecheckAfter`, default
 10 minutes) all apply the outcome to the current attempt only, once: success → `Paid` (reference = transfer reference, the business
 is emailed); failed/reversed (a reversal can follow a success) → `Failed`, the amount is available again, Finance is emailed
-(`payout.transfer_failed`). A refused `POST /transfer` (e.g. insufficient balance) fails the payout at once with Paystack's message.
-No answer (5xx, timeout) keeps it `Processing`; the re-check sends it again **with the same reference** if Paystack doesn't know it.
+(`payout.transfer_failed`). A refused `POST /transfer` (e.g. insufficient balance) is checked with verify first: it fails the payout
+with Paystack's message only when Paystack has no transfer with that reference (a duplicate-reference refusal of a re-send finds the
+transfer and follows it). No answer (5xx, timeout) keeps it `Processing`; the re-check sends it again **with the same reference** only
+when verify answers HTTP 404 or "transfer not found" (any other 400 or `status: false` concludes nothing), and only while automatic
+transfers are on. The re-check runs whatever the switch says, so payouts still in flight when it is turned off are settled; each payout
+is checked in its own scope, and one failing doesn't stop the rest. A `transfer.success` (webhook or re-check) for a payout's current
+reference after it was marked `Failed` or `Rejected` moves it to `Paid` (the amount is held again) and emails Finance
+(`payout.transfer_late_success`) to check whether the business was paid twice; a success for an earlier attempt's reference also emails Finance.
 Status `otp` (transfer OTP still on) keeps it `Processing`, notes why and emails Finance (`payout.transfer_otp`). Retrying a `Failed`
 payout needs the business's available balance to still cover it (409 otherwise: reject it instead). `Processing` counts against the
 business's available balance like `Requested`.
@@ -287,7 +316,8 @@ business's available balance like `Requested`.
 **Direct settlement (Paystack subaccounts).** With `Payouts:PaystackSubaccounts` on, a seller can create a subaccount (see
 `COURSES_API.md` / `PROPERTY_API.md`). A course sale or stay paid with Paystack is then initialised with `subaccount`,
 `transaction_charge` (the platform fee of that sale, in kobo) and `bearer: account`; the split is stored per payment reference, and
-the earning is recorded with that fee and `settledByProvider`, ledger state `Settled`, outside pending/available/paid-out.
+the earning is recorded with that fee and `settledByProvider`, ledger state `Settled`, outside pending/available/paid-out. Refunds of
+such sales are Finance's (see "Refunds of directly settled sales" above): the seller's share is clawed back from their next payouts.
 | GET | `/api/platform/plans` | `[{ id, product, code, name, priceMinor, currency, interval, limits, features, isDefault, isHidden, sortOrder, activeSubscribers }]` |
 | POST | `/api/platform/plans` | `{ product, code, name, priceMinor, isHidden, sortOrder, limits, features }` → plan |
 | PUT | `/api/platform/plans/{id}` | same body (product and code can't change) → plan. Edits apply to new subscriptions and renewals only (see below); the default free plan can't be hidden. |

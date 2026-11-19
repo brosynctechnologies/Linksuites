@@ -130,6 +130,27 @@ public class CourseMoneyTests
         Assert.Equal(LedgerRules.EarningState.Available, ledger.States[plain.Id]);
     }
 
+    [Fact]
+    public void Ledger_takes_a_clawback_off_the_available_balance_at_once_and_carries_any_shortfall()
+    {
+        var paidOut = new LedgerRules.LedgerEntry(Guid.NewGuid(), 600_000, Now.AddDays(-20), false, Now.AddDays(-27));
+        var available = new LedgerRules.LedgerEntry(Guid.NewGuid(), 500_000, Now.AddDays(-10), false, Now.AddDays(-17));
+        var clawback = new LedgerRules.LedgerEntry(Guid.NewGuid(), -800_000, Now.AddDays(-1), false, Now.AddDays(-1));
+        var fresh = new LedgerRules.LedgerEntry(Guid.NewGuid(), 400_000, Now.AddDays(3), false, Now.AddDays(-4));
+
+        // 600k paid out; 500k available less an 800k clawback: nothing available, 300k still owed out of the next earnings.
+        var ledger = LedgerRules.Balance([paidOut, available, clawback, fresh], requestedOrPaidMinor: 600_000, paidMinor: 600_000, Now);
+        Assert.Equal(0, ledger.AvailableMinor);
+        Assert.Equal(400_000, ledger.PendingMinor);
+        Assert.Equal(800_000, ledger.ClawbackMinor);
+        Assert.Equal(LedgerRules.EarningState.Clawback, ledger.States[clawback.Id]);
+        Assert.Equal(LedgerRules.EarningState.PaidOut, ledger.States[paidOut.Id]);
+
+        // Once the fresh sale matures it first covers the 300k shortfall.
+        var later = LedgerRules.Balance([paidOut, available, clawback, fresh], requestedOrPaidMinor: 600_000, paidMinor: 600_000, Now.AddDays(4));
+        Assert.Equal(100_000, later.AvailableMinor);
+    }
+
     [Theory]
     [InlineData(0, 0, 0)]
     [InlineData(1, 3, 33)]

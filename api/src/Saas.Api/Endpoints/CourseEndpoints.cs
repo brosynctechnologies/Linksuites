@@ -114,11 +114,10 @@ public static partial class CourseEndpoints
         courses.MapGet("/payouts", (StudioPeopleService s, CancellationToken ct) => s.PayoutsAsync(ct)).RequireAuthorization(Policies.Admin);
         courses.MapPost("/payouts", (PayoutRequest r, StudioPeopleService s, CancellationToken ct) => s.RequestPayoutAsync(r, ct))
             .RequireAuthorization(Policies.Owner);
+        // 202 when the provider gave no clear answer: the refund stands and the sales re-check confirms it.
         courses.MapPost("/orders/{id:guid}/refund", async (Guid id, StudioPeopleService s, CancellationToken ct) =>
-        {
-            await s.RefundAsync(id, ct);
-            return Results.NoContent();
-        }).RequireAuthorization(Policies.Admin);
+            await s.RefundAsync(id, ct) ? Results.Accepted(value: new { refundPending = true }) : Results.NoContent())
+            .RequireAuthorization(Policies.Admin);
 
         // Public catalogue.
         var catalog = app.MapGroup("/api/catalog").WithTags("Courses: catalogue");
@@ -180,6 +179,13 @@ public static partial class CourseEndpoints
         // Automatic payouts: Finance's approval sends a Paystack Transfer (also the retry for a failed one).
         admin.MapGet("/payouts/settings", (PayoutAdminService s) => s.Settings()).RequireAuthorization(Policies.PlatformFinance);
         admin.MapPost("/payouts/{id:guid}/send", (Guid id, PayoutAdminService s, CancellationToken ct) => s.SendAsync(id, ct)).RequireAuthorization(Policies.PlatformFinance);
+        // Finance's refunds (the only refunds of sales Paystack settled to the seller directly; those claw the seller's share back).
+        admin.MapPost("/course-orders/{id:guid}/refund", async (Guid id, CourseRefunds s, CancellationToken ct) =>
+            await s.AdminRefundAsync(id, ct) ? Results.Accepted(value: new { refundPending = true }) : Results.NoContent())
+            .RequireAuthorization(Policies.PlatformFinance);
+        admin.MapPost("/stays/{id:guid}/refund", async (Guid id, Saas.Application.Property.StayService s, CancellationToken ct) =>
+            await s.AdminRefundAsync(id, ct) ? Results.Accepted(value: new { refundPending = true }) : Results.NoContent())
+            .RequireAuthorization(Policies.PlatformFinance);
         admin.MapGet("/categories", (CourseAdminService s, CancellationToken ct) => s.CategoriesAsync(ct)).RequireAuthorization(Policies.PlatformModerator);
         admin.MapPost("/categories", (SaveCategoryRequest r, CourseAdminService s, CancellationToken ct) => s.SaveCategoryAsync(null, r, ct)).RequireAuthorization(Policies.PlatformModerator);
         admin.MapPut("/categories/{id:guid}", (Guid id, SaveCategoryRequest r, CourseAdminService s, CancellationToken ct) => s.SaveCategoryAsync(id, r, ct)).RequireAuthorization(Policies.PlatformModerator);

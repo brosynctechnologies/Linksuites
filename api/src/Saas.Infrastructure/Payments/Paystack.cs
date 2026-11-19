@@ -178,11 +178,55 @@ public sealed class PaystackClient : IMerchantPayments
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secretKey);
         using var response = await http.SendAsync(request, ct);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
-        if (!response.IsSuccessStatusCode || !body.TryGetProperty("status", out var ok) || !ok.GetBoolean())
+        // No answer (5xx, 429): the refund may or may not have been taken. Not a refusal.
+        if ((int)response.StatusCode >= 500 || response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            throw new HttpRequestException($"Paystack didn't answer the refund ({(int)response.StatusCode}).", null, response.StatusCode);
+        JsonElement body;
+        try { body = await response.Content.ReadFromJsonAsync<JsonElement>(ct); }
+        catch (JsonException) when (response.IsSuccessStatusCode) { throw new HttpRequestException("Paystack sent an unreadable answer to the refund."); }
+        catch (JsonException) { body = default; }
+        if (!response.IsSuccessStatusCode || body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("status", out var ok) || ok.ValueKind != JsonValueKind.True)
         {
-            var message = body.TryGetProperty("message", out var m) ? m.GetString() : null;
-            throw new ServiceUnavailableException($"Paystack didn't accept the refund{(message is null ? "." : $": {message}")}");
+            var message = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
+            // Paystack answered and said no (4xx, or status false): nothing was refunded.
+            throw new RefundRefusedException($"Paystack didn't accept the refund{(message is null ? "." : $": {message}")}");
+        }
+    }
+
+    /// <summary>
+    /// Whether Paystack has a refund for the payment <paramref name="reference"/> (GET /transaction/verify for the transaction id, then
+    /// GET /refund?transaction=id). A fully refunded payment reads "reversed" on verify.
+    /// </summary>
+    public async Task<Saas.Application.Billing.RefundState> RefundStatusAsync(string secretKey, string reference, CancellationToken ct)
+    {
+        if (UsesLocalFixture(secretKey)) return Saas.Application.Billing.RefundState.Refunded;
+        try
+        {
+            using var verify = new HttpRequestMessage(HttpMethod.Get, $"https://api.paystack.co/transaction/verify/{Uri.EscapeDataString(reference)}");
+            verify.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secretKey);
+            using var verified = await http.SendAsync(verify, ct);
+            if (!verified.IsSuccessStatusCode) return Saas.Application.Billing.RefundState.Unknown;
+            var body = await verified.Content.ReadFromJsonAsync<JsonElement>(ct);
+            if (!body.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object || !data.TryGetProperty("id", out var idValue))
+                return Saas.Application.Billing.RefundState.Unknown;
+            if (data.TryGetProperty("status", out var st) && st.ValueKind == JsonValueKind.String && st.GetString() == "reversed")
+                return Saas.Application.Billing.RefundState.Refunded;
+            using var list = new HttpRequestMessage(HttpMethod.Get, $"https://api.paystack.co/refund?transaction={Uri.EscapeDataString(idValue.ToString())}");
+            list.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secretKey);
+            using var listed = await http.SendAsync(list, ct);
+            if (!listed.IsSuccessStatusCode) return Saas.Application.Billing.RefundState.Unknown;
+            var refunds = await listed.Content.ReadFromJsonAsync<JsonElement>(ct);
+            if (!refunds.TryGetProperty("data", out var rows) || rows.ValueKind != JsonValueKind.Array) return Saas.Application.Billing.RefundState.Unknown;
+            var statuses = rows.EnumerateArray()
+                .Select(r => r.TryGetProperty("status", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString()!.ToLowerInvariant() : "")
+                .ToList();
+            if (statuses.Count == 0) return Saas.Application.Billing.RefundState.NotFound;
+            if (statuses.Any(s => s is not ("failed" or ""))) return Saas.Application.Billing.RefundState.Refunded; // pending, processing, processed...
+            return statuses.All(s => s == "failed") ? Saas.Application.Billing.RefundState.Failed : Saas.Application.Billing.RefundState.Unknown;
+        }
+        catch (Exception ex) when (ex is HttpRequestException || ex is JsonException || IsTimeout(ex, ct))
+        {
+            return Saas.Application.Billing.RefundState.Unknown;
         }
     }
 
@@ -267,9 +311,13 @@ public sealed class PaystackGateway(PaystackClient client, IOptions<PaystackOpti
         catch (HttpRequestException) { return null; }
     }
 
-    public Task RefundAsync(string reference, long amountMinor, CancellationToken ct) =>
+    /// <summary>Paystack refunds by the payment's reference; a retry is simply another refund request, so the attempt isn't used.</summary>
+    public Task RefundAsync(string reference, long amountMinor, int attempt, CancellationToken ct) =>
         IsConfigured ? client.RefundAsync(options.Value.SecretKey!, reference, amountMinor, ct)
-            : throw new ServiceUnavailableException("Online payments aren't set up, so refunds can't be sent.");
+            : throw new RefundRefusedException("Online payments aren't set up, so refunds can't be sent.");
+
+    public Task<RefundState> RefundStatusAsync(string reference, int attempt, CancellationToken ct) =>
+        IsConfigured ? client.RefundStatusAsync(options.Value.SecretKey!, reference, ct) : Task.FromResult(RefundState.Unknown);
 
     public bool IsValidSignature(string rawBody, string? signature) =>
         IsConfigured && PaystackClient.IsValidSignature(options.Value.SecretKey!, rawBody, signature);

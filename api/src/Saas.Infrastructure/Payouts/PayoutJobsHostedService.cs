@@ -8,16 +8,16 @@ using Saas.Infrastructure.Persistence;
 namespace Saas.Infrastructure.Payouts;
 
 /// <summary>
-/// Re-checks Paystack transfers still in flight every 5 minutes (GET /transfer/verify), when automatic transfers are on. A PostgreSQL
-/// advisory lock keeps it to one API instance at a time.
+/// Re-checks Paystack transfers still in flight every 5 minutes (GET /transfer/verify). It runs whether automatic transfers are on or
+/// off, so transfers still in flight when they are switched off are settled (it only re-sends while they are on). A PostgreSQL advisory
+/// lock keeps it to one API instance at a time.
 /// </summary>
-public sealed class PayoutJobsHostedService(IServiceScopeFactory scopes, PayoutOptions options, ILogger<PayoutJobsHostedService> logger) : BackgroundService
+public sealed class PayoutJobsHostedService(IServiceScopeFactory scopes, ILogger<PayoutJobsHostedService> logger) : BackgroundService
 {
     private const long LockKey = 0x1_1A5_0009;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!options.AutomaticTransfers) return;
         await Task.Delay(TimeSpan.FromSeconds(40), stoppingToken);
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
         do

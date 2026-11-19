@@ -19,11 +19,16 @@ public class PayoutAccount
     public string? SubaccountCode { get; set; }
 }
 
-public enum EarningSource { CourseOrder, Stay }
+/// <summary>
+/// <c>CourseClawback</c> and <c>StayClawback</c>: the platform refunded a sale Paystack had already settled to the seller (a split), so
+/// the seller's share is taken back from their next payouts. One per sale (<see cref="Earning.SourceId"/> is the order or stay).
+/// </summary>
+public enum EarningSource { CourseOrder, Stay, CourseClawback, StayClawback }
 
 /// <summary>
 /// Money the platform collected on a business's behalf (a course sale, a short-let stay), less the platform fee.
-/// It becomes available to pay out at <see cref="AvailableAt"/>, after the refund window.
+/// It becomes available to pay out at <see cref="AvailableAt"/>, after the refund window. A clawback is a negative earning
+/// (<see cref="NetMinor"/> below zero) deducted from the seller's available balance at once.
 /// </summary>
 public class Earning : TenantEntity
 {

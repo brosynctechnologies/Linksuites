@@ -67,11 +67,47 @@ public sealed class SalesGateways(PlanGateways gateways, PaymentSettings setting
         }
     }
 
-    /// <summary>Refunds through the provider that took the payment. Throws (503) when it refuses or isn't there.</summary>
-    public Task RefundAsync(string provider, string reference, long amountMinor, CancellationToken ct) =>
-        gateways.For(provider) is { } gateway
-            ? gateway.RefundAsync(reference, amountMinor, ct)
-            : throw new ServiceUnavailableException($"This payment was taken by {provider}, which isn't set up on this server, so it can't be refunded here.");
+    /// <summary>
+    /// Refunds through the provider that took the payment. True when the provider took it; false when its answer was unclear (a timeout,
+    /// 5xx or network error: the refund may or may not have gone through, so the caller marks it pending for the re-check to settle).
+    /// Throws <see cref="RefundRefusedException"/> (503) when the provider definitely didn't take it, or isn't on this server. The caller's
+    /// token isn't passed on: a browser giving up mustn't turn a sent refund into an unknown one.
+    /// </summary>
+    public async Task<bool> RefundAsync(string provider, string reference, long amountMinor, int attempt, CancellationToken ct)
+    {
+        _ = ct;
+        var gateway = gateways.For(provider)
+            ?? throw new RefundRefusedException($"This payment was taken by {provider}, which isn't set up on this server, so it can't be refunded here.");
+        try
+        {
+            await gateway.RefundAsync(reference, amountMinor, attempt, CancellationToken.None);
+            return true;
+        }
+        catch (RefundRefusedException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Refund {Attempt} of {Reference} with {Provider}: no clear answer; kept pending for the re-check", attempt, reference, provider);
+            return false;
+        }
+    }
+
+    /// <summary>The provider's word on refund <paramref name="attempt"/> of <paramref name="reference"/>; Unknown when it can't say.</summary>
+    public async Task<RefundState> RefundStatusAsync(string provider, string reference, int attempt, CancellationToken ct)
+    {
+        if (gateways.For(provider) is not { } gateway) return RefundState.Unknown;
+        try
+        {
+            return await gateway.RefundStatusAsync(reference, attempt, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Refund {Attempt} of {Reference}: {Provider} could not be asked", attempt, reference, provider);
+            return RefundState.Unknown;
+        }
+    }
 }
 
 /// <summary>
@@ -81,7 +117,7 @@ public sealed class SalesGateways(PlanGateways gateways, PaymentSettings setting
 /// callbacks (or two job runs) can't drive the provider's API.
 /// </summary>
 public sealed class SalesPaymentChecks(IAppDbContext db, SalesGateways gateways, CourseCore courses, StayService stays, BoostService boosts,
-    TimeProvider clock, ILogger<SalesPaymentChecks> logger)
+    TimeProvider clock, ILogger<SalesPaymentChecks> logger, Saas.Application.Payouts.FinanceAlerts finance)
 {
     /// <summary>How often a callback may ask the provider about one record.</summary>
     public static readonly TimeSpan CallbackCooldown = BillingService.StatusCooldown;
@@ -140,6 +176,75 @@ public sealed class SalesPaymentChecks(IAppDbContext db, SalesGateways gateways,
             return true;
         }
         return Unknown(true, reference);
+    }
+
+    /// <summary>A refund still unconfirmed after this long is reported to Finance.</summary>
+    public static readonly TimeSpan RefundDecideWithin = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// Settles a refund the provider gave no clear answer to (<c>RefundPendingSince</c> set): asks the provider about the refund's
+    /// current attempt. Refunded clears the flag; a refund the provider reports failed, or one still unconfirmed after
+    /// <see cref="RefundDecideWithin"/>, is reported to Finance once. Each record is asked at most every <paramref name="cooldown"/>.
+    /// </summary>
+    public async Task<RefundState?> ReconcileRefundAsync(string reference, DateTimeOffset now, TimeSpan cooldown, CancellationToken ct)
+    {
+        var asked = now - cooldown;
+        if (reference.StartsWith("crs_", StringComparison.Ordinal))
+        {
+            var row = await db.CourseOrders.IgnoreQueryFilters().AsNoTracking().Where(o => o.Reference == reference && o.RefundPendingSince != null)
+                .Select(o => new { o.TenantId, o.Provider, o.RefundAttempts, o.RefundPendingSince, o.RefundAlertedAt, o.RecheckedAt, o.TotalMinor, o.Currency })
+                .FirstOrDefaultAsync(ct);
+            if (row is null || row.RecheckedAt > asked) return null;
+            var previous = row.RecheckedAt;
+            if (await db.CourseOrders.IgnoreQueryFilters().Where(o => o.Reference == reference && o.RecheckedAt == previous)
+                    .ExecuteUpdateAsync(s => s.SetProperty(o => o.RecheckedAt, (DateTimeOffset?)now), ct) == 0) return null;
+            var state = await gateways.RefundStatusAsync(row.Provider, reference, Math.Max(1, row.RefundAttempts), ct);
+            var orders = db.CourseOrders.IgnoreQueryFilters().Where(o => o.Reference == reference && o.RefundPendingSince != null);
+            if (state == RefundState.Refunded)
+            {
+                await orders.ExecuteUpdateAsync(s => s.SetProperty(o => o.RefundPendingSince, (DateTimeOffset?)null), ct);
+                logger.LogInformation("Refund of {Reference} confirmed by {Provider}", reference, row.Provider);
+            }
+            else if (row.RefundAlertedAt is null && (state == RefundState.Failed || now - row.RefundPendingSince!.Value >= RefundDecideWithin)
+                     && await orders.Where(o => o.RefundAlertedAt == null).ExecuteUpdateAsync(s => s.SetProperty(o => o.RefundAlertedAt, (DateTimeOffset?)now), ct) == 1)
+                await AlertUnconfirmedAsync("Course sale", row.TenantId, reference, row.Provider, row.TotalMinor, row.Currency, state, ct);
+            return state;
+        }
+        if (reference.StartsWith("stay_", StringComparison.Ordinal))
+        {
+            var row = await db.Stays.IgnoreQueryFilters().AsNoTracking().Where(s => s.Reference == reference && s.RefundPendingSince != null)
+                .Select(s => new { s.TenantId, s.Provider, s.RefundAttempts, s.RefundPendingSince, s.RefundAlertedAt, s.RecheckedAt, s.RefundMinor, s.Currency })
+                .FirstOrDefaultAsync(ct);
+            if (row is null || row.RecheckedAt > asked) return null;
+            var previous = row.RecheckedAt;
+            if (await db.Stays.IgnoreQueryFilters().Where(s => s.Reference == reference && s.RecheckedAt == previous)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.RecheckedAt, (DateTimeOffset?)now), ct) == 0) return null;
+            var state = await gateways.RefundStatusAsync(row.Provider, reference, Math.Max(1, row.RefundAttempts), ct);
+            var stays = db.Stays.IgnoreQueryFilters().Where(s => s.Reference == reference && s.RefundPendingSince != null);
+            if (state == RefundState.Refunded)
+            {
+                await stays.ExecuteUpdateAsync(s => s.SetProperty(x => x.RefundPendingSince, (DateTimeOffset?)null), ct);
+                logger.LogInformation("Refund of {Reference} confirmed by {Provider}", reference, row.Provider);
+            }
+            else if (row.RefundAlertedAt is null && (state == RefundState.Failed || now - row.RefundPendingSince!.Value >= RefundDecideWithin)
+                     && await stays.Where(s => s.RefundAlertedAt == null).ExecuteUpdateAsync(s => s.SetProperty(x => x.RefundAlertedAt, (DateTimeOffset?)now), ct) == 1)
+                await AlertUnconfirmedAsync("Short-let stay", row.TenantId, reference, row.Provider, row.RefundMinor, row.Currency, state, ct);
+            return state;
+        }
+        return null;
+    }
+
+    private async Task AlertUnconfirmedAsync(string kind, Guid tenantId, string reference, string provider, long amountMinor, string currency,
+        RefundState state, CancellationToken ct)
+    {
+        var business = await db.Tenants.IgnoreQueryFilters().Where(t => t.Id == tenantId).Select(t => t.Name).FirstOrDefaultAsync(ct) ?? "";
+        logger.LogWarning("Refund of {Reference} ({Provider}) unconfirmed: {State}; Finance alerted", reference, provider, state);
+        await finance.QueueAsync("refund.unconfirmed", new()
+        {
+            ["kind"] = kind, ["business"] = business, ["reference"] = reference, ["provider"] = provider, ["amount"] = Money.Format(amountMinor, currency),
+            ["status"] = state == RefundState.Failed ? $"{provider} reports the refund failed" : $"{provider} hasn't confirmed the refund for a day",
+        }, ct);
+        await db.SaveChangesAsync(ct);
     }
 
     private bool Unknown(bool missing, string reference)
@@ -202,6 +307,40 @@ public sealed class SalesPaymentJobs(IServiceScopeFactory scopes, TimeProvider c
                 logger.LogWarning(ex, "Sales payment {Reference}: the re-check failed", reference);
             }
         }
+        await ReconcileRefundsAsync(now, lastAsked, started, ct);
         return paid;
+    }
+
+    /// <summary>
+    /// Refunds the provider gave no clear answer to (course orders and stays with <c>RefundPendingSince</c>): each is asked about at most
+    /// every <see cref="PlanPaymentJobs.RecheckEvery"/>, in its own scope, until the provider confirms it (or Finance is told).
+    /// </summary>
+    private async Task ReconcileRefundsAsync(DateTimeOffset now, DateTimeOffset lastAsked, long started, CancellationToken ct)
+    {
+        var due = new List<string>();
+        using (var scope = scopes.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<IAppDbContext>();
+            due.AddRange(await db.CourseOrders.IgnoreQueryFilters().AsNoTracking()
+                .Where(o => o.RefundPendingSince != null && (o.RecheckedAt == null || o.RecheckedAt <= lastAsked))
+                .OrderBy(o => o.RefundPendingSince).Take(BatchSize).Select(o => o.Reference).ToListAsync(ct));
+            due.AddRange(await db.Stays.IgnoreQueryFilters().AsNoTracking()
+                .Where(s => s.RefundPendingSince != null && (s.RecheckedAt == null || s.RecheckedAt <= lastAsked))
+                .OrderBy(s => s.RefundPendingSince).Take(BatchSize).Select(s => s.Reference).ToListAsync(ct));
+        }
+        foreach (var reference in due)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (clock.GetElapsedTime(started) > PlanPaymentJobs.RecheckBudget) break;
+            try
+            {
+                using var scope = scopes.CreateScope();
+                await scope.ServiceProvider.GetRequiredService<SalesPaymentChecks>().ReconcileRefundAsync(reference, now, PlanPaymentJobs.RecheckEvery, ct);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(ex, "Refund of {Reference}: the re-check failed", reference);
+            }
+        }
     }
 }
