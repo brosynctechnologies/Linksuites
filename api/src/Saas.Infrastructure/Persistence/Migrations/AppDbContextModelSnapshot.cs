@@ -4497,8 +4497,35 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnName("currency");
 
                     b.Property<string>("CustomDomain")
-                        .HasColumnType("text")
+                        .HasMaxLength(253)
+                        .HasColumnType("character varying(253)")
                         .HasColumnName("custom_domain");
+
+                    b.Property<DateTimeOffset?>("CustomDomainCertFailedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("custom_domain_cert_failed_at");
+
+                    b.Property<DateTimeOffset?>("CustomDomainCheckedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("custom_domain_checked_at");
+
+                    b.Property<string>("CustomDomainError")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("custom_domain_error");
+
+                    b.Property<DateTimeOffset?>("CustomDomainLiveAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("custom_domain_live_at");
+
+                    b.Property<string>("CustomDomainStatus")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("custom_domain_status");
+
+                    b.Property<DateTimeOffset?>("CustomDomainVerifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("custom_domain_verified_at");
 
                     b.Property<string>("LogoUrl")
                         .HasColumnType("text")

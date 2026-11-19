@@ -8,6 +8,7 @@ import { storeLink } from "@/lib/config";
 import { secondaryNav } from "@/components/dashboard-nav";
 import { PageHeader, buttonClass, listClass } from "@/components/ui";
 import { ChevronRightIcon, ExternalIcon, LogoutIcon } from "@/components/icons";
+import { BusinessSwitcher } from "@/components/business-switcher";
 
 export default function MorePage() {
   const auth = useAuth();
@@ -38,6 +39,7 @@ export default function MorePage() {
           <span className="sr-only">(opens in a new tab)</span>
         </a>
       )}
+      <BusinessSwitcher />
       <ul className={listClass}>
         {secondaryNav.map((item) => (
           <li key={item.href}>

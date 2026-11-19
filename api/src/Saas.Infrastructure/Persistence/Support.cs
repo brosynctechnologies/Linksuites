@@ -136,7 +136,7 @@ public static class DataSeeder
                     [LimitKeys.Products] = -1, [LimitKeys.DeliveryZones] = -1, [LimitKeys.DiscountCodes] = -1,
                     [LimitKeys.RemoveBranding] = 1, [LimitKeys.CustomDomain] = 1,
                 },
-                Features = ["Unlimited products", "Unlimited delivery zones", "Discount codes", "Remove branding"],
+                Features = ["Unlimited products", "Unlimited delivery zones", "Discount codes", "Remove branding", "Custom domain"],
             },
             new Plan
             {

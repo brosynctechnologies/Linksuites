@@ -82,6 +82,31 @@ public sealed record AcceptInviteRequest(string? FullName, string Password);
 public sealed record BusinessChoice(Guid TenantId, string Name, MemberRole Role, bool Current);
 public sealed record SwitchRequest(Guid TenantId);
 
+/// <summary>
+/// Wave 3: a signed-in owner starts another business without a new account. <c>Product</c> defaults to the current business's product;
+/// each product reads the fields its sign-up reads (OrderLink: <c>WhatsappNumber</c>; SchoolLink may pick <c>Slug</c>; PropertyLink
+/// <c>AccountKind</c>). <c>Country</c> defaults to the current business's country.
+/// </summary>
+public sealed record AddBusinessRequest(
+    string? Name, string? Product = null, string? WhatsappNumber = null, string? Country = null, string? Slug = null, string? AccountKind = null)
+{
+    public string? SlugKey => string.IsNullOrWhiteSpace(Slug) ? null : Slug.Trim().ToLowerInvariant();
+}
+
+public sealed class AddBusinessRequestValidator : AbstractValidator<AddBusinessRequest>
+{
+    public AddBusinessRequestValidator()
+    {
+        RuleFor(x => x.Name).NotEmpty().WithMessage("Enter the business name.").MaximumLength(80);
+        RuleFor(x => x.Product).Must(p => Products.All.Contains(p!.Trim().ToLowerInvariant())).When(x => !string.IsNullOrWhiteSpace(x.Product))
+            .WithMessage("Unknown product.");
+        RuleFor(x => x.Country).Must(c => Countries.IsSupported(c!)).When(x => !string.IsNullOrWhiteSpace(x.Country))
+            .WithMessage("Choose a supported country.");
+        RuleFor(x => x.WhatsappNumber).MaximumLength(30);
+        RuleFor(x => x.AccountKind).MaximumLength(30);
+    }
+}
+
 /// <summary>Creates a product's starting data (a store, a business profile, ...) when a tenant signs up.</summary>
 public interface IProductProvisioner
 {

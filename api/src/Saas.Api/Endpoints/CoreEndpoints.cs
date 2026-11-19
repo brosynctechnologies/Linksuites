@@ -44,6 +44,16 @@ public static class CoreEndpoints
 
         app.MapGet("/api/me/businesses", (ICurrentUser user, AuthService s, CancellationToken ct) => s.BusinessesAsync(user.UserId!.Value, ct))
             .RequireAuthorization().WithTags("Auth");
+        // Wave 3: the owner starts another business under the same sign-in; answers a session for the new business.
+        // A fresh scope: this request's tenant is the current business, and the new one is written under its own tenant context.
+        app.MapPost("/api/me/businesses", async (AddBusinessRequest r, ICurrentUser user, ITenantContext tenant, IServiceScopeFactory scopes,
+                CancellationToken ct) =>
+            {
+                var currentId = tenant.TenantId ?? throw new ForbiddenException();
+                using var scope = scopes.CreateScope();
+                return await scope.ServiceProvider.GetRequiredService<AuthService>().AddBusinessAsync(user.UserId!.Value, currentId, r, ct);
+            })
+            .Validate<AddBusinessRequest>().RequireAuthorization(Policies.Owner).RequireRateLimiting(RateLimits.Admin).WithTags("Auth");
         var notes = app.MapGroup("/api/me/notifications").WithTags("Notifications").RequireAuthorization();
         notes.MapGet("/", (bool? unread, int? page, InAppNotifications s, CancellationToken ct) => s.ListAsync(unread == true, page ?? 1, ct));
         notes.MapGet("/unread-count", (InAppNotifications s, CancellationToken ct) => s.UnreadCountAsync(ct));

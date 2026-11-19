@@ -554,6 +554,71 @@ public sealed class AuthService(
             .ToListAsync(ct);
     }
 
+    /// <summary>The most businesses one account may own on one product (a guard against scripted sign-ups, not a plan limit).</summary>
+    public const int MaxOwnedPerProduct = 10;
+
+    /// <summary>
+    /// Wave 3: a signed-in owner starts another business (of this product, or another) under the same sign-in. It is set up exactly like
+    /// a sign-up of that product (the product's provisioner, the owner's membership, the welcome email) and starts on the product's
+    /// default (free) plan, since plans belong to a business. The answer is a session for the new business, so the app switches to it.
+    /// Call it on a fresh scope (see the endpoint): this request's tenant is already set to <paramref name="currentId"/> and a request never
+    /// changes tenant, so the new business is written through its own tenant context and database context.
+    /// </summary>
+    public async Task<AuthResponse> AddBusinessAsync(Guid userId, Guid currentId, AddBusinessRequest r, CancellationToken ct)
+    {
+        var current = await db.Tenants.AsNoTracking().FirstAsync(t => t.Id == currentId, ct);
+        var product = string.IsNullOrWhiteSpace(r.Product) ? current.Product : r.Product.Trim().ToLowerInvariant();
+        var provisioner = provisioners.FirstOrDefault(p => p.Product == product)
+            ?? throw BadRequestException.Field("product", "Unknown product.");
+        // As at sign-up: only a school picks its link; everyone else's is made from the name.
+        if (r.SlugKey is { } wanted)
+        {
+            if (product != Products.School) throw BadRequestException.Field("slug", "Leave the link out. It is made from your business name.");
+            if (!Slugs.IsValid(wanted)) throw BadRequestException.Field("slug", Slugs.Rule);
+            if (await SlugInUseAsync(wanted, ct)) throw BadRequestException.Field("slug", "That link is taken. Choose another.");
+        }
+        var user = await users.FindByIdAsync(userId.ToString()) ?? throw Unauthorized();
+        var owned = await db.Memberships.IgnoreQueryFilters().CountAsync(m => m.UserId == userId && m.Role == MemberRole.Owner
+            && m.Status == MembershipStatus.Active && m.Tenant!.Product == product && m.Tenant.Status != TenantStatus.Closed, ct);
+        if (owned >= MaxOwnedPerProduct)
+            throw new BadRequestException($"You already own {MaxOwnedPerProduct} businesses on {Products.Brand(product)}, the most one account can. Contact support if you need more.");
+
+        var country = string.IsNullOrWhiteSpace(r.Country) ? current.Country : r.Country.Trim().ToUpperInvariant();
+        var name = r.Name!.Trim();
+        // The provisioners read a sign-up; this is the one the owner would have filled in.
+        var signup = new SignupRequest(user.FullName, user.Email!, "", country, product, BusinessName: name, StoreName: name,
+            WhatsappNumber: r.WhatsappNumber, AccountKind: r.AccountKind, Slug: r.SlugKey);
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var t = new Tenant
+        {
+            Name = name,
+            Slug = r.SlugKey ?? await AvailableSlugAsync(name, ct),
+            Country = country,
+            Currency = Countries.Currency(country),
+            Timezone = Countries.Timezone(country),
+            Product = product,
+        };
+        db.Tenants.Add(t);
+        tenant.SetTenant(t.Id);
+        db.Memberships.Add(new Membership { UserId = user.Id, Role = MemberRole.Owner });
+        await provisioner.ProvisionAsync(t, signup, user.Id, ct);
+        Welcome(user, t);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (dbErrors.IsUniqueViolation(ex) && IsSlugIndex(ex))
+        {
+            throw r.SlugKey is not null
+                ? BadRequestException.Field("slug", "That link is taken. Choose another.")
+                : BadRequestException.Field("name", "We couldn't set up a business with that name. Try a slightly different name.");
+        }
+        var response = await IssueAsync(user, t, MemberRole.Owner, ct);
+        await tx.CommitAsync(ct);
+        return response;
+    }
+
     public async Task<AuthResponse> SwitchAsync(Guid userId, SwitchRequest r, CancellationToken ct)
     {
         var choices = await BusinessesAsync(userId, ct);

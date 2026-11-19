@@ -13,11 +13,12 @@ public sealed class Wave0Tests(ApiFixture api)
     private const string CustomDomain = "Custom domain";
 
     [Fact]
-    public async Task OrderLink_pro_does_not_list_custom_domain()
+    public async Task OrderLink_pro_lists_custom_domain_again_now_it_works()
     {
+        // Wave 3 built custom domains, so the Wave3CustomDomains migration put the feature back (see CustomDomainTests).
         var pro = await api.WithDbAsync(db =>
             db.Plans.AsNoTracking().SingleAsync(p => p.Product == Products.WhatsAppOrders && p.Code == "pro", Ct));
-        Assert.DoesNotContain(CustomDomain, pro.Features);
+        Assert.Single(pro.Features, f => f == CustomDomain);
     }
 
     private static StorageOptions R2(string? privateBucket = "linksuite-private") => new()

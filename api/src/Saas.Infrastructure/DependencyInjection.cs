@@ -153,6 +153,13 @@ public static class DependencyInjection
         services.AddSingleton<Saas.Application.School.ISpreadsheetReader, Schools.SpreadsheetReader>();
         services.AddSingleton<Saas.Application.School.Imports.IImportTemplateWriter, Schools.ImportTemplateWriter>();
 
+        // OrderLink custom domains (Wave 3): DNS checks here; certificates and nginx sites by deploy/custom-domains.sh on the host.
+        var customDomains = config.GetSection(Saas.Application.Orders.CustomDomainOptions.Section).Get<Saas.Application.Orders.CustomDomainOptions>() ?? new();
+        services.AddSingleton(customDomains);
+        services.AddSingleton<Saas.Application.Orders.IDomainResolver, Platform.SystemDomainResolver>();
+        if (config.GetValue("Jobs:CustomDomainsEnabled", true))
+            services.AddHostedService<Platform.CustomDomainJobsHostedService>();
+
         // Booking System
         services.AddSingleton<IDbErrors, Bookings.PostgresDbErrors>();
         services.AddSingleton<IKeyedHash>(new Auth.HmacKeyedHash(config["Jwt:SigningKey"] ?? ""));
