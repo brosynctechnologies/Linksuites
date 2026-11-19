@@ -50,6 +50,8 @@ public sealed partial class NextReleaseRoleTableTests(ApiFixture api)
         ["GET /api/admin/payouts"] = [Fin],
         ["POST /api/admin/payouts/{id:guid}/paid"] = [Fin],
         ["POST /api/admin/payouts/{id:guid}/reject"] = [Fin],
+        ["GET /api/admin/payouts/settings"] = [Fin],
+        ["POST /api/admin/payouts/{id:guid}/send"] = [Fin],
         ["GET /api/platform/payment-settings"] = [Fin],
         ["PUT /api/platform/payment-settings"] = [], // where money goes: super admin only
         ["GET /api/platform/transfers/"] = [Fin],
