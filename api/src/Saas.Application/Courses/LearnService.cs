@@ -7,7 +7,7 @@ using Saas.Domain.Courses;
 namespace Saas.Application.Courses;
 
 /// <summary>A signed-in learner: buying, the lesson player, progress, quizzes, Q&amp;A, notes, reviews and certificates.</summary>
-public sealed class LearnService(IAppDbContext db, CourseCore core, IPaymentGateway gateway, PaymentSettings payments, ICurrentUser user, AppUrls urls)
+public sealed class LearnService(IAppDbContext db, CourseCore core, SalesGateways gateways, ICurrentUser user, AppUrls urls)
 {
     private static readonly TimeSpan QuizGrace = TimeSpan.FromSeconds(60);
 
@@ -41,14 +41,15 @@ public sealed class LearnService(IAppDbContext db, CourseCore core, IPaymentGate
             return new CheckoutResultDto(true, null, null, course.PriceMinor, discount, 0);
         }
 
-        // Online payment switched off in the admin console reads exactly like a gateway with no key: nothing reaches the gateway.
-        if (!gateway.IsConfigured || !await payments.OnlinePaymentsEnabledAsync(ct)) throw new ServiceUnavailableException("Online payments aren't set up yet. Please try again later.");
+        // The provider chosen in Payment settings; online payment switched off (or the provider without keys) is refused before an order exists.
+        var gateway = await gateways.ForCheckoutAsync(ct);
         // A sale only counts as a marketplace sale if the course is actually in the marketplace.
         var channel = r.Channel == SaleChannel.Academy || course.MarketplaceStatus != MarketplaceStatus.Approved ? SaleChannel.Academy : SaleChannel.Marketplace;
         var order = new CourseOrder
         {
             UserId = userId, CourseId = course.Id, PriceMinor = course.PriceMinor, DiscountMinor = discount, TotalMinor = total,
             Currency = course.Currency, CouponCode = discount > 0 ? r.CouponCode!.Trim().ToUpperInvariant() : null, Channel = channel, Reference = "",
+            Provider = gateway.Name,
         };
         order.Reference = $"crs_{order.Id:N}";
         db.CourseOrders.Add(order);
@@ -56,7 +57,8 @@ public sealed class LearnService(IAppDbContext db, CourseCore core, IPaymentGate
 
         var email = await db.Users.Where(u => u.Id == userId).Select(u => u.Email).FirstAsync(ct);
         var url = await gateway.InitializeAsync(new PaymentInit(email!, total, course.Currency, order.Reference,
-            $"{urls.Web(Products.Courses)}/checkout/{order.Id}", new() { ["course"] = course.Title, ["tenantId"] = course.TenantId.ToString() }), ct);
+            SalesGateways.ReturnUrl(gateway, $"{urls.Web(Products.Courses)}/checkout/{order.Id}", order.Reference),
+            new() { ["course"] = course.Title, ["tenantId"] = course.TenantId.ToString(), ["productName"] = course.Title, ["productDescription"] = "LearnLink course" }), ct);
         return new CheckoutResultDto(false, url, order.Id, course.PriceMinor, discount, total);
     }
 
@@ -66,7 +68,7 @@ public sealed class LearnService(IAppDbContext db, CourseCore core, IPaymentGate
         var order = await db.CourseOrders.IgnoreQueryFilters().AsNoTracking().FirstOrDefaultAsync(o => o.Id == orderId && o.UserId == userId, ct)
             ?? throw new NotFoundException("Order");
         if (order.Status == OrderState.Pending && r.Reference == order.Reference
-            && await gateway.VerifyAsync(order.Reference, ct) is { } charge)
+            && await gateways.PaidAsync(order.Provider, order.Reference, ct) is { } charge)
             await core.ConfirmOrderAsync(charge.Reference, charge.AmountMinor, charge.Currency, ct);
         var course = await core.CourseAcrossTenantsAsync(order.CourseId, ct);
         var enrolled = await db.Enrollments.AnyAsync(e => e.CourseId == course.Id && e.UserId == userId && !e.Revoked, ct);

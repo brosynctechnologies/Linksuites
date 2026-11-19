@@ -7,7 +7,7 @@ dates `YYYY-MM-DD`; the business time zone is `Africa/Lagos`.
 Web app: `property-web`, `http://localhost:4100` (`App:ProductWebUrls.property`). Links the API puts in emails:
 `/listings/{agencySlug}/{listingSlug}`, `/agencies/{slug}`, `/agents/{slug}`, `/renew/{token}`, `/trips/{stayId}`,
 `/me/viewings`, `/me/searches`, `/studio/listings/{id}`, `/studio/enquiries`, `/studio/viewings`, `/studio/stays`,
-`/studio/verification`, `/studio/boosts/{id}` (Paystack return for boosts).
+`/studio/verification`, `/studio/boosts/{id}` (checkout return for boosts).
 
 ## Accounts and tokens
 
@@ -102,8 +102,8 @@ AreaGuideDto { location, breadcrumb, areas: LocationDto[] (children), activeCoun
 | POST | `/api/listings/{id}/inspections` `{ at, phone?, notes? }` | `InspectionDto`; 400 if `at` isn't an offered time, `phone` is over 30 characters or `notes` over 1,000; 409 if just taken, 403 on own listing |
 | GET | `/api/me/inspections` | `InspectionDto[]` |
 | POST | `/api/me/inspections/{id}/cancel` | 204 |
-| POST | `/api/stays` `{ listingId, checkIn, checkOut, guests, phone? }` | `{ stayId, authorizationUrl, totalMinor, holdExpiresAt }`; 400 if `phone` is over 30 characters; 409 "Those dates were just booked"; 503 when payments aren't set up |
-| POST | `/api/stays/{id}/verify` `{ reference }` | `MyStayDto` (Paystack returns to `{web}/trips/{stayId}?reference=…`) |
+| POST | `/api/stays` `{ listingId, checkIn, checkOut, guests, phone? }` | `{ stayId, authorizationUrl, totalMinor, holdExpiresAt }`; 400 if `phone` is over 30 characters; 409 "Those dates were just booked"; 503 while online payment is off in Payment settings, or the chosen provider has no keys on the server |
+| POST | `/api/stays/{id}/verify` `{ reference }` | `MyStayDto` (the checkout returns to `{web}/trips/{stayId}?reference=…`; for OPay the API puts the reference in the return URL, and a guest who cancels comes back with `&cancelled=1`). Asks the stay's own provider. |
 | POST | `/api/stays/{id}/cancel` | `MyStayDto` |
 | GET | `/api/me/stays` | `MyStayDto[]` |
 | POST | `/api/agents/{slug}/reviews` `{ rating 1-5, comment? }` | `AgentReviewDto`; 403 unless the user enquired ≥ 24 h ago, had a Done viewing or a Completed stay with this agent (and isn't in the agency); 409 if already reviewed |
@@ -121,7 +121,9 @@ Short-let rules: check-out after check-in, check-in not in the past, `minNights`
 dates. Price = nights × nightly + cleaning. Guest cancels > 48 h before 14:00 on check-in day: full refund; later: refund minus one night;
 not after check-in. Host cancels: full refund. A paid stay is refunded once: the cancel claims it (Confirmed → Cancelled) before
 the refund is sent, so a second cancel at the same time (a double click, or guest and host together) gets 409 "This stay has already
-been cancelled." If Paystack refuses the refund, the stay goes back to Confirmed and the cancel fails.
+been cancelled." The refund goes to the provider that took the payment (Paystack or OPay, see below); if it refuses, the stay goes back to Confirmed and the cancel fails (503).
+
+Providers: stays and boosts are paid to the platform through the provider chosen in the admin console's Payment settings (Paystack or OPay). Each stay and boost records it (`provider`), and the return check, callbacks, the background re-check (every 10 minutes for 48 hours, for unpaid stays and boosts whose callback never came) and refunds always use that provider, so payments taken before a switch keep working. Paystack payments also confirm from the signed `POST /api/webhooks/paystack`; OPay callbacks arrive on `POST /api/webhooks/opay`, which reads only the reference and asks the provider (at most every 30 seconds per stay or boost).
 
 Payments that don't confirm a stay:
 - **Wrong amount or currency.** The stay isn't confirmed. The guest is emailed that the payment didn't go through (template
@@ -167,7 +169,7 @@ unless noted (money: Owner/Admin; payouts and payout account: Owner).
 | POST | `/api/property/verification` (Owner/Admin) | multipart `idDocument` (required), `businessDocument?`, `licenceNo?` (JPEG/PNG/WebP/PDF ≤ 10 MB) → `VerificationDto`; 409 while one is pending |
 | GET | `/api/property/boost-options` | `[{ code, kind, days, priceMinor, currency, name }]` |
 | POST | `/api/property/listings/{id}/boosts` `{ code }` | `{ boostId, authorizationUrl, amountMinor }`; 409 unless Active |
-| POST | `/api/property/boosts/{id}/verify` `{ reference }` | `BoostDto` (Paystack returns to `{web}/studio/boosts/{id}?reference=…`) |
+| POST | `/api/property/boosts/{id}/verify` `{ reference }` | `BoostDto` (the checkout returns to `{web}/studio/boosts/{id}?reference=…`, OPay with `&cancelled=1` when the buyer cancels). Asks the boost's own provider; amount and currency must match. |
 | GET | `/api/property/boosts` | `BoostDto[]`. Each paid boost adds its days in the database (from the current end, or now if none), so two boosts paid at the same moment both count. |
 | GET | `/api/property/earnings` (Owner/Admin) | `{ currency, availableMinor, pendingMinor, paidOutMinor, entries: [{ id, stayId, description, grossMinor, feeMinor, netMinor, availableAt, createdAt, status }] }` |
 | GET (Owner/Admin) / POST (Owner) | `/api/property/payouts` | `PayoutDto[]` / `{ amountMinor }` (minimum ₦5,000; 409 without a bank account) |

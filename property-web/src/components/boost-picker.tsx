@@ -8,7 +8,7 @@ import { useApi } from "@/lib/use-api";
 import type { BoostOptionDto } from "@/lib/types";
 import { ApiErrorView, Button, PageLoader, cx } from "./ui";
 
-/** Pick a boost and pay on Paystack (returns to /studio/boosts/{id}). */
+/** Pick a boost and pay at the secure checkout (Paystack or OPay, as the platform chooses; returns to /studio/boosts/{id}). */
 export function BoostPicker({ listingId }: { listingId: string }) {
   const { data, error, reload } = useApi<BoostOptionDto[]>("/api/property/boost-options");
   const [code, setCode] = useState<string | null>(null);
@@ -55,7 +55,7 @@ export function BoostPicker({ listingId }: { listingId: string }) {
       </fieldset>
       {payError && <ApiErrorView error={payError} />}
       <Button className="w-full" disabled={!code || readOnly} loading={busy} onClick={pay}>
-        Pay with Paystack
+        Continue to secure checkout
       </Button>
     </div>
   );

@@ -8,7 +8,8 @@ using Saas.Infrastructure.Persistence;
 namespace Saas.Infrastructure.Billing;
 
 /// <summary>
-/// Runs <see cref="PlanPaymentJobs"/> every minute (each payment is still asked about at most every 10 minutes) and
+/// Runs <see cref="PlanPaymentJobs"/> and <see cref="SalesPaymentJobs"/> (course orders, stays, boosts) every minute (each payment is
+/// still asked about at most every 10 minutes) and
 /// <see cref="PlanReminderJobs"/> ("your plan ends soon") once an hour. A PostgreSQL advisory
 /// lock keeps it to one API instance at a time. Off with <c>Jobs:BillingEnabled=false</c> (tests run it by hand).
 /// </summary>
@@ -45,7 +46,16 @@ public sealed class PlanPaymentJobsHostedService(IServiceScopeFactory scopes, IL
         {
             try
             {
-                await scope.ServiceProvider.GetRequiredService<PlanPaymentJobs>().RunOnceAsync(DateTimeOffset.UtcNow, ct);
+                try
+                {
+                    await scope.ServiceProvider.GetRequiredService<PlanPaymentJobs>().RunOnceAsync(DateTimeOffset.UtcNow, ct);
+                }
+                finally
+                {
+                    // Course orders, stays and boosts whose callback never came: asked about with the provider that took each one.
+                    using var sales = scopes.CreateScope();
+                    await sales.ServiceProvider.GetRequiredService<SalesPaymentJobs>().RunOnceAsync(DateTimeOffset.UtcNow, ct);
+                }
             }
             finally
             {

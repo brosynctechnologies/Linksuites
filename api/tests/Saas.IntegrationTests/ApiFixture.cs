@@ -103,8 +103,8 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         {
             services.AddScoped<IMerchantPayments>(_ => Merchant);
             services.AddSingleton<IExchangeRateProvider, FakeRates>();
-            services.AddScoped<IPaymentGateway>(_ => Gateway);
-            // Plan billing with Paystack goes to the same fake; registered last, so it wins over the real Paystack plan gateway.
+            // Platform payments with Paystack (plans, courses, stays, boosts) go to this fake; registered last, so it wins over the real
+            // Paystack gateway.
             services.AddScoped<IPlanPaymentGateway>(_ => Gateway);
             // OPay is faked at the HTTP level, so the real client's signing, headers and parsing are exercised.
             services.AddHttpClient<Saas.Infrastructure.Payments.OpayClient>()
@@ -133,8 +133,15 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
     /// Lets the next callback or return check ask the provider again, as if the per-payment status cooldown had passed
     /// (clears <c>RecheckedAt</c>).
     /// </summary>
-    public Task ExpireStatusCooldownAsync(string reference) => WithDbAsync(db => db.Payments.IgnoreQueryFilters()
-        .Where(p => p.ProviderRef == reference).ExecuteUpdateAsync(s => s.SetProperty(p => p.RecheckedAt, (DateTimeOffset?)null)));
+    public Task ExpireStatusCooldownAsync(string reference) => WithDbAsync(async db =>
+        await db.Payments.IgnoreQueryFilters().Where(p => p.ProviderRef == reference)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.RecheckedAt, (DateTimeOffset?)null))
+        + await db.CourseOrders.IgnoreQueryFilters().Where(o => o.Reference == reference)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.RecheckedAt, (DateTimeOffset?)null))
+        + await db.Stays.IgnoreQueryFilters().Where(o => o.Reference == reference)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.RecheckedAt, (DateTimeOffset?)null))
+        + await db.Boosts.IgnoreQueryFilters().Where(o => o.Reference == reference)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.RecheckedAt, (DateTimeOffset?)null)));
 
     /// <summary>A client on <paramref name="host"/> signed in as <paramref name="signedIn"/> (the same token works on every host).</summary>
     public static HttpClient On(WebApplicationFactory<Program> host, HttpClient signedIn)
@@ -439,11 +446,7 @@ public sealed class FakeOpay : HttpMessageHandler
         {
             // Like the real OPay (checked against the sandbox, 14 Nov 2026): the signature is over the fields in alphabetical order,
             // so a body sent as {"reference":..,"country":..} signed as sent is refused with 02000.
-            var canonical = System.Text.Json.JsonSerializer.Serialize(
-                new SortedDictionary<string, JsonElement>(root.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.Clone()), StringComparer.Ordinal));
-            var expected = Convert.ToHexString(System.Security.Cryptography.HMACSHA512.HashData(
-                System.Text.Encoding.UTF8.GetBytes(SecretKey), System.Text.Encoding.UTF8.GetBytes(canonical)));
-            if (!string.Equals(auth.Parameter, expected, StringComparison.OrdinalIgnoreCase)) return Refuse();
+            if (!Signed(root, auth.Parameter)) return Refuse();
             LastStatusRequest = (body, auth.Parameter!);
             var reference = root.GetProperty("reference").GetString()!;
             StatusCalls.AddOrUpdate(reference, 1, (_, n) => n + 1);
@@ -459,8 +462,57 @@ public sealed class FakeOpay : HttpMessageHandler
                 data = new { reference, orderNo = "24110001", status = status.Status, amount = new { total = status.Total, currency = status.Currency } },
             });
         }
+        if (path == "/api/v1/international/payment/refund/create")
+        {
+            // Signed like the status call: HMAC-SHA512 with the secret key over the body's fields in alphabetical order (nested too).
+            if (!Signed(root, auth.Parameter)) return Refuse();
+            var reference = root.GetProperty("reference").GetString()!;
+            var original = root.GetProperty("originalReference").GetString()!;
+            var amount = root.GetProperty("amount");
+            var refund = new RefundRequest(reference, original, amount.GetProperty("total").GetInt64(), amount.GetProperty("currency").GetString()!,
+                root.GetProperty("country").GetString()!);
+            if (RefundUnavailable) return Answer(new { code = "50003", message = "service not available, please try again" });
+            // OPay's refund doc: 02006 original payment not found, 20000 duplicate merchant order number.
+            if (!Statuses.TryGetValue(original, out var paid) || paid.Status != "SUCCESS")
+                return Answer(new { code = "02006", message = "original payment not found." });
+            if (!Refunds.TryAdd(reference, refund)) return Answer(new { code = "20000", message = "Duplicate merchant order number" });
+            return Answer(new
+            {
+                code = "00000", message = "SUCCESSFUL",
+                data = new
+                {
+                    reference, originalReference = original, orderNo = "211003140885499643", originalOrderNo = "211003140885503763", country = refund.Country,
+                    refundAmount = new { currency = refund.Currency, total = refund.Total }, orderStatus = RefundStatus,
+                },
+            });
+        }
         return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
     }
+
+    public sealed record RefundRequest(string Reference, string OriginalReference, long Total, string Currency, string Country);
+
+    /// <summary>Refunds OPay accepted, by our refund reference.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, RefundRequest> Refunds { get; } = new();
+    /// <summary>The refund's <c>orderStatus</c> in OPay's answer (INITIAL, PENDING, SUCCESS or FAIL).</summary>
+    public string RefundStatus { get; set; } = "SUCCESS";
+    /// <summary>Refund calls answer 50003 ("service not available, try again").</summary>
+    public bool RefundUnavailable { get; set; }
+
+    /// <summary>True when <paramref name="bearer"/> is HMAC-SHA512 (secret key) of the body with its fields sorted alphabetically, at every level.</summary>
+    private static bool Signed(JsonElement root, string? bearer)
+    {
+        var canonical = JsonSerializer.Serialize(Sorted(root));
+        var expected = Convert.ToHexString(System.Security.Cryptography.HMACSHA512.HashData(
+            System.Text.Encoding.UTF8.GetBytes(SecretKey), System.Text.Encoding.UTF8.GetBytes(canonical)));
+        return string.Equals(bearer, expected, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static object? Sorted(JsonElement e) => e.ValueKind switch
+    {
+        JsonValueKind.Object => new SortedDictionary<string, object?>(e.EnumerateObject().ToDictionary(p => p.Name, p => Sorted(p.Value)), StringComparer.Ordinal),
+        JsonValueKind.Array => e.EnumerateArray().Select(Sorted).ToList(),
+        _ => e.Clone(),
+    };
 
     private HttpResponseMessage Refuse()
     {

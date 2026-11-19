@@ -120,9 +120,10 @@ public static class CoreEndpoints
         }).AllowAnonymous().RequireRateLimiting(RateLimits.ClientError).WithTags("Errors")
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(Saas.Application.Platform.ErrorRules.MaxClientReportBytes));
 
-        // OPay's callback for plan payments. Only the reference is read: OPay is then asked for the status, so the body's status and
-        // signature are never trusted. Always 200 (unknown or unreadable bodies are logged), so OPay doesn't retry what can't succeed.
-        app.MapPost("/api/webhooks/opay", async (HttpRequest request, BillingService billingService, ILogger<BillingService> logger, CancellationToken ct) =>
+        // OPay's callback for plan payments, course orders (crs_), stays (stay_) and boosts (bst_). Only the reference is read: the record's
+        // own provider is then asked for the status, so the body's status and signature are never trusted. Always 200 (unknown or
+        // unreadable bodies are logged), so OPay doesn't retry what can't succeed.
+        app.MapPost("/api/webhooks/opay", async (HttpRequest request, ILogger<BillingService> logger, CancellationToken ct) =>
         {
             // An anonymous body is read at most 64 KB; OPay's callbacks are under 2 KB.
             if (request.ContentLength > OpayCallbackMaxChars) return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
@@ -139,7 +140,12 @@ public static class CoreEndpoints
                 logger.LogWarning("Ignored an OPay callback without a readable reference");
                 return Results.Ok();
             }
-            await billingService.ConfirmFromProviderAsync(reference, ct);
+            var services = request.HttpContext.RequestServices;
+            if (Saas.Application.Billing.SalesPaymentChecks.IsSale(reference))
+                await services.GetRequiredService<Saas.Application.Billing.SalesPaymentChecks>()
+                    .CheckAsync(reference, Saas.Application.Billing.SalesPaymentChecks.CallbackCooldown, ct);
+            else
+                await services.GetRequiredService<BillingService>().ConfirmFromProviderAsync(reference, ct);
             return Results.Ok();
         }).AllowAnonymous().RequireRateLimiting(RateLimits.Webhook).WithTags("Webhooks").ExcludeFromDescription();
 

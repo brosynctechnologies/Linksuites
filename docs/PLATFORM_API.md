@@ -196,23 +196,33 @@ Payments come from one SQL `UNION ALL` of four sources: course orders (amount > 
 complete; there is no per-source cap. `pageSize` is 1-100 (default 50); `status` matches case-insensitively; `from`/`to` filter on
 `createdAt`. The CSV has columns `date,kind,product,business,amount,currency,status,reference` and covers the whole filtered range.
 Every text cell is quoted, and a cell starting with `=`, `+`, `-`, `@`, tab or carriage return gets a leading `'`, so a spreadsheet
-opens it as text rather than running it as a formula. `provider` is the plan payment's own provider (`paystack`, `opay`, or `transfer` for a bank transfer an admin confirms); course
-sales, stays and boosts always show `paystack`. A subscription payment's `status` can also be `Abandoned` (never confirmed within 24 hours).
+opens it as text rather than running it as a formula. `provider` is the provider that took the payment (`paystack`, `opay`, or `transfer` for a plan bank transfer an admin confirms), for
+plan payments, course sales, stays and boosts alike (rows from before Wave 3 are `paystack`). A subscription payment's `status` can also be `Abandoned` (never confirmed within 24 hours).
 
-#### Plan billing provider (Paystack or OPay)
+#### Payment provider (Paystack or OPay): plans, course sales, stays and boosts
 
 Config: `Billing:PlanProvider` (`paystack` by default, or `opay`; env `BILLING_PROVIDER`), and `Opay:MerchantId`, `Opay:PublicKey`,
 `Opay:SecretKey`, `Opay:BaseUrl` (sandbox `https://sandboxapi.opaycheckout.com` by default; live `https://api.opaycheckout.com`,
 **required in production**; env `OPAY_MERCHANT_ID`, `OPAY_PUBLIC_KEY`, `OPAY_SECRET_KEY`, `OPAY_BASE_URL`). In Production a sandbox (or
 empty) `Opay:BaseUrl` counts as not configured, with a startup warning, unless `Opay:AllowSandboxInProduction` is true. An unknown
 `Billing:PlanProvider` stops the api at startup. To switch plans to OPay: set BILLING_PROVIDER=opay and the OPAY_* values, then restart
-the api. Only new plan checkouts move; course sales, short-lets and boosts stay on Paystack.
+the api. The provider picked in Payment settings (below) overrides `Billing:PlanProvider`, and applies to every platform payment:
+plan checkouts, LearnLink course sales, PropertyLink short-let stays and listing boosts. Only new checkouts move: each payment records
+the provider that took it, and its return check, callbacks, re-check and refunds always go to that provider, so Paystack payments
+taken before a switch keep working.
+
+OPay refunds (stay cancellations, late-payment refunds, course refunds) use OPay's international refund API: `POST {Opay:BaseUrl}/api/v1/international/payment/refund/create`
+with `MerchantId` and `Authorization: Bearer {HMAC-SHA512 hex of the body, Opay:SecretKey}`, body `{ amount: { currency, total }, country: "NG",
+originalReference, reference }` with the fields in alphabetical order (as the status call). OPay is asked for the payment first, so the
+refund uses its currency and never exceeds what was paid. The refund's own reference is `{reference}_rf`, one per payment, so a retry
+after a timeout can't refund twice (OPay's `20000` duplicate answer counts as already sent). `orderStatus` INITIAL, PENDING or SUCCESS
+is accepted; FAIL, `50003`, `02006` (original payment not found) or any other code answers 503 and the stay or order stays as it was.
 
 | Method | Path | Notes |
 |---|---|---|
 | POST | `/api/billing/checkout` `{ planCode }` | unchanged: `{ authorizationUrl }` (Paystack, or OPay's cashier URL). 503 with a clear sentence when the chosen provider isn't configured; `GET /api/billing` then has `paymentsEnabled: false`. |
 | POST | `/api/billing/verify` `{ reference }` | signed-in, own business's payment only (404 otherwise). Asks the provider that took the payment and confirms on SUCCESS with a matching amount and currency. → `{ status: Paid\|Pending\|Failed, plan }`. Rate limited per user. |
-| POST | `/api/webhooks/opay` | anonymous, webhook rate limit. Reads only the reference, then asks OPay for the status; the body's status and signature are never trusted. 200 (unknown references are logged); a body over 64 KB is 413. |
+| POST | `/api/webhooks/opay` | anonymous, webhook rate limit. Reads only the reference, then asks the provider that took that payment for the status; the body's status and signature are never trusted. Routed by reference: `crs_` course order, `stay_` stay, `bst_` boost, anything else a plan payment. Each record is asked about at most every 30 seconds. 200 (unknown references are logged); a body over 64 KB is 413. |
 
 A plan activates only after the provider confirms the payment (callback, return check, or the background re-check, which asks about
 each Pending plan payment about every 10 minutes and marks it `Abandoned` after 24 hours; a later confirmation still applies). A
@@ -236,8 +246,8 @@ keys stay in server config and never appear in the database or the console. Ever
 (10 seconds per API process; a save on a process clears its copy at once).
 
 While online payment is **off**: new plan checkouts answer 503 ("pay by bank transfer instead"), course purchases, short-let bookings and
-boost purchases answer 503 exactly as when Paystack has no key (nothing reaches the gateway), and `GET /api/billing` has
-`paymentsEnabled: false`. Webhooks, return checks, the plan re-check and refunds of payments already taken work whatever the switch says.
+boost purchases answer 503 exactly as when the chosen provider has no keys (nothing reaches the gateway), and `GET /api/billing` has
+`paymentsEnabled: false`. Webhooks, return checks, the plan and sales re-checks and refunds of payments already taken work whatever the switch says.
 Each business's own Paystack key for its own customers is not affected.
 
 | Method | Path | Auth | Notes |

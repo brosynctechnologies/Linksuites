@@ -8,7 +8,7 @@ using Saas.Domain.Courses;
 namespace Saas.Application.Courses;
 
 /// <summary>The tutor's learners and money: dashboard, students, Q&amp;A, reviews, coupons, earnings, payouts and refunds.</summary>
-public sealed class StudioPeopleService(IAppDbContext db, CourseCore core, PlanService plans, IPaymentGateway gateway, ICurrentUser user, PayoutService payouts)
+public sealed class StudioPeopleService(IAppDbContext db, CourseCore core, PlanService plans, SalesGateways gateways, ICurrentUser user, PayoutService payouts)
 {
     public async Task<StudioDashboardDto> DashboardAsync(CancellationToken ct)
     {
@@ -165,16 +165,33 @@ public sealed class StudioPeopleService(IAppDbContext db, CourseCore core, PlanS
         return await payouts.RequestAsync(r.AmountMinor, academy.PayoutAccount, academy.Currency, ct);
     }
 
-    /// <summary>Refunds a learner within the refund window through the platform's Paystack, removing access and the earning.</summary>
+    /// <summary>
+    /// Refunds a learner within the refund window through the provider that took the payment (Paystack or OPay), removing access and the
+    /// earning. The order is claimed first with a conditional update, so a double click refunds once; the claim is undone if the provider
+    /// refuses.
+    /// </summary>
     public async Task RefundAsync(Guid orderId, CancellationToken ct)
     {
         var order = await db.CourseOrders.FirstOrDefaultAsync(o => o.Id == orderId, ct) ?? throw new NotFoundException("Order");
         if (order.Status != OrderState.Paid) throw new ConflictException("Only paid orders can be refunded.");
         if (core.Now - (order.PaidAt ?? order.CreatedAt) > CourseRules.RefundWindow)
             throw new ConflictException("Refunds are only possible within 7 days of purchase.");
-        if (order.TotalMinor > 0) await gateway.RefundAsync(order.Reference, order.TotalMinor, ct);
+        var now = core.Now;
+        var claimed = await db.CourseOrders.Where(o => o.Id == order.Id && o.Status == OrderState.Paid)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderState.Refunded).SetProperty(o => o.RefundedAt, (DateTimeOffset?)now), ct);
+        if (claimed == 0) throw new ConflictException("This order has already been refunded.");
+        try
+        {
+            if (order.TotalMinor > 0) await gateways.RefundAsync(order.Provider, order.Reference, order.TotalMinor, ct);
+        }
+        catch
+        {
+            await db.CourseOrders.Where(o => o.Id == order.Id).ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderState.Paid)
+                .SetProperty(o => o.RefundedAt, (DateTimeOffset?)null), CancellationToken.None);
+            throw;
+        }
         order.Status = OrderState.Refunded;
-        order.RefundedAt = core.Now;
+        order.RefundedAt = now;
         await db.Earnings.Where(e => e.Source == EarningSource.CourseOrder && e.SourceId == order.Id).ExecuteUpdateAsync(s => s.SetProperty(e => e.Reversed, true), ct);
         var enrollment = await db.Enrollments.FirstOrDefaultAsync(e => e.CourseId == order.CourseId && e.UserId == order.UserId, ct);
         if (enrollment is not null && !enrollment.Revoked)

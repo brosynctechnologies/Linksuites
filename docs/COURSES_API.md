@@ -6,7 +6,7 @@ Same API and conventions as the other products: camelCase JSON, string enums, mo
 Two sides share one course catalogue:
 - **Academy (tutor SaaS):** each tutor business is a tenant with its own academy page `/{web}/a/{academySlug}`.
 - **Marketplace:** courses a tutor lists *and* an admin approves appear in the shared catalogue.
-All student payments go to the platform's Paystack account; tutors earn the price minus a fee and are paid out.
+All student payments go to the platform's own account with the provider chosen in the admin console's Payment settings (Paystack or OPay); tutors earn the price minus a fee and are paid out. Each order records the provider that took it (`provider`), and the return check, callbacks, the background re-check and refunds always use that provider, so orders taken before a switch keep working.
 
 ## Accounts and tokens
 
@@ -88,7 +88,7 @@ Question `type`: `SingleChoice`, `MultipleChoice`, `TrueFalse`, `ShortAnswer`. `
 | GET | `/api/studio/earnings?page=` | `{ currency, availableMinor, pendingMinor, paidOutMinor, entries: Paged<{ id, orderId, courseTitle, studentName, channel, grossMinor, feeMinor, netMinor, availableAt, createdAt, status }> }` |
 | GET | `/api/studio/payouts` | `PayoutDto[]` |
 | POST | `/api/studio/payouts` | `{ amountMinor }` → `PayoutDto` (needs a payout account; up to `availableMinor`; minimum ₦5,000) |
-| POST | `/api/studio/orders/{id}/refund` | → 204 (within 7 days of purchase; removes access and the earning) |
+| POST | `/api/studio/orders/{id}/refund` | → 204 (within 7 days of purchase; removes access and the earning). Refunded through the provider that took the payment (Paystack or OPay); the order is claimed first, so a double click refunds once, and a refund the provider refuses answers 503 and leaves the order Paid. |
 
 `CouponDto = { id, code, courseId, discountType, value, maxUses, uses, expiresAt, isActive }` (`courseId` null = all courses; `discountType` `Percent` or `Fixed`)
 `PayoutDto = { id, amountMinor, status, bankName, accountNumber, accountName, reference, requestedAt, paidAt, note }`; `status`: `Requested`, `Paid`, `Rejected`.
@@ -135,7 +135,7 @@ Earning `status`: `Pending` (in the 7-day window), `Available`, `PartlyAvailable
 
 `channel`: `Marketplace` (default) or `Academy` (send `Academy` when the learner came from the tutor's academy page).
 Free courses and 100% coupons enrol at once (`enrolled: true`, no `authorizationUrl`). Otherwise go to `authorizationUrl`;
-Paystack returns the learner to `{web}/checkout/{orderId}?reference=...`, which calls `/verify`.
+the checkout returns the learner to `{web}/checkout/{orderId}?reference=...` (Paystack adds the reference itself; for OPay the API puts it in the return URL, and a learner who cancels on OPay comes back with `&cancelled=1`), which calls `/verify`. `/verify` asks the order's provider (status, amount and currency must match; a wrong amount marks the order Failed). Checkout answers 503 while online payment is off in Payment settings, or when the chosen provider has no keys on the server.
 `MyCourseDto = { courseId, slug, academySlug, title, thumbnailUrl, tutorName, progressPercent, lessonsDone, lessonsTotal, lastLessonId, completedAt, certificateCode }`
 `LearnCourseDto = { courseId, title, academySlug, slug, tutorName, progressPercent, certificateCode, brandColor, sections: [{ id, title, lessons: [{ id, title, type, durationSec, completed, isQuiz, passed }] }], resumeLessonId }`
 `LessonPlaybackDto = { id, courseId, title, type, content, durationSec, video: { status, format, url, thumbnailUrl } | null, resources: [{ title, url, sizeBytes }], quiz: { questionsCount, timeLimitMinutes, passMarkPercent, maxAttempts, attemptsUsed, bestScorePercent, passed } | null, positionSec, completed, previousLessonId, nextLessonId, watermark }`
@@ -155,4 +155,4 @@ A course is complete when every lesson is completed and every quiz passed; a cer
 | GET / POST, PUT `{id}` | `/api/admin/categories` | `{ name, slug, parentId }` | category |
 | GET | `/api/admin/overview` | | `{ academies, courses, learners, salesThisMonthMinor, platformFeesThisMonthMinor, pendingReviews, pendingPayouts }` |
 
-Webhook (platform Paystack): course payments arrive on the existing `POST /api/webhooks/paystack` (references start `crs_`).
+Webhooks: Paystack course payments arrive on the existing `POST /api/webhooks/paystack` (references start `crs_`, signed). OPay callbacks arrive on `POST /api/webhooks/opay`, which reads only the reference and asks the order's provider (at most every 30 seconds per order); the body is never trusted. Orders whose callback never came are re-checked every 10 minutes for 48 hours (with plan payments, `Jobs:BillingEnabled`).

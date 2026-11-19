@@ -29,7 +29,7 @@ export interface HostPaidCost {
 /**
  * Short-let dates: a two-month calendar with booked and closed nights struck through, a min-nights hint, and the
  * ledger as a live quote (nights × price, cleaning, total) from /stay-quote. "Reserve and pay" holds the dates for
- * 15 minutes and sends the guest to Paystack. Other costs the host lists are shown apart, as paid to the host and not
+ * 15 minutes and sends the guest to the secure checkout. Other costs the host lists are shown apart, as paid to the host and not
  * charged here, because the online total is nights and cleaning only.
  */
 export function StayBooker({
@@ -48,7 +48,7 @@ export function StayBooker({
   hostPaid?: HostPaidCost[];
 }) {
   const auth = useAuth();
-  // Signed in, the guest's own unpaid hold (say, after going back from Paystack) doesn't count as taken for them.
+  // Signed in, the guest's own unpaid hold (say, after going back from the checkout) doesn't count as taken for them.
   const signedIn = !!auth;
   const pathname = usePathname();
   const today = lagosToday();

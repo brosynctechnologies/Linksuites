@@ -6,7 +6,7 @@ import { VerifyPayment } from "./verify-payment";
 
 export const metadata: Metadata = { title: "Confirming your payment", robots: { index: false } };
 
-/** Paystack returns learners here with ?reference=…; the client confirms the payment with the API. */
+/** The secure checkout (Paystack or OPay) returns learners here with ?reference=…; the client confirms the payment with the API. */
 export default function CheckoutReturnPage() {
   return (
     <SitePage hideSearch>

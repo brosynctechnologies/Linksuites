@@ -244,8 +244,15 @@ public class CourseOrder : TenantEntity
     public string? CouponCode { get; set; }
     public SaleChannel Channel { get; set; }
     public OrderState Status { get; set; } = OrderState.Pending;
-    /// <summary>Paystack reference (crs_...); unique.</summary>
+    /// <summary>Our reference with the provider (crs_...); unique.</summary>
     public required string Reference { get; set; }
+    /// <summary>
+    /// The provider that took the payment (<c>paystack</c> or <c>opay</c>), chosen at checkout. The return check, callbacks, the re-check
+    /// and refunds always go to it, whichever provider new checkouts use later.
+    /// </summary>
+    public string Provider { get; set; } = "paystack";
+    /// <summary>When a callback or the re-check job last asked the provider about this order (rate limit, claimed conditionally).</summary>
+    public DateTimeOffset? RecheckedAt { get; set; }
     public DateTimeOffset? PaidAt { get; set; }
     public DateTimeOffset? RefundedAt { get; set; }
 }

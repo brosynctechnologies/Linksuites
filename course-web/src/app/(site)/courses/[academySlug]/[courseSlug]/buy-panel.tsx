@@ -217,7 +217,7 @@ export function BuyPanel(p: Props) {
             Progress saved on any device
           </li>
         </ul>
-        {!free && !enrolled && <p className="mt-4 text-xs text-muted">Pay securely with card, bank transfer or USSD through Paystack.</p>}
+        {!free && !enrolled && <p className="mt-4 text-xs text-muted">Pay with card, bank transfer or USSD at a secure checkout.</p>}
       </aside>
 
       {/* Phones: price and the main action stay in reach. */}

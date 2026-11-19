@@ -28,6 +28,10 @@ public static class DependencyInjection
         services.AddScoped<PlanReminderJobs>();
         services.AddSingleton<PaymentSettingsCache>();
         services.AddScoped<PaymentSettings>();
+        // Course sales, stays and boosts: the provider chosen in Payment settings for new checkouts, the record's own one after that.
+        services.AddScoped<SalesGateways>();
+        services.AddScoped<SalesPaymentChecks>();
+        services.AddScoped<SalesPaymentJobs>();
 
         // WhatsApp Order System
         services.AddScoped<IProductProvisioner, OrdersProvisioner>();

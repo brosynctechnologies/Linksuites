@@ -51,8 +51,8 @@ public sealed class BillingOptions
 
 /// <summary>
 /// Picks the plan-billing provider: the configured one for a new checkout, and the payment's own <c>Provider</c> for everything after,
-/// so payments taken before a switch are still verified with the provider that took them. Course sales, boosts and stays don't use
-/// this; they keep the single <see cref="IPaymentGateway"/>.
+/// so payments taken before a switch are still verified with the provider that took them. Course sales, boosts and stays use the
+/// same gateways through <see cref="SalesGateways"/>.
 /// </summary>
 public sealed class PlanGateways(IEnumerable<IPlanPaymentGateway> gateways, BillingOptions options)
 {

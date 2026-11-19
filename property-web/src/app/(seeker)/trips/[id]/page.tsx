@@ -13,12 +13,14 @@ import { PhoneIcon } from "@/components/icons";
 import { ApiErrorView, Button, Card, ErrorBox, Notice, PageHeader, PageLoader, StatusBadge, buttonClass } from "@/components/ui";
 
 /**
- * One trip, and the Paystack return page: with `?reference=` (or `?trxref=`) it verifies the payment first.
+ * One trip, and the return page from the secure checkout (Paystack or OPay): with `?reference=` (or Paystack's `?trxref=`) it verifies
+ * the payment first. OPay sends a guest who cancels back with `&cancelled=1`; the check still runs, in case the payment went through.
  */
 export default function TripPage() {
   const { id } = useParams<{ id: string }>();
   const sp = useSearchParams();
   const reference = sp.get("reference") ?? sp.get("trxref");
+  const cancelled = sp.get("cancelled") === "1";
   const [stay, setStay] = useState<MyStayDto | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [verifyError, setVerifyError] = useState<ApiError | null>(null);
@@ -93,6 +95,9 @@ export default function TripPage() {
     <div className="space-y-5">
       <PageHeader title={stay.listingTitle} back="/trips" subtitle={stay.areaName} />
       {reference && stay.status === "Confirmed" && !verifyError && <Notice tone="success">Payment confirmed. Your stay is booked.</Notice>}
+      {reference && cancelled && stay.status !== "Confirmed" && !verifyError && (
+        <Notice tone="info">You left the checkout before paying, so these dates aren&apos;t booked. You can book them again from the listing.</Notice>
+      )}
       {verifyError && (
         <Notice tone="warning">
           We couldn&apos;t confirm the payment yet ({verifyError.message}). If money left your account, don&apos;t pay again; payments can take a minute to
