@@ -306,6 +306,10 @@ public class Boost : TenantEntity
     public string Currency { get; set; } = "NGN";
     public required string Reference { get; set; }
     public BoostStatus Status { get; set; } = BoostStatus.Pending;
+    /// <summary>The provider that took the payment (<c>paystack</c> or <c>opay</c>), chosen at checkout; verify, callbacks and re-checks go to it.</summary>
+    public string Provider { get; set; } = "paystack";
+    /// <summary>When a callback or the re-check job last asked the provider (rate limit, claimed conditionally).</summary>
+    public DateTimeOffset? RecheckedAt { get; set; }
     public Guid? BuyerUserId { get; set; }
     public DateTimeOffset? PaidAt { get; set; }
     public DateTimeOffset? EndsAt { get; set; }
@@ -345,6 +349,10 @@ public class Stay : TenantEntity
     public StayStatus Status { get; set; } = StayStatus.Pending;
     public DateTimeOffset HoldExpiresAt { get; set; }
     public required string Reference { get; set; }
+    /// <summary>The provider that took the payment (<c>paystack</c> or <c>opay</c>), chosen at checkout; verify, callbacks, re-checks and refunds go to it.</summary>
+    public string Provider { get; set; } = "paystack";
+    /// <summary>When a callback or the re-check job last asked the provider (rate limit, claimed conditionally).</summary>
+    public DateTimeOffset? RecheckedAt { get; set; }
     public DateTimeOffset? PaidAt { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
     public StayCanceller? CancelledBy { get; set; }

@@ -276,13 +276,10 @@ public sealed class OpayBillingTests(ApiFixture api)
     }
 
     [Fact]
-    public async Task Courses_boosts_and_stays_keep_the_paystack_gateway_when_plans_use_opay()
+    public async Task Boosts_and_stays_follow_the_chosen_provider_too()
     {
         using (var scope = api.OpayHost.Services.CreateScope())
-        {
-            Assert.Equal("paystack", scope.ServiceProvider.GetRequiredService<IPaymentGateway>().Name);
             Assert.Equal("opay", scope.ServiceProvider.GetRequiredService<PlanGateways>().Configured?.Name);
-        }
 
         var kit = new PropertyKit(api);
         var agency = await kit.AgencyAsync("Opay Era Agency", verified: true);
@@ -299,10 +296,10 @@ public sealed class OpayBillingTests(ApiFixture api)
 
         foreach (var url in new[] { boost.GetProperty("authorizationUrl").GetString()!, stay.GetProperty("authorizationUrl").GetString()! })
         {
-            Assert.StartsWith("https://checkout.example/", url);
+            Assert.StartsWith($"{FakeOpay.BaseUrl}/cashier/", url);
             var reference = url.Split('/').Last();
-            Assert.Contains(api.Gateway.Initialized, i => i.Reference == reference);
-            Assert.False(api.Opay.Created.ContainsKey(reference));
+            Assert.DoesNotContain(api.Gateway.Initialized, i => i.Reference == reference);
+            Assert.True(api.Opay.Created.ContainsKey(reference));
         }
     }
 

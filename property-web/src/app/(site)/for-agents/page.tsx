@@ -88,7 +88,7 @@ const FEATURES = [
   },
   {
     title: "Short-lets paid before check-in",
-    text: "Turn on bookings for a furnished flat. Guests pick dates and pay online through Paystack, and your earnings can be paid out from the day after check-in.",
+    text: "Turn on bookings for a furnished flat. Guests pick dates and pay online at a secure checkout, and your earnings can be paid out from the day after check-in.",
     visual: (
       <Crop>
         <Drawing label="A short-let booking on PropertyLink: 3 nights at ₦85,000 plus ₦15,000 cleaning, ₦270,000 in total, paid online.">
@@ -130,7 +130,7 @@ const FAQ = [
   },
   {
     q: "How do short-let payments work?",
-    a: "Guests choose their dates and pay online through Paystack when they book. PropertyLink keeps a commission, shown on your studio's earnings page, and the rest is yours to pay out to your bank from the day after check-in.",
+    a: "Guests choose their dates and pay online at a secure checkout when they book. PropertyLink keeps a commission, shown on your studio's earnings page, and the rest is yours to pay out to your bank from the day after check-in.",
   },
   {
     q: "Can my agents work in the same studio?",

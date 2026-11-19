@@ -5059,6 +5059,16 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("price_minor");
 
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("provider");
+
+                    b.Property<DateTimeOffset?>("RecheckedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("rechecked_at");
+
                     b.Property<string>("Reference")
                         .IsRequired()
                         .HasColumnType("text")
@@ -8128,6 +8138,16 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("paid_at");
 
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("provider");
+
+                    b.Property<DateTimeOffset?>("RecheckedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("rechecked_at");
+
                     b.Property<string>("Reference")
                         .IsRequired()
                         .HasColumnType("text")
@@ -9109,6 +9129,16 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("PaidAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("paid_at");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("provider");
+
+                    b.Property<DateTimeOffset?>("RecheckedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("rechecked_at");
 
                     b.Property<string>("Reference")
                         .IsRequired()

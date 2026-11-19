@@ -218,7 +218,7 @@ public sealed class CourseFlowTests(ApiFixture api)
     private static readonly byte[] FakeVideo = [0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32, 1, 2, 3, 4];
     private static readonly byte[] Png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
 
-    private async Task<(HttpClient Client, Guid TenantId)> TutorAsync(string name)
+    internal async Task<(HttpClient Client, Guid TenantId)> TutorAsync(string name)
     {
         var client = api.CreateClient();
         var response = await api.SignUpAsync(client, "/api/auth/signup", new
@@ -232,7 +232,7 @@ public sealed class CourseFlowTests(ApiFixture api)
         return (client, auth.GetProperty("tenant").GetProperty("id").GetGuid());
     }
 
-    private async Task<HttpClient> LearnerAsync(string name, string? email = null)
+    internal async Task<HttpClient> LearnerAsync(string name, string? email = null)
     {
         var client = api.CreateClient();
         email ??= $"{name.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com";
@@ -248,7 +248,7 @@ public sealed class CourseFlowTests(ApiFixture api)
     private static object NewCourse(string title, long price, bool isFree = false) =>
         new { title, priceMinor = price, isFree, level = "AllLevels", listOnMarketplace = false };
 
-    private async Task<Guid> CreateCourseAsync(HttpClient tutor, string title, long price, bool isFree = false)
+    internal async Task<Guid> CreateCourseAsync(HttpClient tutor, string title, long price, bool isFree = false)
     {
         var response = await tutor.PostAsJsonAsync("/api/studio/courses", NewCourse(title, price, isFree), Ct);
         response.EnsureSuccessStatusCode();
@@ -256,7 +256,7 @@ public sealed class CourseFlowTests(ApiFixture api)
     }
 
     /// <summary>A video lesson (processed), a text lesson and a one-question quiz.</summary>
-    private async Task<(Guid Video, Guid Text, Guid Quiz, Guid CorrectOption)> BuildCurriculumAsync(HttpClient tutor, Guid course)
+    internal async Task<(Guid Video, Guid Text, Guid Quiz, Guid CorrectOption)> BuildCurriculumAsync(HttpClient tutor, Guid course)
     {
         var detail = await Json(await tutor.GetAsync($"/api/studio/courses/{course}", Ct));
         var section = detail.GetProperty("sections")[0].GetProperty("id").GetGuid();
@@ -292,7 +292,7 @@ public sealed class CourseFlowTests(ApiFixture api)
         return (lessons[0], lessons[1], lessons[2], correct);
     }
 
-    private async Task PublishAsync(HttpClient tutor, Guid course) =>
+    internal async Task PublishAsync(HttpClient tutor, Guid course) =>
         (await tutor.PostAsync($"/api/studio/courses/{course}/publish", null, Ct)).EnsureSuccessStatusCode();
 
     private async Task<Guid> BuyAsync(HttpClient learner, Guid course, long amount)

@@ -10,11 +10,15 @@ import { BOOST_STATUS, statusOf } from "@/lib/status";
 import type { BoostDto } from "@/lib/types";
 import { ApiErrorView, Button, Card, Notice, PageHeader, PageLoader, StatusBadge, buttonClass } from "@/components/ui";
 
-/** A boost, and the Paystack return page: with `?reference=` it verifies the payment first. */
+/**
+ * A boost, and the return page from the secure checkout (Paystack or OPay): with `?reference=` it verifies the payment first. OPay sends
+ * a buyer who cancels back with `&cancelled=1`; the check still runs, in case the payment went through.
+ */
 export default function BoostPage() {
   const { id } = useParams<{ id: string }>();
   const sp = useSearchParams();
   const reference = sp.get("reference") ?? sp.get("trxref");
+  const cancelled = sp.get("cancelled") === "1";
   const [boost, setBoost] = useState<BoostDto | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [verifyError, setVerifyError] = useState<ApiError | null>(null);
@@ -61,6 +65,9 @@ export default function BoostPage() {
     <div className="space-y-4">
       <PageHeader title={boost.listingTitle} back="/studio/boosts" subtitle={boost.kind === "Top" ? "Top of search" : "Featured"} />
       {reference && boost.status === "Active" && !verifyError && <Notice tone="success">Payment confirmed. Your boost is live.</Notice>}
+      {reference && cancelled && boost.status === "Pending" && !verifyError && (
+        <Notice tone="info">You left the checkout before paying, so this boost isn&apos;t live. Buy it again from the listing when you&apos;re ready.</Notice>
+      )}
       {verifyError && (
         <Notice tone="warning">
           We couldn&apos;t confirm the payment yet ({verifyError.message}). If money left your account, don&apos;t pay again.{" "}

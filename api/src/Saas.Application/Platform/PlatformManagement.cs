@@ -123,21 +123,21 @@ public sealed class PlatformMoneyService(IAppDbContext db)
     //    in full but still received the money); refund_minor is what went back.
     //  - boosts: received once paid; boosts aren't refunded.
     //  - subscriptions: received when Succeeded or Refunded; a refund returns the whole payment.
-    // Provider: plan payments record theirs (paystack or opay); course sales, stays and boosts all go through the platform Paystack account.
+    // Provider: every row records the provider that took it (paystack or opay; transfer for a plan paid by bank transfer).
     private IQueryable<Row> Rows() => db.SqlQuery<Row>($"""
         SELECT o.id, 'Course' AS kind, 'courses' AS product, o.tenant_id AS business_id, COALESCE(t.name, '') AS business_name,
                o.total_minor AS amount_minor,
                CASE WHEN o.status = 'Refunded' THEN o.total_minor ELSE 0::bigint END AS refunded_minor,
                CASE WHEN o.status = 'Paid' THEN o.total_minor ELSE 0::bigint END AS collected_minor,
-               o.currency, o.status, COALESCE(o.reference, '') AS reference, o.created_at, o.paid_at, 'paystack' AS provider
+               o.currency, o.status, COALESCE(o.reference, '') AS reference, o.created_at, o.paid_at, o.provider AS provider
         FROM course_orders o LEFT JOIN tenants t ON t.id = o.tenant_id WHERE o.total_minor > 0
         UNION ALL
         SELECT s.id, 'Stay', 'property', s.tenant_id, COALESCE(t.name, ''), s.total_minor, s.refund_minor, GREATEST(s.total_minor - s.refund_minor, 0),
-               s.currency, s.status, COALESCE(s.reference, ''), s.created_at, s.paid_at, 'paystack'
+               s.currency, s.status, COALESCE(s.reference, ''), s.created_at, s.paid_at, s.provider
         FROM stays s LEFT JOIN tenants t ON t.id = s.tenant_id WHERE s.paid_at IS NOT NULL OR s.refund_minor > 0
         UNION ALL
         SELECT b.id, 'Boost', 'property', b.tenant_id, COALESCE(t.name, ''), b.amount_minor, 0::bigint, b.amount_minor,
-               b.currency, b.status, COALESCE(b.reference, ''), b.created_at, b.paid_at, 'paystack'
+               b.currency, b.status, COALESCE(b.reference, ''), b.created_at, b.paid_at, b.provider
         FROM boosts b LEFT JOIN tenants t ON t.id = b.tenant_id WHERE b.paid_at IS NOT NULL
         UNION ALL
         SELECT p.id, 'Subscription', COALESCE(t.product, ''), p.tenant_id, COALESCE(t.name, ''), p.amount_minor,

@@ -959,12 +959,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         {
             e.HasIndex(x => x.Reference).IsUnique();
             e.HasIndex(x => new { x.ListingId, x.Status });
+            e.Property(x => x.Provider).HasMaxLength(20);
         });
         b.Entity<StayBlock>().HasIndex(x => new { x.ListingId, x.Start });
         b.Entity<Stay>(e =>
         {
             e.HasIndex(x => x.Reference).IsUnique();
             e.HasIndex(x => new { x.ListingId, x.CheckIn });
+            e.Property(x => x.Provider).HasMaxLength(20);
             e.HasIndex(x => new { x.GuestUserId });
             e.HasIndex(x => new { x.Status, x.HoldExpiresAt });
         });
@@ -1029,6 +1031,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         {
             e.HasIndex(x => x.Reference).IsUnique();
             e.HasIndex(x => new { x.UserId, x.CourseId });
+            e.Property(x => x.Provider).HasMaxLength(20);
         });
         b.Entity<Earning>(e =>
         {

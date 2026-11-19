@@ -25,6 +25,8 @@ export function VerifyPayment() {
   const { orderId } = useParams<{ orderId: string }>();
   const sp = useSearchParams();
   const reference = sp.get("reference") ?? sp.get("trxref");
+  // OPay sends a learner who cancels back with &cancelled=1. The check still runs, in case the payment went through.
+  const cancelled = sp.get("cancelled") === "1";
   const auth = useAuth();
   const hydrated = useHydrated();
   const [result, setResult] = useState<{ enrolled: boolean; courseUrl: string | null } | null>(null);
@@ -48,7 +50,7 @@ export function VerifyPayment() {
   if (!reference) {
     return (
       <Panel title="Payment not confirmed">
-        <p className="text-slate-700">This page needs the payment reference from Paystack. If you paid, open My learning: your course appears there once the payment clears.</p>
+        <p className="text-slate-700">This page needs the payment reference from the checkout. If you paid, open My learning: your course appears there once the payment clears.</p>
         <Link href="/learn" className={buttonClass("primary", "mt-5")}>
           Go to My learning
         </Link>
@@ -96,8 +98,8 @@ export function VerifyPayment() {
 
   if (!result.enrolled) {
     return (
-      <Panel title="Payment not completed">
-        <p className="text-slate-700">Paystack hasn&apos;t confirmed this payment. If you cancelled, you can go back to the course and try again.</p>
+      <Panel title={cancelled ? "Payment cancelled" : "Payment not completed"}>
+        <p className="text-slate-700">The payment hasn&apos;t been confirmed. If you cancelled, you can go back to the course and try again.</p>
         <div className="mt-5 flex flex-wrap gap-2">
           <Button onClick={() => setAttempt((a) => a + 1)}>Check again</Button>
           <Link href="/learn" className={buttonClass("secondary")}>

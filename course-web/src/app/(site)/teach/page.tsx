@@ -44,7 +44,7 @@ const STEPS = [
   },
   {
     title: "Get paid in naira",
-    text: `Learners pay through Paystack. Each sale clears after ${REFUND_WINDOW_DAYS} days, then you request a payout to your bank.`,
+    text: `Learners pay at a secure checkout. Each sale clears after ${REFUND_WINDOW_DAYS} days, then you request a payout to your bank.`,
   },
 ];
 
@@ -101,7 +101,7 @@ const FAQ = [
   },
   {
     q: "How do learners pay, and how do I get my money?",
-    a: `Learners pay in naira by card, bank transfer or USSD through Paystack. LearnLink collects the payment and holds it for ${REFUND_WINDOW_DAYS} days in case of a refund. Then it shows as available on your earnings page, and you request a payout to your bank account.`,
+    a: `Learners pay in naira by card, bank transfer or USSD at a secure checkout. LearnLink collects the payment and holds it for ${REFUND_WINDOW_DAYS} days in case of a refund. Then it shows as available on your earnings page, and you request a payout to your bank account.`,
   },
   {
     q: "Do I have to list my courses on the marketplace?",
@@ -195,7 +195,7 @@ export default function TeachPage() {
         <Section
           id="money"
           title="How you get paid"
-          intro="LearnLink collects every payment through Paystack and pays you out. This is everything that comes off a sale."
+          intro="LearnLink collects every payment and pays you out. This is everything that comes off a sale."
         >
           <dl className="mt-10 grid gap-x-10 sm:grid-cols-2">
             {MONEY.map((m) => (

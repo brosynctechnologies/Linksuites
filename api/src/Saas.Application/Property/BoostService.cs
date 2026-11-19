@@ -14,8 +14,11 @@ public sealed record VerifyBoostRequest(string Reference);
 public sealed record BoostDto(Guid Id, Guid ListingId, string ListingTitle, string Code, BoostKind Kind, int Days, long AmountMinor, BoostStatus Status,
     DateTimeOffset? PaidAt, DateTimeOffset? EndsAt, DateTimeOffset CreatedAt);
 
-/// <summary>Paid placement: featured for 7 or 30 days, or top of search for 7 days. Paid to the platform's Paystack.</summary>
-public sealed class BoostService(IAppDbContext db, ICurrentUser user, PropertyCore core, IPaymentGateway gateway, PaymentSettings payments, NotificationQueue notifications, Saas.Application.Auth.PlatformOptions platform,
+/// <summary>
+/// Paid placement: featured for 7 or 30 days, or top of search for 7 days. Paid to the platform through the provider chosen in Payment
+/// settings (Paystack or OPay); each boost is checked with the provider that took it.
+/// </summary>
+public sealed class BoostService(IAppDbContext db, ICurrentUser user, PropertyCore core, SalesGateways gateways, NotificationQueue notifications, Saas.Application.Auth.PlatformOptions platform,
     ILogger<BoostService> logger)
 {
     public static readonly IReadOnlyList<BoostOptionDto> Options =
@@ -30,27 +33,32 @@ public sealed class BoostService(IAppDbContext db, ICurrentUser user, PropertyCo
         var option = Options.FirstOrDefault(o => o.Code == r.Code) ?? throw BadRequestException.Field("code", "Choose a boost.");
         var listing = await db.Listings.FirstOrDefaultAsync(l => l.Id == listingId, ct) ?? throw new NotFoundException("Listing");
         if (listing.Status != ListingStatus.Active) throw new ConflictException("Only live listings can be boosted.");
-        // Online payment switched off in the admin console reads exactly like a gateway with no key: nothing reaches the gateway.
-        if (!gateway.IsConfigured || !await payments.OnlinePaymentsEnabledAsync(ct)) throw new ServiceUnavailableException("Online payments aren't set up yet. Please try again later.");
+        // The provider chosen in Payment settings; online payment switched off (or the provider without keys) is refused before a boost exists.
+        var gateway = await gateways.ForCheckoutAsync(ct);
         var me = user.UserId ?? throw new ForbiddenException();
         var boost = new Boost
         {
             ListingId = listing.Id, Code = option.Code, Kind = option.Kind, Days = option.Days, AmountMinor = option.PriceMinor, Currency = option.Currency,
-            BuyerUserId = me, Reference = "",
+            BuyerUserId = me, Reference = "", Provider = gateway.Name,
         };
         boost.Reference = $"bst_{boost.Id:N}";
         db.Boosts.Add(boost);
         await db.SaveChangesAsync(ct);
         var email = await db.Users.Where(u => u.Id == me).Select(u => u.Email).FirstAsync(ct);
         var url = await gateway.InitializeAsync(new PaymentInit(email!, boost.AmountMinor, boost.Currency, boost.Reference,
-            $"{core.Web}/studio/boosts/{boost.Id}", new() { ["boost"] = option.Name, ["listing"] = listing.Title, ["tenantId"] = listing.TenantId.ToString() }), ct);
+            SalesGateways.ReturnUrl(gateway, $"{core.Web}/studio/boosts/{boost.Id}", boost.Reference),
+            new()
+            {
+                ["boost"] = option.Name, ["listing"] = listing.Title, ["tenantId"] = listing.TenantId.ToString(),
+                ["productName"] = $"PropertyLink {option.Name}", ["productDescription"] = listing.Title,
+            }), ct);
         return new BoostPurchaseDto(boost.Id, url, boost.AmountMinor);
     }
 
     public async Task<BoostDto> VerifyAsync(Guid boostId, VerifyBoostRequest r, CancellationToken ct)
     {
         var boost = await db.Boosts.AsNoTracking().FirstOrDefaultAsync(b => b.Id == boostId, ct) ?? throw new NotFoundException("Boost");
-        if (boost.Status == BoostStatus.Pending && r.Reference == boost.Reference && await gateway.VerifyAsync(boost.Reference, ct) is { } charge)
+        if (boost.Status == BoostStatus.Pending && r.Reference == boost.Reference && await gateways.PaidAsync(boost.Provider, boost.Reference, ct) is { } charge)
             await ConfirmAsync(charge.Reference, charge.AmountMinor, charge.Currency, ct);
         return (await ListAsync(ct)).First(b => b.Id == boostId);
     }

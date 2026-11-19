@@ -192,12 +192,13 @@ public sealed class CourseCore(
     // Orders
 
     /// <summary>
-    /// Marks a paid order, enrols the learner and records the tutor's earning. Idempotent per order, and checks the
-    /// amount and currency against what the provider charged.
+    /// Marks a paid order, enrols the learner and records the tutor's earning. Idempotent per order: the order is claimed (Pending to
+    /// Paid) with a conditional update inside a transaction, and only the call that claimed it enrols, counts the coupon and records the
+    /// earning. Checks the amount and currency against what the provider charged.
     /// </summary>
     public async Task<bool> ConfirmOrderAsync(string reference, long amountMinor, string currency, CancellationToken ct)
     {
-        var order = await db.CourseOrders.IgnoreQueryFilters().FirstOrDefaultAsync(o => o.Reference == reference, ct);
+        var order = await db.CourseOrders.IgnoreQueryFilters().AsNoTracking().FirstOrDefaultAsync(o => o.Reference == reference, ct);
         if (order is null) return false;
         UseTenantOf(order.TenantId);
         if (order.Status == OrderState.Paid) return true;
@@ -206,14 +207,22 @@ public sealed class CourseCore(
         {
             logger.LogWarning("Course order {Reference}: charged {Amount} {Currency}, expected {Expected} {ExpectedCurrency}",
                 reference, amountMinor, currency, order.TotalMinor, order.Currency);
-            order.Status = OrderState.Failed;
-            await db.SaveChangesAsync(ct);
+            await db.CourseOrders.IgnoreQueryFilters().Where(o => o.Id == order.Id && o.Status == OrderState.Pending)
+                .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderState.Failed), ct);
             return false;
         }
 
         var course = await db.Courses.FirstAsync(c => c.Id == order.CourseId, ct);
-        order.Status = OrderState.Paid;
-        order.PaidAt = Now;
+        var now = Now;
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var claimed = await db.CourseOrders.IgnoreQueryFilters().Where(o => o.Id == order.Id && o.Status == OrderState.Pending)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderState.Paid).SetProperty(o => o.PaidAt, (DateTimeOffset?)now), ct);
+        if (claimed == 0)
+        {
+            // Another confirmation (the webhook or the return page) got there first.
+            await tx.RollbackAsync(CancellationToken.None);
+            return await db.CourseOrders.IgnoreQueryFilters().AnyAsync(o => o.Id == order.Id && o.Status == OrderState.Paid, ct);
+        }
         await EnrollAsync(course, order.UserId, order.CouponCode is null ? EnrollmentSource.Purchase : EnrollmentSource.Coupon, order.Id, ct);
         if (order.CouponCode is { } code)
             await db.CourseCoupons.Where(c => c.Code == code).ExecuteUpdateAsync(s => s.SetProperty(c => c.Uses, c => c.Uses + 1), ct);
@@ -226,15 +235,8 @@ public sealed class CourseCore(
             Source = EarningSource.CourseOrder, SourceId = order.Id, Description = course.Title, CourseId = course.Id, UserId = order.UserId, Channel = order.Channel, GrossMinor = order.TotalMinor,
             FeePercent = pct, FeeMinor = fee, NetMinor = net, AvailableAt = Now.Add(CourseRules.RefundWindow), SettledByProvider = split is not null,
         });
-        try
-        {
-            await db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateException ex)
-        {
-            // The return page and the webhook can race; a unique index on earnings per order makes the second one fail.
-            logger.LogInformation(ex, "Course order {Reference} was already confirmed", reference);
-        }
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return true;
     }
 }

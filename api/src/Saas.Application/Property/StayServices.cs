@@ -39,7 +39,7 @@ public sealed record PropertyEarningsDto(string Currency, long AvailableMinor, l
 /// Short-let bookings for guests. Dates are held for 15 minutes while the guest pays the platform; a PostgreSQL exclusion
 /// constraint makes sure two guests can never hold or confirm overlapping nights.
 /// </summary>
-public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCore core, IPaymentGateway gateway, PaymentSettings payments, IDbErrors errors,
+public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCore core, SalesGateways gateways, IDbErrors errors,
     NotificationQueue notifications, LocationTree locations, ILogger<StayService> logger, PaymentSplits splits)
 {
     public const int MaxNights = 90;
@@ -76,11 +76,11 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
         if (await db.Memberships.IgnoreQueryFilters().AnyAsync(m => m.TenantId == listing.TenantId && m.UserId == me, ct))
             throw new ForbiddenException("You can't book your own listing.");
         await CheckAsync(listing, r, ct);
-        // Online payment switched off in the admin console reads exactly like a gateway with no key: nothing reaches the gateway.
-        if (!gateway.IsConfigured || !await payments.OnlinePaymentsEnabledAsync(ct)) throw new ServiceUnavailableException("Online payments aren't set up yet. Please try again later.");
+        // The provider chosen in Payment settings; online payment switched off (or the provider without keys) is refused before a hold exists.
+        var gateway = await gateways.ForCheckoutAsync(ct);
 
         // Unpaid holds that have run out no longer block the dates, and nor does this guest's own earlier hold on these nights (they
-        // went back from Paystack and pressed "Reserve and pay" again): it is released, and the new hold replaces it. If the old
+        // went back from the checkout and pressed "Reserve and pay" again): it is released, and the new hold replaces it. If the old
         // payment still lands, ConfirmAsync refunds it because the dates are taken by the new hold.
         var now = core.Now;
         await db.Stays.IgnoreQueryFilters().Where(s => s.ListingId == listing.Id && s.Status == StayStatus.Pending
@@ -95,7 +95,7 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
             ListingId = listing.Id, GuestUserId = me, GuestName = guest.FullName, GuestPhone = string.IsNullOrWhiteSpace(r.Phone) ? null : r.Phone.Trim(),
             CheckIn = r.CheckIn, CheckOut = r.CheckOut, Guests = r.Guests, Nights = q.Nights, NightlyMinor = listing.PriceMinor,
             CleaningMinor = q.CleaningMinor, TotalMinor = q.TotalMinor, CommissionMinor = PropertyRules.Commission(q.TotalMinor), Currency = listing.Currency,
-            HoldExpiresAt = core.Now + PropertyRules.StayHold, Reference = "",
+            HoldExpiresAt = core.Now + PropertyRules.StayHold, Reference = "", Provider = gateway.Name,
         };
         stay.Reference = $"stay_{stay.Id:N}";
         db.Stays.Add(stay);
@@ -110,14 +110,20 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
         // A host with direct settlement: Paystack splits the payment, keeping the platform's commission.
         var split = await splits.ForCheckoutAsync(gateway.Name, listing.TenantId, stay.Reference, stay.TotalMinor, stay.CommissionMinor, ct);
         var url = await gateway.InitializeAsync(new PaymentInit(guest.Email!, stay.TotalMinor, stay.Currency, stay.Reference,
-            $"{core.Web}/trips/{stay.Id}", new() { ["listing"] = listing.Title, ["tenantId"] = listing.TenantId.ToString() }, split), ct);
+            SalesGateways.ReturnUrl(gateway, $"{core.Web}/trips/{stay.Id}", stay.Reference),
+            new()
+            {
+                ["listing"] = listing.Title, ["tenantId"] = listing.TenantId.ToString(),
+                ["productName"] = $"Stay: {listing.Title}", ["productDescription"] = $"{stay.CheckIn:d MMM} to {stay.CheckOut:d MMM yyyy}, {stay.Nights} nights",
+            }, split), ct);
         return new StayBookingDto(stay.Id, url, stay.TotalMinor, stay.HoldExpiresAt);
     }
 
     public async Task<MyStayDto> VerifyAsync(Guid stayId, VerifyStayRequest r, CancellationToken ct)
     {
         var stay = await MyStayAsync(stayId, ct);
-        if (stay.Status is StayStatus.Pending or StayStatus.Expired && r.Reference == stay.Reference && await gateway.VerifyAsync(stay.Reference, ct) is { } charge)
+        if (stay.Status is StayStatus.Pending or StayStatus.Expired && r.Reference == stay.Reference
+            && await gateways.PaidAsync(stay.Provider, stay.Reference, ct) is { } charge)
             await ConfirmAsync(charge.Reference, charge.AmountMinor, charge.Currency, ct);
         return (await ToDtosAsync([await MyStayAsync(stayId, ct)], ct))[0];
     }
@@ -142,7 +148,7 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
             var claimed0 = await db.Stays.Where(s => s.Id == stay.Id && s.Status == StayStatus.Cancelled && s.PaidAt == null && s.RefundMinor == 0)
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.PaidAt, (DateTimeOffset?)now0).SetProperty(x => x.RefundMinor, amountMinor), ct);
             if (claimed0 == 0) return;
-            await gateway.RefundAsync(reference, amountMinor, ct);
+            await gateways.RefundAsync(stay.Provider, reference, amountMinor, ct);
             logger.LogInformation("Stay {Reference} was cancelled before its payment arrived; refunded {Amount}", reference, amountMinor);
             await EmailRefundAsync(stay, amountMinor, "You cancelled this stay before your payment reached us", ct);
             await db.SaveChangesAsync(ct);
@@ -212,7 +218,7 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
         db.ChangeTracker.Clear();
         core.UseTenantOf(tenantId);
         var late = await db.Stays.FirstAsync(s => s.Reference == reference, ct);
-        await gateway.RefundAsync(reference, late.TotalMinor, ct);
+        await gateways.RefundAsync(late.Provider, reference, late.TotalMinor, ct);
         late.Status = StayStatus.Cancelled;
         late.CancelledAt = core.Now;
         late.RefundMinor = late.TotalMinor;
@@ -280,7 +286,7 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
             if (stay.Status != StayStatus.Confirmed) throw new ConflictException("This stay can't be cancelled.");
             if (Today(core.Now) >= stay.CheckIn) throw new ConflictException("Your stay has started. Contact the host.");
             var refund = PropertyRules.GuestRefund(stay, core.Now, InspectionService.Zone);
-            await RefundAsync(db, gateway, stay, refund, StayCanceller.Guest, core.Now, ct);
+            await RefundAsync(db, gateways, stay, refund, StayCanceller.Guest, core.Now, ct);
             await NotifyCancelledAsync(stay, toHost: true, ct);
         }
         await db.SaveChangesAsync(ct);
@@ -288,10 +294,11 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
     }
 
     /// <summary>
-    /// Refunds through the platform's Paystack and shrinks or reverses the host's earning to match. The stay is claimed first with a
-    /// conditional update, so a double click (or guest and host at once) refunds once; the claim is undone if Paystack refuses.
+    /// Refunds through the provider that took the payment (Paystack or OPay) and shrinks or reverses the host's earning to match. The stay
+    /// is claimed first with a conditional update, so a double click (or guest and host at once) refunds once; the claim is undone if the
+    /// provider refuses.
     /// </summary>
-    public static async Task RefundAsync(IAppDbContext db, IPaymentGateway gateway, Stay stay, long refund, StayCanceller by, DateTimeOffset now, CancellationToken ct)
+    public static async Task RefundAsync(IAppDbContext db, SalesGateways gateways, Stay stay, long refund, StayCanceller by, DateTimeOffset now, CancellationToken ct)
     {
         var claimed = await db.Stays.Where(s => s.Id == stay.Id && s.Status == StayStatus.Confirmed)
             .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, StayStatus.Cancelled).SetProperty(x => x.CancelledAt, now)
@@ -299,7 +306,7 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
         if (claimed == 0) throw new ConflictException("This stay has already been cancelled.");
         try
         {
-            if (refund > 0) await gateway.RefundAsync(stay.Reference, refund, ct);
+            if (refund > 0) await gateways.RefundAsync(stay.Provider, stay.Reference, refund, ct);
         }
         catch
         {
@@ -428,7 +435,7 @@ public sealed class StayService(IAppDbContext db, ICurrentUser user, PropertyCor
 }
 
 /// <summary>The host's side of short-lets: stays, closed dates, cancellations, earnings and payouts.</summary>
-public sealed class HostStayService(IAppDbContext db, PropertyCore core, IPaymentGateway gateway, PayoutService payouts, StayService stays, ICurrentUser user,
+public sealed class HostStayService(IAppDbContext db, PropertyCore core, SalesGateways gateways, PayoutService payouts, StayService stays, ICurrentUser user,
     PayoutAccountService accounts)
 {
     public async Task<IReadOnlyList<StudioStayDto>> ListAsync(DateOnly? from, DateOnly? to, CancellationToken ct)
@@ -455,7 +462,7 @@ public sealed class HostStayService(IAppDbContext db, PropertyCore core, IPaymen
         var stay = await db.Stays.FirstOrDefaultAsync(s => s.Id == stayId, ct) ?? throw new NotFoundException("Stay");
         if (stay.Status != StayStatus.Confirmed) throw new ConflictException("Only confirmed stays can be cancelled.");
         if (StayService.Today(core.Now) >= stay.CheckIn) throw new ConflictException("This stay has started. Contact support to change it.");
-        await StayService.RefundAsync(db, gateway, stay, PropertyRules.HostCancelRefund(stay), StayCanceller.Host, core.Now, ct);
+        await StayService.RefundAsync(db, gateways, stay, PropertyRules.HostCancelRefund(stay), StayCanceller.Host, core.Now, ct);
         var agency = await core.AgencyAsync(ct);
         agency.HostCancellations++;
         await stays.NotifyGuestCancelledAsync(stay, ct);
