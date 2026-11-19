@@ -105,6 +105,8 @@ builder.Services.AddRateLimiter(o =>
 
 var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>() ?? ["http://localhost:3700"];
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod()));
+// Wave 3: storefront calls from a live OrderLink custom domain are allowed too (checked against the served list, cached a minute).
+builder.Services.AddTransient<Microsoft.AspNetCore.Cors.Infrastructure.ICorsPolicyProvider, CustomDomainCorsPolicyProvider>();
 builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
     o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;

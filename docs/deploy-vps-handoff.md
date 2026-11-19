@@ -68,6 +68,56 @@ From a Windows laptop, PowerShell mangles nested quotes in `ssh host "…"`. Pip
 
 To add a secret: edit `/opt/linksuite/.env`, then `cd /opt/linksuite && docker compose -f docker-compose.vps.yml up -d api`.
 
+### Custom domains for OrderLink stores (Wave 3) — one-time setup
+
+How it works: an OrderLink Pro owner sets a domain in Store settings and adds a DNS record (subdomain: `CNAME shop →
+stores.linksuite.brosync.ng`; apex: `A @ → <VPS IPv4>`). The API checks the DNS and keeps the list. `deploy/custom-domains.sh`, run by
+root's cron every 5 minutes, asks the API (`http://127.0.0.1:5080/api/internal/custom-domains`, shared secret) which domains to serve,
+gets a Let's Encrypt certificate per domain (`certbot certonly --webroot -w /var/www/certbot`), writes
+`/etc/nginx/sites-available/linksuite-custom/<domain>.conf` (HTTP → HTTPS, proxy to the orders container on `127.0.0.1:3700` with the
+orders block's headers), runs `nginx -t` (a failing new site is taken out again and reported failed), reloads nginx, reports back, and
+deletes sites for domains no longer listed (removed, plan lapsed, business suspended). It changes nothing when the API doesn't answer
+or `nginx -t` already fails. The `orders` web app serves the store at `/` for a live domain (`web/src/proxy.ts`).
+
+Apply once, as root on the VPS, after deploying the code that contains `deploy/custom-domains.sh` (rebuild `api` and `orders`):
+
+1. DNS for the target: `stores.linksuite.brosync.ng` must resolve to this VPS. The `*.linksuite` wildcard already does; check with
+   `dig +short stores.linksuite.brosync.ng` (must print the VPS IPv4). Note the VPS's public IPv4 (`curl -4 -s ifconfig.me`).
+2. `.env` (`/opt/linksuite/.env`):
+   ```bash
+   CUSTOM_DOMAINS_TARGET=stores.linksuite.brosync.ng
+   CUSTOM_DOMAINS_APEX_IP=<the VPS public IPv4>
+   CUSTOM_DOMAINS_EMAIL=brosynctechnologies@gmail.com
+   ```
+   and the secret (`openssl rand -hex 32`): `ssh -t healthtutor-vps bash /opt/linksuite/deploy/set-secret.sh CUSTOM_DOMAINS_HOST_SECRET`.
+   Then `cd /opt/linksuite && docker compose -f docker-compose.vps.yml up -d api`.
+3. Webroot and site folder: `mkdir -p /var/www/certbot/.well-known/acme-challenge /etc/nginx/sites-available/linksuite-custom`.
+4. Catch-all answers ACME challenges: in `/etc/nginx/sites-available/00-catch-all`, replace the port-80 server's `return 444;` with
+   ```nginx
+       location /.well-known/acme-challenge/ { root /var/www/certbot; }
+       location / { return 444; }
+   ```
+   (the repo copy `deploy/nginx/00-catch-all.conf` already has this; the 443 server is unchanged).
+5. Include the custom sites inside nginx's `http` block: `echo 'include /etc/nginx/sites-available/linksuite-custom/*.conf;' >
+   /etc/nginx/conf.d/linksuite-custom.conf` (Ubuntu's `nginx.conf` includes `conf.d/*.conf` in `http`).
+6. `nginx -t && systemctl reload nginx`. Check the webroot: `echo ok > /var/www/certbot/.well-known/acme-challenge/ping && curl -s
+   http://stores.linksuite.brosync.ng/.well-known/acme-challenge/ping` prints `ok`; then `rm /var/www/certbot/.well-known/acme-challenge/ping`.
+7. Check the API side: `curl -s -H "X-Host-Secret: <secret>" "http://127.0.0.1:5080/api/internal/custom-domains?format=text"` prints
+   `# end` (plus any verified domains).
+8. Run the script once by hand: `chmod +x /opt/linksuite/deploy/custom-domains.sh && /opt/linksuite/deploy/custom-domains.sh`
+   (no domains yet: it prints nothing and exits 0).
+9. Cron (`crontab -e` as root):
+   ```
+   */5 * * * * /opt/linksuite/deploy/custom-domains.sh >> /var/log/linksuite-custom-domains.log 2>&1
+   ```
+10. Renewals: `certbot.timer` renews these certificates like the main one; each was issued with `--deploy-hook "systemctl reload nginx"`,
+    which certbot keeps for renewals.
+
+Troubleshooting: a store's status and error are in Store settings → Custom domain (and in `tenants.custom_domain_*`). A certificate
+failure is retried no sooner than an hour later (Let's Encrypt allows 5 failed validations per name per hour). To take a domain off
+by hand, clear it in the database (`UPDATE tenants SET custom_domain = NULL, custom_domain_status = NULL WHERE custom_domain = '…'`);
+the next run deletes its site. Log: `/var/log/linksuite-custom-domains.log`.
+
 ---
 
 ## Decision so far

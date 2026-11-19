@@ -130,6 +130,7 @@ Set these with user secrets or environment variables (`Section__Key`), never in 
 | `Email:BrevoApiKey`, `Email:FromEmail`, `Email:FromName` | real email sending (otherwise logged) |
 | `Storage:Provider=R2` + `Storage:R2*` | Cloudflare R2 for uploads (otherwise local `uploads/`); `R2PrivateBucket` is required and must not be public |
 | `Database:MigrateOnStartup` | apply migrations at boot (on in Development) |
+| `CustomDomains:Target`, `CustomDomains:ApexIp`, `CustomDomains:HostSecret`, `CustomDomains:CheckMinutes`, `Jobs:CustomDomainsEnabled` | OrderLink custom domains: the CNAME target host, the server IPv4 for apex A records, the secret the host script sends (`X-Host-Secret`; empty = host endpoints refuse all), the DNS check interval (10) |
 
 `appsettings.Development.json` contains a development-only JWT key; production must set its own.
 
@@ -147,8 +148,9 @@ Set these with user secrets or environment variables (`Section__Key`), never in 
   Each invoice, payment and expense stores the rate it used, so reports never change when rates move. The business
   currency is the reporting currency and is locked once invoices, quotes or expenses exist.
 - Invoices created before phase 2 were given an exchange rate of 1 by the migration (correct for same-currency invoices).
-- Not built: separate "multiple businesses" signup per user (a user can belong to several via invites and switch between them).
-- WhatsApp phase 2 (Cloud API inbox, online order payments, inventory, staff seats, custom domains) is not built.
+- Several businesses per sign-in: an owner starts another one with "Add another store/business" (`POST /api/me/businesses`, same setup as that product's sign-up, its own free plan; at most 10 owned per product) and switches between them; another product is added through its sign-up with the same email and password.
+- OrderLink custom domains (Pro): the owner sets a domain in Store settings; the API checks its DNS (job + "Check again"), `deploy/custom-domains.sh` on the host issues the certificate and nginx site, and `web/src/proxy.ts` serves the store at `/` on that host. See `docs/API.md` (Custom domain) and `docs/deploy-vps-handoff.md` for the one-time server setup.
+- WhatsApp phase 2 (Cloud API inbox, online order payments, inventory, staff seats) is not built.
 - Done for launch: privacy policy and terms (hub `/privacy`, `/terms`), an error log in the admin console, nightly database backups (`deploy/backup-db.sh`). Still to do: a lawyer's NDPA review of the legal pages, uptime monitoring, off-server copies of backups and a restore test.
 - The full list of what is left, in build order, is `docs/superpowers/roadmap-2026-11-17.md`.
 

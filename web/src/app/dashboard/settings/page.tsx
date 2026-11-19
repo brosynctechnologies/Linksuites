@@ -24,6 +24,7 @@ import {
 import { AccountActivity } from "@/components/account-activity";
 import { ChangePassword } from "@/components/change-password";
 import { ImageIcon } from "@/components/icons";
+import { CustomDomainSection } from "@/components/custom-domain";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -234,6 +235,7 @@ export default function SettingsPage() {
       {!data && !error && <PageLoader label="Loading settings…" rows={3} />}
       {data && <SettingsForm key={data.id} store={data} onSaved={setData} />}
       <div className="mt-8 space-y-8">
+        {data && <CustomDomainSection />}
         <ChangePassword />
         <AccountActivity />
       </div>

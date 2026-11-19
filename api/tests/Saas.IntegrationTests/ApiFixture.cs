@@ -97,12 +97,17 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("Jobs:CareEnabled", "false"); // tests run CareJobs by hand
         builder.UseSetting("Photos:ProcessorEnabled", "false"); // tests run the photo processor by hand
         builder.UseSetting("Video:FfmpegPath", "ffmpeg-not-installed-in-tests"); // uploads are published as MP4 in tests
+        builder.UseSetting("CustomDomains:Target", CustomDomainsTarget);
+        builder.UseSetting("CustomDomains:ApexIp", CustomDomainsIp);
+        builder.UseSetting("CustomDomains:HostSecret", CustomDomainsHostSecret);
+        builder.UseSetting("Jobs:CustomDomainsEnabled", "false"); // tests run CustomDomainJobs by hand
         builder.UseSetting("Platform:AdminEmails:0", AdminEmail);
         builder.UseSetting("Platform:AdminEmails:1", UnclaimedAdminEmail);
         builder.ConfigureTestServices(services =>
         {
             services.AddScoped<IMerchantPayments>(_ => Merchant);
             services.AddSingleton<IExchangeRateProvider, FakeRates>();
+            services.AddSingleton<Saas.Application.Orders.IDomainResolver>(Dns);
             services.AddScoped<IPaymentGateway>(_ => Gateway);
             // Plan billing with Paystack goes to the same fake; registered last, so it wins over the real Paystack plan gateway.
             services.AddScoped<IPlanPaymentGateway>(_ => Gateway);
@@ -111,6 +116,13 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
                 .ConfigurePrimaryHttpMessageHandler(() => Opay).SetHandlerLifetime(Timeout.InfiniteTimeSpan);
         });
     }
+
+    public const string CustomDomainsTarget = "stores.linksuite.test";
+    public const string CustomDomainsIp = "203.0.113.10";
+    public const string CustomDomainsHostSecret = "host-secret-for-integration-tests";
+
+    /// <summary>Stands in for DNS: custom domain checks resolve names here, shared by every host of this fixture.</summary>
+    public FakeDomainResolver Dns { get; } = new();
 
     /// <summary>Stands in for OPay's cashier API (create and status), shared by every host of this fixture.</summary>
     public FakeOpay Opay { get; } = new();
@@ -309,6 +321,26 @@ public sealed class FakeMerchantPayments : IMerchantPayments
     {
         Refunds.Add((reference, amountMinor));
         return Task.CompletedTask;
+    }
+}
+
+/// <summary>DNS for custom domain checks: names point where a test says; the target host points at the server's IP.</summary>
+public sealed class FakeDomainResolver : Saas.Application.Orders.IDomainResolver
+{
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Net.IPAddress[]> records = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [ApiFixture.CustomDomainsTarget] = [System.Net.IPAddress.Parse(ApiFixture.CustomDomainsIp)],
+    };
+
+    /// <summary>Lookups of these names fail (a DNS server error, not "no such name").</summary>
+    public System.Collections.Concurrent.ConcurrentBag<string> Broken { get; } = [];
+
+    public void Point(string host, params string[] addresses) => records[host] = addresses.Select(System.Net.IPAddress.Parse).ToArray();
+
+    public Task<IReadOnlyList<System.Net.IPAddress>> ResolveAsync(string host, CancellationToken ct)
+    {
+        if (Broken.Contains(host, StringComparer.OrdinalIgnoreCase)) throw new Saas.Application.Orders.DomainLookupException($"Lookup of {host} failed.");
+        return Task.FromResult<IReadOnlyList<System.Net.IPAddress>>(records.TryGetValue(host, out var a) ? a : []);
     }
 }
 

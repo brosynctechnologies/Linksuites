@@ -71,6 +71,10 @@ services:
       Cors__Origins__6: ${ADMIN_URL}
       Cors__Origins__7: ${CARE_URL}
       Cors__Origins__8: ${HUB_URL}
+      # OrderLink custom domains (Wave 3): empty secret = the host script's endpoints refuse every call.
+      CustomDomains__Target: ${CUSTOM_DOMAINS_TARGET:-}
+      CustomDomains__ApexIp: ${CUSTOM_DOMAINS_APEX_IP:-}
+      CustomDomains__HostSecret: ${CUSTOM_DOMAINS_HOST_SECRET:-}
       Email__FromEmail: ${EMAIL_FROM}
       Email__FromName: ${EMAIL_FROM_NAME}
       Email__BrevoApiKey: ${BREVO_API_KEY:-}

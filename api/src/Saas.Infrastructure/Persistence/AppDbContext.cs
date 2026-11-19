@@ -245,6 +245,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         {
             e.HasIndex(t => t.Slug).IsUnique();
             e.HasIndex(t => t.CustomDomain).IsUnique().HasFilter("custom_domain IS NOT NULL");
+            e.Property(t => t.CustomDomain).HasMaxLength(253);
+            e.Property(t => t.CustomDomainError).HasMaxLength(500);
             e.Property(t => t.Country).HasMaxLength(2);
             e.Property(t => t.Currency).HasMaxLength(3);
         });

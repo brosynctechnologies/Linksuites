@@ -365,3 +365,30 @@ export interface PublicOrderDto {
   /** Delivery with no zone: the fee is agreed with the seller on WhatsApp. */
   deliveryToBeAgreed?: boolean;
 }
+
+/** GET /api/me/businesses: the businesses of this product the user belongs to. */
+export interface MyBusinessDto {
+  tenantId: string;
+  name: string;
+  role: string;
+  current: boolean;
+}
+
+export type CustomDomainStatus = "PendingDns" | "Verified" | "Live" | "Failed";
+
+/** GET /api/store/domain: the store's own domain (plans that include custom domains). */
+export interface CustomDomainDto {
+  domain: string | null;
+  status: CustomDomainStatus | null;
+  error: string | null;
+  checkedAt: string | null;
+  verifiedAt: string | null;
+  liveAt: string | null;
+  /** The plan includes custom domains. */
+  included: boolean;
+  /** Customers reach the store on the domain right now. */
+  served: boolean;
+  dns: { type: string; name: string; value: string } | null;
+  target: string;
+  apexIp: string | null;
+}

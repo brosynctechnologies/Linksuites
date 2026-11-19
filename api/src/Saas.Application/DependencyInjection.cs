@@ -37,6 +37,9 @@ public static class DependencyInjection
         services.AddScoped<CheckoutSettingsService>();
         services.AddScoped<OrderAdminService>();
         services.AddScoped<StorefrontService>();
+        services.AddScoped<CustomDomainService>();
+        services.AddScoped<CustomDomainJobs>();
+        services.AddSingleton<CustomDomainCache>();
 
         // Invoice Generator
         services.AddScoped<IProductProvisioner, InvoicesProvisioner>();

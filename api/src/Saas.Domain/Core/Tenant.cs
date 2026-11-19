@@ -7,7 +7,17 @@ public class Tenant : Entity
 {
     public required string Name { get; set; }
     public required string Slug { get; set; }
+    /// <summary>OrderLink (Wave 3): the store's own domain, lower case (shop.example.com). Served only while the plan includes custom_domain.</summary>
     public string? CustomDomain { get; set; }
+    public CustomDomainStatus? CustomDomainStatus { get; set; }
+    /// <summary>Why the domain is still pending or failed, as the owner reads it. Null when all is well.</summary>
+    public string? CustomDomainError { get; set; }
+    public DateTimeOffset? CustomDomainCheckedAt { get; set; }
+    public DateTimeOffset? CustomDomainVerifiedAt { get; set; }
+    /// <summary>When the host script reported the certificate issued and the site configured.</summary>
+    public DateTimeOffset? CustomDomainLiveAt { get; set; }
+    /// <summary>The host script's last certificate failure; the domain isn't handed out for another try until an hour after it.</summary>
+    public DateTimeOffset? CustomDomainCertFailedAt { get; set; }
     public string? LogoUrl { get; set; }
     public string? BrandColor { get; set; }
     public string Country { get; set; } = "NG";
@@ -19,6 +29,12 @@ public class Tenant : Entity
 }
 
 public enum TenantStatus { Active, Suspended, Closed }
+
+/// <summary>
+/// A custom domain's progress: <c>PendingDns</c> until its DNS points at LinkSuite, <c>Verified</c> once it does (the host script then
+/// issues a certificate), <c>Live</c> once the host reports it served, <c>Failed</c> when the DNS points elsewhere or the certificate failed.
+/// </summary>
+public enum CustomDomainStatus { PendingDns, Verified, Live, Failed }
 
 public class AppUser : IdentityUser<Guid>
 {

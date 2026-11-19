@@ -20,6 +20,19 @@ public static class OrderSystemEndpoints
         store.MapPost("/cover", (IFormFile file, StoreSettingsService s, CancellationToken ct) => s.UploadImageAsync(file.ToUpload(), true, ct))
             .DisableAntiforgery().RequireAuthorization(Policies.Admin);
 
+        // Custom domain (Wave 3, plans with custom_domain): the owner sets or removes it; owner and admins can ask for a DNS check now.
+        var domain = store.MapGroup("/domain").WithTags("Custom domain");
+        domain.MapGet("/", (CustomDomainService s, CancellationToken ct) => s.GetAsync(ct));
+        domain.MapPut("/", (SetCustomDomainRequest r, CustomDomainService s, CancellationToken ct) => s.SetAsync(r, ct))
+            .RequireAuthorization(Policies.Owner).RequireRateLimiting(RateLimits.Admin);
+        domain.MapDelete("/", async (CustomDomainService s, CancellationToken ct) =>
+        {
+            await s.RemoveAsync(ct);
+            return Results.NoContent();
+        }).RequireAuthorization(Policies.Owner);
+        domain.MapPost("/check", (CustomDomainService s, CancellationToken ct) => s.CheckNowAsync(ct))
+            .RequireAuthorization(Policies.Admin).RequireRateLimiting(RateLimits.Admin);
+
         var categories = api.MapGroup("/categories").WithTags("Catalogue");
         categories.MapGet("/", (CatalogService s, CancellationToken ct) => s.ListCategoriesAsync(ct));
         categories.MapPost("/", (SaveCategoryRequest r, CatalogService s, CancellationToken ct) => s.SaveCategoryAsync(null, r, ct))
@@ -96,5 +109,37 @@ public static class OrderSystemEndpoints
         pub.MapPost("/stores/{slug}/orders", (string slug, PlaceOrderRequest r, StorefrontService s, CancellationToken ct) =>
             s.PlaceOrderAsync(slug, r, ct)).Validate<PlaceOrderRequest>().RequireRateLimiting(RateLimits.PublicWrite);
         pub.MapGet("/orders/{code}", (string code, StorefrontService s, CancellationToken ct) => s.GetOrderAsync(code, ct));
+        // The OrderLink web app asks which store a request's Host serves: only live domains on a plan that includes them.
+        pub.MapGet("/domains/{host}", async (string host, CustomDomainCache cache, CancellationToken ct) =>
+            await cache.SlugForAsync(host, ct) is { } slug ? Results.Ok(new PublicDomainDto(slug)) : Results.NotFound());
+
+        // For deploy/custom-domains.sh on the host only: the shared secret in X-Host-Secret, compared in constant time.
+        var host = app.MapGroup("/api/internal/custom-domains").WithTags("Internal").ExcludeFromDescription().AllowAnonymous()
+            .AddEndpointFilter(RequireHostSecret).RequireRateLimiting(RateLimits.Webhook);
+        // JSON, or ?format=text for the bash script: "<domain> <status>" lines closed by "# end" (so a cut-off answer is detectable).
+        host.MapGet("/", async (string? format, CustomDomainService s, CancellationToken ct) =>
+        {
+            var list = await s.HostListAsync(ct);
+            return format == "text"
+                ? Results.Text(string.Concat(list.Domains.Select(d => $"{d.Domain} {d.Status}\n")) + "# end\n", "text/plain")
+                : Results.Ok(list);
+        });
+        host.MapPost("/report", async (HostDomainReport r, CustomDomainService s, CancellationToken ct) =>
+        {
+            await s.ReportAsync(r, ct);
+            return Results.NoContent();
+        });
+    }
+
+    public const string HostSecretHeader = "X-Host-Secret";
+
+    private static async ValueTask<object?> RequireHostSecret(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+        var expected = context.HttpContext.RequestServices.GetRequiredService<CustomDomainOptions>().HostSecret;
+        var sent = context.HttpContext.Request.Headers[HostSecretHeader].ToString();
+        if (string.IsNullOrEmpty(expected) || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                System.Text.Encoding.UTF8.GetBytes(sent), System.Text.Encoding.UTF8.GetBytes(expected)))
+            return Results.Unauthorized();
+        return await next(context);
     }
 }

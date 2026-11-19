@@ -28,7 +28,22 @@ so there is no tenant id in URLs.
 | POST | `/api/auth/password/reset` | `{ email, token, newPassword }` | 204; 400 on `email`, `token` or `newPassword` if missing; 400 on `token` if invalid or expired |
 | POST | `/api/auth/password/change` (auth) | `{ currentPassword, newPassword, refreshToken? }` | 204; 400 on `currentPassword` or `newPassword` if missing; 400 on `currentPassword` if wrong |
 
+| GET | `/api/me/businesses` (auth) | — | `[{ tenantId, name, role, current }]`: the user's active businesses of the token's product |
+| POST | `/api/auth/switch` (auth) | `{ tenantId }` | `AuthResponse` for that business (403 if not a member) |
+| POST | `/api/me/businesses` (Owner) | `{ name, product?, whatsappNumber?, country?, slug?, accountKind? }` | `AuthResponse` for the new business |
+
 `AuthResponse = { accessToken, refreshToken, expiresAt, user: { id, fullName, email }, tenant: { id, name, slug, role, product } }`
+
+### Several businesses under one sign-in (Wave 3)
+
+`POST /api/me/businesses` starts another business for the signed-in owner (Owner of the current business; 403 otherwise) without a new
+account. `product` defaults to the current business's product (any product key works, so an owner can also start, say, an InvoiceLink
+business from OrderLink); `country` defaults to the current business's. It is set up exactly like that product's sign-up: same
+provisioning (OrderLink needs `whatsappNumber`; only SchoolLink may pick `slug`, others get one from the name; PropertyLink reads
+`accountKind`), the owner's membership and the welcome email. It starts on the product's default (free) plan: plans and their limits
+belong to each business. The answer is a session for the new business. At most 10 owned businesses per product per account (400).
+The apps show it as "Add another store" (OrderLink, More) and "Add another business" (InvoiceLink, BookLink, LearnLink, PropertyLink,
+More); another product is reached through the hub with the same email and password.
 One email can own a business in several products; `product` picks which one a token is for. Tokens only work on their own product's routes (`403` otherwise).
 Access tokens last 15 minutes; refresh tokens 30 days and rotate on every refresh.
 
@@ -58,6 +73,38 @@ The same routes serve every product and the admin console; full rules are in `do
 
 `StoreDto = { id, name, slug, description, logoUrl, coverUrl, whatsappNumber, currency, themeColor, isOpen, openingHours, country, storeUrl }`
 `whatsappNumber` is stored in international digits (e.g. `2348031234567`); local input like `0803 123 4567` is accepted and normalised.
+
+### Custom domain (Wave 3; plans with `custom_domain`, OrderLink Pro)
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/store/domain` | — | `CustomDomainDto` |
+| PUT | `/api/store/domain` (Owner) | `{ domain }` | `CustomDomainDto`; 402 if the plan doesn't include it; 400 on `domain` if malformed, a LinkSuite domain, or used by another store |
+| POST | `/api/store/domain/check` (Owner, Admin) | — | `CustomDomainDto` after a DNS check now |
+| DELETE | `/api/store/domain` (Owner) | — | 204 |
+
+`CustomDomainDto = { domain, status, error, checkedAt, verifiedAt, liveAt, included, served, dns: { type, name, value }, target, apexIp }`
+- `domain` is stored bare and lower case (`https://Shop.Example.com/` becomes `shop.example.com`). Refused: anything that isn't a host
+  name with a letter TLD (IPs, wildcards, one-label names), anything under `CustomDomains:Reserved` (default `brosync.ng`), the target
+  host, or the apps' own hosts.
+- `dns` is what to add: a subdomain gets `CNAME <name> → CustomDomains:Target`; an apex domain (`example.com`, `example.com.ng`) gets
+  `A @ → CustomDomains:ApexIp`.
+- `status`: `PendingDns` (no record yet) → `Verified` (it resolves to the target's addresses or the apex IP) → `Live` (the host script
+  issued the certificate and wrote the nginx site) / `Failed` (points elsewhere, or the certificate failed; `error` says why).
+  The API checks when the domain is set, on "Check again", and in a background job (pending every `CustomDomains:CheckMinutes`,
+  failed hourly, verified and live daily). A failed lookup never changes the status; a live domain only fails when it clearly
+  points elsewhere.
+- `included`: the current plan includes custom domains. `served`: customers reach the store on it now. When the plan lapses the
+  domain is kept but not served (back to the normal store link) and the host script removes its site; it comes back with the plan.
+
+### Host endpoints (deploy/custom-domains.sh only)
+
+Header `X-Host-Secret: <CustomDomains:HostSecret>` (env `CUSTOM_DOMAINS_HOST_SECRET`); 401 without it, or when no secret is configured.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/internal/custom-domains` | — | `{ domains: [{ domain, status }] }`: Live domains, and Verified ones needing a certificate (not within an hour of a certificate failure), of active OrderLink businesses whose plan includes custom domains. `?format=text`: `<domain> <status>` lines closed by `# end` |
+| POST | `/api/internal/custom-domains/report` | `{ domain, ok, error? }` | 204; `ok` makes a Verified domain Live; `ok: false` marks it Failed with the error. 404 for an unknown domain |
 
 ## Catalogue (auth)
 
@@ -124,6 +171,11 @@ Order `status`: `New`, `Confirmed`, `Paid`, `Delivered`, `Cancelled`. `fulfilmen
 | POST | `/api/public/stores/{slug}/quote` | `QuoteRequest` | `QuoteDto` |
 | POST | `/api/public/stores/{slug}/orders` | `PlaceOrderRequest` | `{ code, number, totalMinor, currency, whatsappUrl, orderUrl }` |
 | GET | `/api/public/orders/{code}` | — | `PublicOrderDto` |
+| GET | `/api/public/domains/{host}` | — | `{ slug }` for a served custom domain (Live, plan includes it, business active); 404 otherwise. Cached a minute. |
+
+On a custom domain the OrderLink web app (`web/src/proxy.ts`) serves the store at `/` (`/p/{product}`, `/cart`, `/checkout` too; the
+app's own `/{slug}/...` and `/o/{code}` links work unchanged; dashboard and sign-in paths redirect to OrderLink's own address). CORS
+on `/api/public/*` also accepts `https://<served custom domain>` origins (checked against the same cached list).
 
 `PublicStoreDto = { name, slug, description, logoUrl, coverUrl, currency, themeColor, isOpen, deliveryZones: [{ id, name, feeMinor, etaText }], categories: [{ id, name }], showBranding, hasDiscounts }`
 `PublicProductDto = { id, slug, name, description, priceMinor, compareAtPriceMinor, inStock, categoryId, images: [{ url }], options: [{ name, values }], variants: [{ id, optionValues, title, priceMinor, inStock }] }`
