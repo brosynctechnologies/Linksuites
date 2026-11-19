@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { ADMIN_URL } from "@/lib/config";
 import { navFor, secondaryNav } from "@/components/studio-nav";
 import { BusinessSwitcher } from "@/components/business-switcher";
+import { AddBusiness } from "@/components/add-business";
 import { ChevronRightIcon, LogoutIcon, ShieldIcon } from "@/components/icons";
 import { PageHeader } from "@/components/ui";
 
@@ -18,6 +19,7 @@ export default function MorePage() {
   return (
     <div>
       <PageHeader title="More" subtitle={auth?.tenant?.name} />
+      <AddBusiness home="/studio" className="mb-4" />
       <div className="on-asphalt mb-4 rounded-panel bg-asphalt p-3 empty:hidden">
         <BusinessSwitcher />
       </div>

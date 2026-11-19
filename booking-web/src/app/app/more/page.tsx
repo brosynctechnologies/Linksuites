@@ -6,6 +6,7 @@ import { logout } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { navFor, secondaryNav } from "@/components/app-nav";
 import { BusinessSwitcher } from "@/components/business-switcher";
+import { AddBusiness } from "@/components/add-business";
 import { PageHeader } from "@/components/ui";
 import { ChevronRightIcon, LogoutIcon } from "@/components/icons";
 
@@ -25,6 +26,7 @@ export default function MorePage() {
             {auth.tenant.role && <span className="block text-xs text-muted">Your role: {auth.tenant.role}</span>}
           </p>
           <BusinessSwitcher className="mt-3" />
+          <AddBusiness home="/app" className="mt-3" />
         </div>
       )}
       <ul className="divide-y divide-line-soft overflow-hidden rounded-panel border border-line bg-surface">

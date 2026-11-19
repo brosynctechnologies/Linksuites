@@ -6,6 +6,7 @@ import { logout } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { ADMIN_URL } from "@/lib/config";
 import { AcademySwitcher } from "@/components/academy-switcher";
+import { AddBusiness } from "@/components/add-business";
 import { ChevronRightIcon, ExternalIcon, LogoutIcon, ShieldIcon } from "@/components/icons";
 import { elsewhereNav, navFor, primaryNav, secondaryNav } from "@/components/studio-nav";
 import { PageHeader } from "@/components/ui";
@@ -29,6 +30,7 @@ export default function StudioMorePage() {
             {auth.tenant.role && <span className="block text-xs text-muted">Your role: {auth.tenant.role}</span>}
           </p>
           <AcademySwitcher className="mt-3" />
+          <AddBusiness home="/studio" className="mt-3" />
         </div>
       )}
       <ul className="divide-y divide-line-soft overflow-hidden rounded-panel border border-line bg-surface">
