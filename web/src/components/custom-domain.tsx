@@ -93,18 +93,28 @@ export function CustomDomainSection() {
           {data.included && data.error && <Notice tone="warning">{data.error}</Notice>}
           {data.included && data.dns && data.status !== "Live" && (
             <div className="rounded-control border border-line p-3 text-sm">
-              <p className="font-medium text-ink">Add this record where you manage your domain&apos;s DNS:</p>
-              <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
-                <dt className="text-muted">Type</dt>
-                <dd className="font-mono text-ink">{data.dns.type}</dd>
-                <dt className="text-muted">Name / host</dt>
-                <dd className="font-mono break-all text-ink">{data.dns.name}</dd>
-                <dt className="text-muted">Value / points to</dt>
-                <dd className="font-mono break-all text-ink">{data.dns.value}</dd>
-              </dl>
+              <p className="font-medium text-ink">Add these two records where you manage your domain&apos;s DNS:</p>
+              {[data.dns, data.verification].map((record, i) =>
+                record ? (
+                  <dl key={i} className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 border-t border-line pt-2 first-of-type:border-t-0 first-of-type:pt-0">
+                    <dt className="text-muted">Type</dt>
+                    <dd className="font-mono text-ink">{record.type}</dd>
+                    <dt className="text-muted">Name / host</dt>
+                    <dd className="font-mono break-all text-ink">{record.name}</dd>
+                    <dt className="text-muted">{i === 0 ? "Value / points to" : "Value"}</dt>
+                    <dd className="font-mono break-all text-ink">{record.value}</dd>
+                  </dl>
+                ) : null,
+              )}
               <p className="mt-2 text-xs text-subtle">
-                Remove any other A, AAAA or CNAME record for this name. DNS changes can take a few hours; we check every few minutes.
+                The TXT record shows the domain is yours; keep it in place after your store goes live. Remove any other A, AAAA or CNAME
+                record for this name. DNS changes can take a few hours; we check every few minutes.
               </p>
+              {data.releasesAt && (
+                <p className="mt-1 text-xs text-subtle">
+                  If we can&apos;t verify the domain by {formatDate(data.releasesAt)}, we&apos;ll remove it so its owner can use it.
+                </p>
+              )}
             </div>
           )}
           {data.checkedAt && <p className="text-xs text-subtle">Last checked {formatDate(data.checkedAt)}</p>}

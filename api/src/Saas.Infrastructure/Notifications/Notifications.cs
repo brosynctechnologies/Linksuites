@@ -139,6 +139,10 @@ public static class EmailTemplates
             "plan.ending" => (P("days") == "1" ? $"Your {P("plan")} plan ends tomorrow" : $"Your {P("plan")} plan ends in {P("days")} days",
                 $"Hi {P("name")},\n\n{P("business")}'s {P("plan")} plan on {P("productName")} ends on {P("date")}. Plans don't renew by themselves: " +
                 $"after that date the business moves to the free plan and its limits.\n\nTo keep the {P("plan")} plan, extend it here: {P("link")}"),
+            "store.domain_released" => ($"{P("domain")} was removed from your store",
+                $"Hi {P("name")},\n\n{P("business")} added {P("domain")} as its own domain, but we couldn't verify it within {P("days")} days, " +
+                "so we've removed it and it's free for its owner to use. Your store stays on its LinkSuite link.\n\n" +
+                $"If the domain is yours, add it again and set both DNS records shown (the TXT record proves the domain is yours): {P("link")}"),
             "plan.transfer_rejected" => ("We couldn't confirm your bank transfer",
                 $"Hi {P("name")},\n\nWe couldn't confirm your bank transfer of {P("amount")} for the {P("plan")} plan (reference {P("reference")}), " +
                 $"so your plan hasn't changed.\n\nReason: {P("reason")}\n\n" +

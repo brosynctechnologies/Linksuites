@@ -4518,10 +4518,19 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("custom_domain_live_at");
 
+                    b.Property<DateTimeOffset?>("CustomDomainPendingSince")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("custom_domain_pending_since");
+
                     b.Property<string>("CustomDomainStatus")
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)")
                         .HasColumnName("custom_domain_status");
+
+                    b.Property<string>("CustomDomainToken")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("custom_domain_token");
 
                     b.Property<DateTimeOffset?>("CustomDomainVerifiedAt")
                         .HasColumnType("timestamp with time zone")

@@ -79,27 +79,37 @@ The same routes serve every product and the admin console; full rules are in `do
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/api/store/domain` | — | `CustomDomainDto` |
-| PUT | `/api/store/domain` (Owner) | `{ domain }` | `CustomDomainDto`; 402 if the plan doesn't include it; 400 on `domain` if malformed, a LinkSuite domain, or used by another store |
+| PUT | `/api/store/domain` (Owner) | `{ domain }` | `CustomDomainDto`; 402 if the plan doesn't include it; 400 on `domain` if malformed, a LinkSuite or forbidden domain, or used by another store |
 | POST | `/api/store/domain/check` (Owner, Admin) | — | `CustomDomainDto` after a DNS check now |
 | DELETE | `/api/store/domain` (Owner) | — | 204 |
 
-`CustomDomainDto = { domain, status, error, checkedAt, verifiedAt, liveAt, included, served, dns: { type, name, value }, target, apexIp }`
+`CustomDomainDto = { domain, status, error, checkedAt, verifiedAt, liveAt, included, served, dns: { type, name, value }, target, apexIp,
+verification: { type, name, value }, releasesAt }`
 - `domain` is stored bare and lower case (`https://Shop.Example.com/` becomes `shop.example.com`). Refused: anything that isn't a host
-  name with a letter TLD (IPs, wildcards, one-label names), anything under `CustomDomains:Reserved` (default `brosync.ng`), the target
-  host, or the apps' own hosts.
-- `dns` is what to add: a subdomain gets `CNAME <name> → CustomDomains:Target`; an apex domain (`example.com`, `example.com.ng`) gets
-  `A @ → CustomDomains:ApexIp`.
-- `status`: `PendingDns` (no record yet) → `Verified` (it resolves to the target's addresses or the apex IP) → `Live` (the host script
-  issued the certificate and wrote the nginx site) / `Failed` (points elsewhere, or the certificate failed; `error` says why).
-  The API checks when the domain is set, on "Check again", and in a background job (pending every `CustomDomains:CheckMinutes`,
-  failed hourly, verified and live daily). A failed lookup never changes the status; a live domain only fails when it clearly
-  points elsewhere.
+  name with a letter TLD (IPs, wildcards, one-label names); anything equal to, under, or a parent of `CustomDomains:Reserved` (default
+  `brosync.ng`), the target host, or the apps' own hosts ("That is a LinkSuite address"); and the same for `CustomDomains:Forbidden`
+  (default empty; the other sites served by the same nginx, e.g. Health Tutor's hosts; an entry may hold several comma-separated names,
+  env `CUSTOM_DOMAINS_FORBIDDEN`).
+- The owner adds two records. `dns` points the domain here: a subdomain gets `CNAME <name> → CustomDomains:Target`; an apex domain
+  (`example.com`, `example.com.ng`) gets `A @ → CustomDomains:ApexIp`. `verification` proves the domain is theirs:
+  `TXT _linksuite-verify.<name>` (apex: `_linksuite-verify`) `→ <token>`, a random 32-hex code made when the domain is set (kept when the
+  same domain is set again, new for a different domain). Names are relative, as DNS panels ask for them.
+- `status`: `PendingDns` (a record missing) → `Verified` (it resolves to the target's addresses or the apex IP AND the TXT record holds
+  the token; pointing here alone is never enough, as every site on the server points here) → `Live` (the host script issued the
+  certificate and wrote the nginx site) / `Failed` (points elsewhere, the certificate failed, or the host already serves the name;
+  `error` says why). The API checks when the domain is set, on "Check again", and in a background job (pending every
+  `CustomDomains:CheckMinutes`, failed hourly, verified and live daily). A failed lookup never changes the status; a live domain only
+  fails when the DNS clearly says otherwise (points elsewhere, or a TXT record there with another value), never for a missing answer.
+- `releasesAt`: for a claim that is `PendingDns` or `Failed`, when it is released. The background job clears a claim unverified for
+  7 days (counted from when it was set, or from when a verified domain stopped verifying) and emails the owner
+  (`store.domain_released`), so a claim nobody can verify never blocks the domain's real owner. Null once verified.
 - `included`: the current plan includes custom domains. `served`: customers reach the store on it now. When the plan lapses the
   domain is kept but not served (back to the normal store link) and the host script removes its site; it comes back with the plan.
 
 ### Host endpoints (deploy/custom-domains.sh only)
 
 Header `X-Host-Secret: <CustomDomains:HostSecret>` (env `CUSTOM_DOMAINS_HOST_SECRET`); 401 without it, or when no secret is configured.
+The script passes the header to curl from a 600-permission temp file (`--config`), never as a command-line argument (visible in `ps`).
 
 | Method | Path | Body | Returns |
 |---|---|---|---|

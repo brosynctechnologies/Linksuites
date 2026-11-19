@@ -388,7 +388,12 @@ export interface CustomDomainDto {
   included: boolean;
   /** Customers reach the store on the domain right now. */
   served: boolean;
+  /** The record that points the domain at LinkSuite. */
   dns: { type: string; name: string; value: string } | null;
   target: string;
   apexIp: string | null;
+  /** The TXT record that proves the domain is the owner's (_linksuite-verify): needed together with `dns` to verify. */
+  verification: { type: string; name: string; value: string } | null;
+  /** When an unverified (pending or failed) claim is released automatically. */
+  releasesAt: string | null;
 }

@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # OrderLink custom domains on the host (Wave 3): certificates and nginx sites for the stores' own domains.
 #
-# The API decides which domains are served (DNS verified, plan includes custom domains, business active); this script makes nginx
-# match that list. Each run, for every listed domain: get a Let's Encrypt certificate if there is none (certbot, webroot), write
-# /etc/nginx/sites-available/linksuite-custom/<domain>.conf, check it with `nginx -t`, and report the result back to the API.
-# Sites for domains no longer listed (removed, changed, plan lapsed, business suspended) are deleted. nginx is reloaded only after
-# `nginx -t` passes; a new site that fails the test is removed again and reported as failed, so the running config never breaks.
-# If the API can't be reached or answers anything unexpected, nothing is changed.
+# The API decides which domains are served (DNS points here AND the owner's TXT token proves the domain is theirs, plan includes
+# custom domains, business active); this script makes nginx match that list. Each run, for every listed domain: refuse it if any
+# other nginx config (outside this script's folder) already serves that name, get a Let's Encrypt certificate under this script's
+# own lineage (linksuite-<domain>) if there is none, write /etc/nginx/sites-available/linksuite-custom/<domain>.conf, check it
+# with `nginx -t` (any error or "conflicting server name" warning fails it), and report the result back to the API.
+# Sites for domains no longer listed (removed, changed, plan lapsed, business suspended) are deleted (only *.conf in its own
+# folder). nginx is reloaded only after `nginx -t` passes cleanly; a new site that fails the test is removed again and reported as
+# failed, so the running config never breaks. If the API can't be reached or answers anything unexpected, nothing is changed.
+#
+# The server's nginx also serves other sites (LinkSuite's own hosts, Health Tutor): this script never touches their files, never
+# takes over a server_name they use, and never points at a certificate lineage it didn't create.
 #
 # Idempotent; run from root's crontab every 5 minutes (one-time setup in docs/deploy-vps-handoff.md):
 #   */5 * * * * /opt/linksuite/deploy/custom-domains.sh >> /var/log/linksuite-custom-domains.log 2>&1
@@ -24,6 +29,8 @@ CONF_DIR="${CUSTOM_DOMAINS_CONF_DIR:-/etc/nginx/sites-available/linksuite-custom
 WEBROOT="${CUSTOM_DOMAINS_WEBROOT:-/var/www/certbot}"
 LE_LIVE="${CUSTOM_DOMAINS_LE_LIVE:-/etc/letsencrypt/live}"
 LOCK_FILE="${CUSTOM_DOMAINS_LOCK:-/run/linksuite-custom-domains.lock}"
+# Certificates this script issues are named linksuite-<domain>, so they never collide with (or reuse) another site's lineage.
+CERT_PREFIX="linksuite-"
 
 log() { echo "$(date -u +%FT%TZ) $*"; }
 die() { log "ERROR: $*"; exit 1; }
@@ -44,12 +51,63 @@ flock -n 9 || { log "another run is still going; skipped"; exit 0; }
 
 [ -n "$SECRET" ] || die "CUSTOM_DOMAINS_HOST_SECRET is not set"
 [ -n "$EMAIL" ] || die "CUSTOM_DOMAINS_EMAIL is not set"
+case "$SECRET" in *$'\n'*|*'"'*|*'\'*) die "CUSTOM_DOMAINS_HOST_SECRET must not contain quotes, backslashes or line breaks" ;; esac
 command -v certbot >/dev/null || die "certbot is not installed"
 command -v nginx >/dev/null || die "nginx is not installed"
+CONF_DIR="${CONF_DIR%/}" # as nginx's include names it (see the handoff doc), so `nginx -T` prints our files under this prefix
 mkdir -p "$CONF_DIR" "$WEBROOT"
 
-# Never build on a config that is already broken: someone else's change must be fixed first.
-nginx -t >/dev/null 2>&1 || die "nginx -t fails before any change; nothing done"
+TMP="$(mktemp)"
+CURL_CFG="$(mktemp)"   # mktemp creates it 0600: the secret never appears on a command line (ps) or in a world-readable file
+chmod 600 "$CURL_CFG"
+trap 'rm -f "$TMP" "$CURL_CFG"' EXIT
+printf 'header = "X-Host-Secret: %s"\n' "$SECRET" > "$CURL_CFG"
+
+# nginx -t, clean: it passes and prints no "conflicting server name" (nginx only warns, then ignores the second server).
+# Prints the problem lines and fails otherwise.
+nginx_clean() {
+  local out
+  out="$(nginx -t 2>&1)" || { printf '%s\n' "$out" | grep -E 'emerg|error' | head -n 2 | tr '\n' ' '; return 1; }
+  if printf '%s\n' "$out" | grep -qiE 'conflicting server name|\[(emerg|error|crit|alert)\]'; then
+    printf '%s\n' "$out" | grep -iE 'conflicting server name|emerg|error|crit|alert' | head -n 2 | tr '\n' ' '
+    return 1
+  fi
+  return 0
+}
+
+# Never build on a config that is already broken or warns (so any warning after a change is ours): fix that first.
+if ! err="$(nginx_clean)"; then die "nginx -t fails or warns before any change; nothing done ($err)"; fi
+
+# Every server_name in every config nginx loads that is NOT one of this script's own files: "<name>" lines, lower case.
+# Read once per run from `nginx -T`, which prints each file after a "# configuration file <path>:" line.
+foreign_names() {
+  nginx -T 2>/dev/null | awk -v own="$CONF_DIR/" '
+    /^# configuration file / { f = $4; sub(/:$/, "", f); mine = (index(f, own) == 1); next }
+    mine { next }
+    {
+      line = $0; sub(/#.*/, "", line)
+      while (match(line, /(^|[;{}[:space:]])server_name[[:space:]]+[^;]*/)) {
+        names = substr(line, RSTART, RLENGTH); sub(/^.*server_name[[:space:]]+/, "", names)
+        n = split(names, parts, /[[:space:]]+/)
+        for (i = 1; i <= n; i++) if (parts[i] != "") print tolower(parts[i])
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }'
+}
+
+# True when another site already answers for this name: exactly, or by a wildcard (*.example.com, .example.com).
+served_elsewhere() { # domain
+  local d="$1" name
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    [ "$name" = "$d" ] && return 0
+    case "$name" in
+      \*.*) [[ "$d" == *."${name#\*.}" ]] && return 0 ;;
+      .*) { [ "$d" = "${name#.}" ] || [[ "$d" == *"$name" ]]; } && return 0 ;;
+    esac
+  done <<< "$FOREIGN"
+  return 1
+}
 
 # Only bare lower-case host names are ever used in paths and commands.
 valid_domain() { [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]] && [ "${#1}" -le 253 ]; }
@@ -60,12 +118,12 @@ report() { # domain ok(true|false) [error]
   local body
   if [ "$2" = true ]; then body="{\"domain\":\"$1\",\"ok\":true}"
   else body="{\"domain\":\"$1\",\"ok\":false,\"error\":\"$(json_escape "${3:-}")\"}"; fi
-  curl -fsS --max-time 20 -o /dev/null -X POST -H "X-Host-Secret: $SECRET" -H "Content-Type: application/json" \
-    --data "$body" "$API/api/internal/custom-domains/report" || log "could not report $1 ($2) to the API; will repeat next run"
+  printf '%s' "$body" | curl -fsS --max-time 20 -o /dev/null -X POST --config "$CURL_CFG" -H "Content-Type: application/json" \
+    --data-binary @- "$API/api/internal/custom-domains/report" || log "could not report $1 ($2) to the API; will repeat next run"
 }
 
 site_conf() { # domain
-  local d="$1" ssl_opts=""
+  local d="$1" ssl_opts="" live="$LE_LIVE/$CERT_PREFIX$1"
   [ -f /etc/letsencrypt/options-ssl-nginx.conf ] && ssl_opts+="    include /etc/letsencrypt/options-ssl-nginx.conf;"$'\n'
   [ -f /etc/letsencrypt/ssl-dhparams.pem ] && ssl_opts+="    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;"$'\n'
   cat <<EOF
@@ -86,8 +144,8 @@ server {
     listen 443 ssl;
     listen [::]:443 ssl;
     server_name $d;
-    ssl_certificate $LE_LIVE/$d/fullchain.pem;
-    ssl_certificate_key $LE_LIVE/$d/privkey.pem;
+    ssl_certificate $live/fullchain.pem;
+    ssl_certificate_key $live/privkey.pem;
 ${ssl_opts}    client_max_body_size 50m;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
@@ -101,27 +159,37 @@ EOF
 }
 
 # The list: "<domain> <Verified|Live>" lines, closed by "# end" so a cut-off answer is never mistaken for a short list.
-LIST="$(curl -fsS --max-time 20 -H "X-Host-Secret: $SECRET" "$API/api/internal/custom-domains?format=text")" \
+LIST="$(curl -fsS --max-time 20 --config "$CURL_CFG" "$API/api/internal/custom-domains?format=text")" \
   || die "the API did not answer; nothing changed"
 [ "$(printf '%s\n' "$LIST" | tail -n 1)" = "# end" ] || die "incomplete answer from the API; nothing changed"
+
+FOREIGN="$(foreign_names)"
+[ -n "$FOREIGN" ] || die "nginx -T listed no server_name outside $CONF_DIR; refusing to run blind"
 
 declare -A WANTED=()
 RELOAD=0
 REPORT_OK=()
-TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
 
 while read -r domain status _; do
   [ -z "${domain:-}" ] && continue
   [[ "$domain" == \#* ]] && continue
   if ! valid_domain "$domain"; then log "skipped a malformed name from the API"; continue; fi
-  WANTED["$domain"]=1
   conf="$CONF_DIR/$domain.conf"
 
-  if [ ! -s "$LE_LIVE/$domain/fullchain.pem" ]; then
+  # Another site on this server (LinkSuite itself, Health Tutor, anything not written by this script) already serves the name:
+  # never take it over, never issue for it. Its own site (if this script wrote one earlier) goes.
+  if served_elsewhere "$domain"; then
+    log "$domain: refused, already served by this server's other sites"
+    if [ -e "$conf" ]; then rm -f "$conf"; RELOAD=1; fi
+    report "$domain" false "already served by this server"
+    continue
+  fi
+  WANTED["$domain"]=1
+
+  if [ ! -s "$LE_LIVE/$CERT_PREFIX$domain/fullchain.pem" ]; then
     log "$domain: requesting a certificate"
-    if ! out="$(certbot certonly --webroot -w "$WEBROOT" -d "$domain" --non-interactive --agree-tos -m "$EMAIL" \
-        --deploy-hook "systemctl reload nginx" 2>&1)"; then
+    if ! out="$(certbot certonly --webroot -w "$WEBROOT" --cert-name "$CERT_PREFIX$domain" -d "$domain" --non-interactive \
+        --agree-tos -m "$EMAIL" --deploy-hook "systemctl reload nginx" 2>&1)"; then
       log "$domain: certbot failed"
       printf '%s\n' "$out" | tail -n 5
       # A site without its certificate would fail nginx -t for every site, so it goes.
@@ -141,20 +209,21 @@ while read -r domain status _; do
   backup=""
   if [ -f "$conf" ]; then backup="$(mktemp)"; cp -p "$conf" "$backup"; fi
   cp "$TMP" "$conf"
-  if nginx -t >/dev/null 2>&1; then
+  if err="$(nginx_clean)"; then
     log "$domain: site written"
     RELOAD=1
     REPORT_OK+=("$domain")
     [ -n "$backup" ] && rm -f "$backup"
   else
-    err="$(nginx -t 2>&1 | grep -E 'emerg|error' | head -n 2 | tr '\n' ' ')"
     if [ -n "$backup" ]; then mv "$backup" "$conf"; else rm -f "$conf"; fi
-    log "$domain: nginx -t failed with the new site; it was taken out again: $err"
+    unset 'WANTED[$domain]'
+    [ -n "$backup" ] && WANTED["$domain"]=1 # the previous, working site stays
+    log "$domain: nginx -t failed or warned with the new site; it was taken out again: $err"
     report "$domain" false "nginx: $err"
   fi
 done <<< "$LIST"
 
-# Sites for domains the API no longer lists.
+# Sites for domains the API no longer lists (only this script's own *.conf files).
 shopt -s nullglob
 for conf in "$CONF_DIR"/*.conf; do
   domain="$(basename "$conf" .conf)"
@@ -166,11 +235,11 @@ for conf in "$CONF_DIR"/*.conf; do
 done
 
 if [ "$RELOAD" = 1 ]; then
-  if nginx -t >/dev/null 2>&1; then
+  if err="$(nginx_clean)"; then
     systemctl reload nginx || die "systemctl reload nginx failed"
     log "nginx reloaded"
   else
-    die "nginx -t fails after the changes; not reloaded ($(nginx -t 2>&1 | grep -E 'emerg|error' | head -n 1))"
+    die "nginx -t fails or warns after the changes; not reloaded ($err)"
   fi
 fi
 

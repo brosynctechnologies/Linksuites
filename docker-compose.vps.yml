@@ -75,6 +75,8 @@ services:
       CustomDomains__Target: ${CUSTOM_DOMAINS_TARGET:-}
       CustomDomains__ApexIp: ${CUSTOM_DOMAINS_APEX_IP:-}
       CustomDomains__HostSecret: ${CUSTOM_DOMAINS_HOST_SECRET:-}
+      # The other sites this VPS's nginx serves (Health Tutor's hosts), comma-separated: never claimable by a store.
+      CustomDomains__Forbidden__0: ${CUSTOM_DOMAINS_FORBIDDEN:-}
       Email__FromEmail: ${EMAIL_FROM}
       Email__FromName: ${EMAIL_FROM_NAME}
       Email__BrevoApiKey: ${BREVO_API_KEY:-}

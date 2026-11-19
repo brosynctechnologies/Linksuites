@@ -52,13 +52,39 @@ public sealed class CustomDomainTests(ApiFixture api)
 
     private void DropCache() => api.Services.GetRequiredService<CustomDomainCache>().Invalidate();
 
+    private static string TxtName(string domain) => $"_linksuite-verify.{domain}";
+
+    /// <summary>Publishes the store's verification token (from its domain DTO) in the domain's TXT record.</summary>
+    private void Prove(JsonElement dto) =>
+        Dns.Txt(TxtName(dto.GetProperty("domain").GetString()!), dto.GetProperty("verification").GetProperty("value").GetString()!);
+
+    private static Task<HttpResponseMessage> Check(HttpClient c) => c.PostAsync("/api/store/domain/check", null, Ct);
+
+    /// <summary>Sets the domain, points it here, publishes the TXT token and checks: verified.</summary>
+    private async Task<JsonElement> VerifyAsync(HttpClient client, string domain)
+    {
+        Dns.Point(domain, ApiFixture.CustomDomainsIp);
+        Prove(await Json(await SetDomain(client, domain)));
+        var verified = await Json(await Check(client));
+        Assert.Equal("Verified", verified.GetProperty("status").GetString());
+        return verified;
+    }
+
+    private async Task RunJobAsync(DateTimeOffset now)
+    {
+        using var scope = api.Services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<CustomDomainJobs>().RunOnceAsync(now, Ct);
+    }
+
+    private Task<Tenant> TenantAsync(Guid tenantId) =>
+        api.WithDbAsync(db => db.Tenants.AsNoTracking().SingleAsync(t => t.Id == tenantId, Ct));
+
     /// <summary>A Pro store whose domain points here, verified and reported live by the host script.</summary>
     private async Task<(HttpClient Client, Guid TenantId, string Slug, string Domain)> LiveStoreAsync(string name)
     {
         var (client, tenantId, slug) = await ProStoreAsync(name);
         var domain = $"{Unique("shop")}.example.com";
-        Dns.Point(domain, ApiFixture.CustomDomainsIp);
-        await Json(await SetDomain(client, domain));
+        await VerifyAsync(client, domain);
         (await Report(domain, ok: true)).EnsureSuccessStatusCode();
         return (client, tenantId, slug, domain);
     }
@@ -166,7 +192,13 @@ public sealed class CustomDomainTests(ApiFixture api)
         Assert.Equal("Failed", failed.GetProperty("status").GetString());
         Assert.Contains("198.51.100.7", failed.GetProperty("error").GetString());
 
+        // Pointing here is not enough: the TXT record proves the domain is the owner's.
         Dns.Point(domain, ApiFixture.CustomDomainsIp);
+        var noProof = await Json(await Check(store));
+        Assert.Equal("PendingDns", noProof.GetProperty("status").GetString());
+        Assert.Contains("TXT", noProof.GetProperty("error").GetString());
+
+        Prove(pending);
         var verified = await Json(await store.PostAsync("/api/store/domain/check", null, Ct));
         Assert.Equal("Verified", verified.GetProperty("status").GetString());
         Assert.Equal(JsonValueKind.Null, verified.GetProperty("error").ValueKind);
@@ -189,7 +221,7 @@ public sealed class CustomDomainTests(ApiFixture api)
     {
         var (store, tenantId, _) = await ProStoreAsync("DomainJob");
         var domain = $"{Unique("job")}.example.com";
-        await Json(await SetDomain(store, domain));
+        Prove(await Json(await SetDomain(store, domain)));
         Dns.Point(domain, ApiFixture.CustomDomainsIp);
 
         using (var scope = api.Services.CreateScope())
@@ -220,8 +252,8 @@ public sealed class CustomDomainTests(ApiFixture api)
         var pendingStore = await ProStoreAsync("DomainHostPending");
         var domain = $"{Unique("host")}.example.com";
         var pendingDomain = $"{Unique("hostp")}.example.com";
-        Dns.Point(domain, ApiFixture.CustomDomainsIp);
-        await Json(await SetDomain(store, domain));
+        await VerifyAsync(store, domain);
+        Dns.Point(pendingDomain, ApiFixture.CustomDomainsIp); // pointing here without the TXT proof: not listed
         await Json(await SetDomain(pendingStore.Client, pendingDomain));
 
         var listed = await HostListAsync();
@@ -248,8 +280,7 @@ public sealed class CustomDomainTests(ApiFixture api)
     {
         var (store, tenantId, _) = await ProStoreAsync("DomainCertFail");
         var domain = $"{Unique("cert")}.example.com";
-        Dns.Point(domain, ApiFixture.CustomDomainsIp);
-        await Json(await SetDomain(store, domain));
+        await VerifyAsync(store, domain);
 
         (await Report(domain, ok: false, error: "certbot: too many failed authorizations")).EnsureSuccessStatusCode();
         var failed = await Json(await store.GetAsync("/api/store/domain", Ct));
@@ -271,8 +302,7 @@ public sealed class CustomDomainTests(ApiFixture api)
     {
         var (store, _, slug) = await ProStoreAsync("DomainLookup");
         var domain = $"{Unique("look")}.example.com";
-        Dns.Point(domain, ApiFixture.CustomDomainsIp);
-        await Json(await SetDomain(store, domain));
+        await VerifyAsync(store, domain);
         var anon = api.CreateClient();
 
         Assert.Equal(HttpStatusCode.NotFound, (await anon.GetAsync($"/api/public/domains/{domain}", Ct)).StatusCode); // verified only
@@ -351,6 +381,7 @@ public sealed class CustomDomainTests(ApiFixture api)
         Assert.Equal(HttpStatusCode.NotFound, (await api.CreateClient().GetAsync($"/api/public/domains/{domain}", Ct)).StatusCode);
 
         Dns.Point(next, ApiFixture.CustomDomainsIp);
+        Prove(changed);
         await Json(await store.PostAsync("/api/store/domain/check", null, Ct));
         Assert.Contains(next, await HostListAsync());
 
@@ -382,6 +413,163 @@ public sealed class CustomDomainTests(ApiFixture api)
             Assert.DoesNotContain(Feature, plans.Single(p => p.Code == "free").Features);
             var sub = await db.Subscriptions.IgnoreQueryFilters().AsNoTracking().Where(s => s.TenantId == tenantId).SingleAsync(Ct);
             Assert.Single(sub.Features!, f => f == Feature);
+            await tx.RollbackAsync(Ct);
+            return true;
+        });
+    }
+
+    [Theory]
+    [InlineData(ApiFixture.CustomDomainsForbidden)]
+    [InlineData("www." + ApiFixture.CustomDomainsForbidden)]
+    [InlineData("a.b." + ApiFixture.CustomDomainsForbidden)]
+    [InlineData("othersite.test")] // a parent of a forbidden name would take its server too
+    [InlineData("deep.down.evil.brosync.ng")]
+    [InlineData("BroSync.NG")]
+    public async Task Forbidden_and_reserved_domains_and_their_subdomains_are_refused(string domain)
+    {
+        var (store, _, _) = await ProStoreAsync("DomainForbidden");
+        var r = await SetDomain(store, domain);
+        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
+    }
+
+    [Fact]
+    public async Task Each_claim_gets_its_own_txt_token_shown_with_the_dns_instructions()
+    {
+        var (first, _, _) = await ProStoreAsync("DomainTokenOne");
+        var (second, _, _) = await ProStoreAsync("DomainTokenTwo");
+        var sub = Unique("tok");
+        var domain = $"{sub}.example.com";
+
+        var dto = await Json(await SetDomain(first, domain));
+        var txt = dto.GetProperty("verification");
+        Assert.Equal("TXT", txt.GetProperty("type").GetString());
+        Assert.Equal($"_linksuite-verify.{sub}", txt.GetProperty("name").GetString()); // relative, as DNS panels ask
+        var token = txt.GetProperty("value").GetString()!;
+        Assert.True(token.Length >= 32, token);
+
+        // The same domain again keeps the token; another domain gets a new one; another store's token is its own.
+        Assert.Equal(token, (await Json(await SetDomain(first, domain))).GetProperty("verification").GetProperty("value").GetString());
+        var other = await Json(await SetDomain(second, $"{Unique("tok2")}.example.com"));
+        Assert.NotEqual(token, other.GetProperty("verification").GetProperty("value").GetString());
+        var changed = await Json(await SetDomain(first, $"{Unique("tok3")}.example.com"));
+        Assert.NotEqual(token, changed.GetProperty("verification").GetProperty("value").GetString());
+
+        var apex = $"{Unique("tokapex")}.com".Replace("-", "");
+        var apexTxt = (await Json(await SetDomain(first, apex))).GetProperty("verification");
+        Assert.Equal("_linksuite-verify", apexTxt.GetProperty("name").GetString());
+        Assert.NotEqual(JsonValueKind.Null, (await Json(await SetDomain(first, apex))).GetProperty("releasesAt").ValueKind);
+    }
+
+    [Fact]
+    public async Task A_domain_already_pointing_here_needs_the_txt_token_to_verify()
+    {
+        // The hijack: a domain hosted on the same server (another site's, or another store's) already resolves here.
+        var (store, tenantId, _) = await ProStoreAsync("DomainHijack");
+        var domain = $"{Unique("hijack")}.example.com";
+        Dns.Point(domain, ApiFixture.CustomDomainsIp);
+        var dto = await Json(await SetDomain(store, domain));
+        Assert.Equal("PendingDns", dto.GetProperty("status").GetString());
+
+        Dns.Txt(TxtName(domain), "some-other-token", "v=spf1 -all");
+        var wrong = await Json(await Check(store));
+        Assert.Equal("PendingDns", wrong.GetProperty("status").GetString());
+        Assert.Contains("TXT", wrong.GetProperty("error").GetString());
+
+        // The token alone isn't enough either: the domain must point here too.
+        Dns.Txt(TxtName(domain), dto.GetProperty("verification").GetProperty("value").GetString()!);
+        Dns.Point(domain);
+        Assert.Equal("PendingDns", (await Json(await Check(store))).GetProperty("status").GetString());
+
+        using (var scope = api.Services.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<CustomDomainJobs>().RunOnceAsync(DateTimeOffset.UtcNow, Ct);
+        Assert.Equal(CustomDomainStatus.PendingDns, (await TenantAsync(tenantId)).CustomDomainStatus);
+        Assert.DoesNotContain(domain, await HostListAsync());
+
+        Dns.Point(domain, ApiFixture.CustomDomainsIp);
+        Assert.Equal("Verified", (await Json(await Check(store))).GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task A_live_domain_whose_txt_record_holds_another_token_fails()
+    {
+        var (store, _, _, domain) = await LiveStoreAsync("DomainLiveTxt");
+
+        Dns.Txt(TxtName(domain)); // no answer: a DNS hiccup must not take the store offline
+        var kept = await Json(await Check(store));
+        Assert.Equal("Live", kept.GetProperty("status").GetString());
+
+        Dns.Txt(TxtName(domain), "someone-elses-token");
+        var failed = await Json(await Check(store));
+        Assert.Equal("Failed", failed.GetProperty("status").GetString());
+        Assert.DoesNotContain(domain, await HostListAsync());
+    }
+
+    [Fact]
+    public async Task An_unverified_claim_is_released_after_seven_days_and_the_owner_is_emailed()
+    {
+        var (squatter, squatterId, _) = await ProStoreAsync("DomainSquat");
+        var (failing, failingId, _) = await ProStoreAsync("DomainSquatFailed");
+        var (recent, recentId, _) = await ProStoreAsync("DomainSquatRecent");
+        var (owner, _, _) = await ProStoreAsync("DomainRealOwner");
+        var (verified, verifiedId, _) = await ProStoreAsync("DomainSquatVerified");
+        var squatted = $"{Unique("squat")}.example.com";
+        var failedDomain = $"{Unique("squatf")}.example.com";
+        var recentDomain = $"{Unique("squatr")}.example.com";
+        var verifiedDomain = $"{Unique("squatv")}.example.com";
+        var now = DateTimeOffset.UtcNow;
+
+        await Json(await SetDomain(squatter, squatted));
+        Assert.Equal(HttpStatusCode.BadRequest, (await SetDomain(owner, squatted)).StatusCode); // held for now
+        Dns.Point(failedDomain, "198.51.100.9");
+        Assert.Equal("Failed", (await Json(await SetDomain(failing, failedDomain))).GetProperty("status").GetString());
+        await Json(await SetDomain(recent, recentDomain));
+        await VerifyAsync(verified, verifiedDomain);
+
+        async Task Age(Guid id, double days) => await api.WithDbAsync(db => db.Tenants.Where(t => t.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.CustomDomainPendingSince, now.AddDays(-days)), Ct));
+        await Age(squatterId, 7.5);
+        await Age(failingId, 8);
+        await Age(recentId, 6);
+        await Age(verifiedId, 30); // ignored: a verified domain is not pending
+
+        await RunJobAsync(now);
+
+        var released = await TenantAsync(squatterId);
+        Assert.Null(released.CustomDomain);
+        Assert.Null(released.CustomDomainStatus);
+        Assert.Null(released.CustomDomainToken);
+        Assert.Null((await TenantAsync(failingId)).CustomDomain);
+        Assert.Equal(recentDomain, (await TenantAsync(recentId)).CustomDomain);
+        Assert.Equal(verifiedDomain, (await TenantAsync(verifiedId)).CustomDomain);
+
+        var emails = await api.WithDbAsync(db => db.Notifications.IgnoreQueryFilters().AsNoTracking()
+            .Where(n => n.TemplateKey == "store.domain_released" && (n.TenantId == squatterId || n.TenantId == failingId || n.TenantId == recentId))
+            .ToListAsync(Ct));
+        Assert.Equal(2, emails.Count);
+        Assert.Contains(emails, n => n.TenantId == squatterId && n.Payload["domain"] == squatted);
+
+        // The real owner can claim it now.
+        Assert.Equal(squatted, (await Json(await SetDomain(owner, squatted))).GetProperty("domain").GetString());
+    }
+
+    [Fact]
+    public async Task Migration_sends_claims_without_a_token_back_to_pending()
+    {
+        var (_, tenantId, _, domain) = await LiveStoreAsync("DomainMigrate");
+        await api.WithDbAsync(async db =>
+        {
+            await using var tx = await db.Database.BeginTransactionAsync(Ct);
+            await db.Tenants.Where(t => t.Id == tenantId).ExecuteUpdateAsync(s => s.SetProperty(t => t.CustomDomainToken, (string?)null), Ct);
+            await db.Database.ExecuteSqlRawAsync(Saas.Infrastructure.Persistence.Migrations.CustomDomainOwnership.ExistingClaimsSql, Ct);
+            var t = await db.Tenants.AsNoTracking().SingleAsync(x => x.Id == tenantId, Ct);
+            Assert.Equal(domain, t.CustomDomain);
+            Assert.Equal(CustomDomainStatus.PendingDns, t.CustomDomainStatus);
+            Assert.Matches("^[0-9a-f]{32}$", t.CustomDomainToken);
+            Assert.NotNull(t.CustomDomainPendingSince);
+            Assert.Null(t.CustomDomainLiveAt);
+
+            await db.Database.ExecuteSqlRawAsync(Saas.Infrastructure.Persistence.Migrations.CustomDomainOwnership.ExistingClaimsSql, Ct); // twice
+            Assert.Equal(t.CustomDomainToken, await db.Tenants.Where(x => x.Id == tenantId).Select(x => x.CustomDomainToken).SingleAsync(Ct));
             await tx.RollbackAsync(Ct);
             return true;
         });

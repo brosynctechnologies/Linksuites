@@ -22,16 +22,29 @@ public sealed class CustomDomainOptions
     public string? ApexIp { get; set; }
     /// <summary>The shared secret the host script sends in <c>X-Host-Secret</c> (env CUSTOM_DOMAINS_HOST_SECRET). Empty: the host endpoints refuse every call.</summary>
     public string HostSecret { get; set; } = "";
-    /// <summary>Domains (and everything under them) a store may never claim, on top of the target and the apps' own hosts.</summary>
+    /// <summary>
+    /// LinkSuite's own domains: they (everything under them, and any parent of them) may never be claimed, on top of the target and the
+    /// apps' own hosts.
+    /// </summary>
     public List<string> Reserved { get; set; } = ["brosync.ng"];
+    /// <summary>
+    /// Other sites served by the same server's nginx (e.g. Health Tutor's hosts): never claimable, nor anything under or above them.
+    /// Default empty; set per server (CustomDomains__Forbidden__0, __1, ...; an entry may list several names separated by commas).
+    /// </summary>
+    public List<string> Forbidden { get; set; } = [];
     /// <summary>How often the background job checks pending domains (minutes).</summary>
     public int CheckMinutes { get; set; } = 10;
 }
 
-/// <summary>Looks a host name up in DNS. Answers no addresses for a name that doesn't exist; throws <see cref="DomainLookupException"/> when the lookup itself fails.</summary>
+/// <summary>
+/// Looks names up in DNS. Answers nothing for a name that doesn't exist or has no such records; throws <see cref="DomainLookupException"/>
+/// when the lookup itself fails.
+/// </summary>
 public interface IDomainResolver
 {
     Task<IReadOnlyList<IPAddress>> ResolveAsync(string host, CancellationToken ct);
+    /// <summary>The TXT records on <paramref name="name"/>, each as one string (a record's character-strings joined).</summary>
+    Task<IReadOnlyList<string>> ResolveTxtAsync(string name, CancellationToken ct);
 }
 
 /// <summary>A DNS lookup that failed (server error, timeout), as opposed to a name with no records.</summary>
@@ -41,11 +54,13 @@ public sealed record CustomDomainDnsRecord(string Type, string Name, string Valu
 
 /// <summary>
 /// The store's custom domain as its settings page shows it. <c>Included</c>: the plan includes custom domains. <c>Served</c>: customers
-/// reach the store on it now (live, included, business active).
+/// reach the store on it now (live, included, business active). <c>Dns</c> points the domain here; <c>Verification</c> is the TXT record
+/// that proves the domain is the owner's (both are needed). <c>ReleasesAt</c>: when an unverified claim is let go.
 /// </summary>
 public sealed record CustomDomainDto(
     string? Domain, CustomDomainStatus? Status, string? Error, DateTimeOffset? CheckedAt, DateTimeOffset? VerifiedAt, DateTimeOffset? LiveAt,
-    bool Included, bool Served, CustomDomainDnsRecord? Dns, string Target, string? ApexIp);
+    bool Included, bool Served, CustomDomainDnsRecord? Dns, string Target, string? ApexIp, CustomDomainDnsRecord? Verification,
+    DateTimeOffset? ReleasesAt);
 
 public sealed record SetCustomDomainRequest(string? Domain);
 public sealed record HostDomainDto(string Domain, CustomDomainStatus Status);
@@ -114,6 +129,24 @@ public static partial class CustomDomainRules
         return r.Length > 0 && (domain == r || domain.EndsWith("." + r, StringComparison.Ordinal));
     }
 
+    /// <summary>The same name, one under the other, or one above it: claiming any of them would touch the other's site.</summary>
+    public static bool Overlaps(string domain, string other) =>
+        IsUnder(domain, other) || (Normalize(other) is { } o && IsUnder(o, domain));
+
+    /// <summary>The label of the ownership TXT record, under the claimed domain.</summary>
+    public const string VerificationLabel = "_linksuite-verify";
+
+    /// <summary>The full name of the ownership TXT record: _linksuite-verify.shop.example.com.</summary>
+    public static string VerificationHost(string domain) => $"{VerificationLabel}.{domain}";
+
+    /// <summary>The TXT record's name as DNS panels ask for it, relative to the registrable domain (_linksuite-verify.shop).</summary>
+    public static string VerificationRecordName(string domain) =>
+        RecordName(domain) is var n && n == "@" ? VerificationLabel : $"{VerificationLabel}.{n}";
+
+    /// <summary>A new random ownership code: 32 lower-case hex characters.</summary>
+    public static string NewToken() =>
+        Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+
     public static string? HostOf(string? url) => Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.Host.ToLowerInvariant() : null;
 }
 
@@ -161,10 +194,12 @@ public sealed class CustomDomainCache(IServiceScopeFactory scopes, TimeProvider 
 
 public sealed class CustomDomainService(
     IAppDbContext db, ITenantContext tenant, PlanService plans, IDomainResolver resolver, CustomDomainOptions options, AppUrls urls,
-    CustomDomainCache cache, IDbErrors dbErrors, TimeProvider clock)
+    CustomDomainCache cache, IDbErrors dbErrors, NotificationQueue notifications, TimeProvider clock)
 {
     /// <summary>A certificate failure isn't retried for this long (Let's Encrypt allows 5 failed validations per hour per name).</summary>
     public static readonly TimeSpan CertificateRetryAfter = TimeSpan.FromHours(1);
+    /// <summary>A claim still pending (or failed) this long is released, so nobody can hold a domain they can't verify.</summary>
+    public static readonly TimeSpan ReleaseAfter = TimeSpan.FromDays(7);
     public const int MaxErrorLength = 500;
 
     private async Task<Tenant> CurrentAsync(CancellationToken ct)
@@ -185,8 +220,10 @@ public sealed class CustomDomainService(
         var domain = CustomDomainRules.Normalize(r.Domain);
         if (domain is null || !CustomDomainRules.IsWellFormed(domain))
             throw BadRequestException.Field("domain", "Enter a domain such as shop.yourbusiness.com or yourbusiness.com.");
-        if (Reserved().Any(x => CustomDomainRules.IsUnder(domain, x)))
+        if (Reserved().Any(x => CustomDomainRules.Overlaps(domain, x)))
             throw BadRequestException.Field("domain", "That is a LinkSuite address. Enter a domain your business owns, such as shop.yourbusiness.com.");
+        if (Forbidden().Any(x => CustomDomainRules.Overlaps(domain, x)))
+            throw BadRequestException.Field("domain", "That domain can't be used for a store. Enter a domain your business owns, such as shop.yourbusiness.com.");
         var t = await CurrentAsync(ct);
         if (await db.Tenants.AnyAsync(x => x.CustomDomain == domain && x.Id != t.Id, ct)) throw Taken();
 
@@ -199,6 +236,8 @@ public sealed class CustomDomainService(
             t.CustomDomainLiveAt = null;
             t.CustomDomainCertFailedAt = null;
             t.CustomDomainCheckedAt = null;
+            t.CustomDomainToken = CustomDomainRules.NewToken();
+            t.CustomDomainPendingSince = clock.GetUtcNow();
         }
         await CheckAsync(t, ct);
         try
@@ -216,6 +255,13 @@ public sealed class CustomDomainService(
     public async Task RemoveAsync(CancellationToken ct)
     {
         var t = await CurrentAsync(ct);
+        Clear(t);
+        await db.SaveChangesAsync(ct);
+        cache.Invalidate();
+    }
+
+    private static void Clear(Tenant t)
+    {
         t.CustomDomain = null;
         t.CustomDomainStatus = null;
         t.CustomDomainError = null;
@@ -223,8 +269,8 @@ public sealed class CustomDomainService(
         t.CustomDomainVerifiedAt = null;
         t.CustomDomainLiveAt = null;
         t.CustomDomainCertFailedAt = null;
-        await db.SaveChangesAsync(ct);
-        cache.Invalidate();
+        t.CustomDomainToken = null;
+        t.CustomDomainPendingSince = null;
     }
 
     /// <summary>The owner's "Check again": looks the DNS up now.</summary>
@@ -248,6 +294,10 @@ public sealed class CustomDomainService(
 
     private static BadRequestException Taken() => BadRequestException.Field("domain", "That domain is already used by another store.");
 
+    /// <summary>The Forbidden list; an entry may hold several names separated by commas or spaces (one env var on the server).</summary>
+    private IEnumerable<string> Forbidden() =>
+        options.Forbidden.SelectMany(x => x.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
     private IEnumerable<string> Reserved()
     {
         foreach (var r in options.Reserved) yield return r;
@@ -257,19 +307,25 @@ public sealed class CustomDomainService(
     }
 
     /// <summary>
-    /// Looks the domain up and moves it on: pointing at LinkSuite (the target's addresses or the apex IP) verifies it; pointing elsewhere
-    /// fails it; no records yet leaves it pending. A failed lookup changes nothing but the note. A live domain is only failed when it
-    /// clearly points elsewhere, never for a missing answer, so a DNS hiccup can't take a store offline.
+    /// Looks the domain up and moves it on. Verified needs both: the domain points at LinkSuite (the target's addresses or the apex IP)
+    /// AND its TXT record <c>_linksuite-verify.&lt;domain&gt;</c> holds this store's token, which proves the domain is the owner's (a
+    /// domain already hosted on the same server resolves here without being theirs). Pointing elsewhere fails it; anything missing leaves
+    /// it pending. A failed lookup changes nothing but the note. A live domain is only failed when the DNS clearly says otherwise
+    /// (points elsewhere, or a TXT record with another value), never for a missing answer, so a DNS hiccup can't take a store offline.
     /// </summary>
     public async Task CheckAsync(Tenant t, CancellationToken ct)
     {
         if (t.CustomDomain is not { } domain) return;
         var now = clock.GetUtcNow();
         t.CustomDomainCheckedAt = now;
+        t.CustomDomainToken ??= CustomDomainRules.NewToken();
+        var txtName = CustomDomainRules.VerificationHost(domain);
         IReadOnlyList<IPAddress> found;
+        IReadOnlyList<string> texts;
         try
         {
             found = await resolver.ResolveAsync(domain, ct);
+            texts = await resolver.ResolveTxtAsync(txtName, ct);
         }
         catch (DomainLookupException)
         {
@@ -282,26 +338,54 @@ public sealed class CustomDomainService(
             t.CustomDomainError = "Custom domains aren't switched on yet. We'll check again shortly.";
             return;
         }
+        var up = t.CustomDomainStatus is CustomDomainStatus.Live or CustomDomainStatus.Verified;
         if (found.Count == 0)
         {
-            if (t.CustomDomainStatus is CustomDomainStatus.Live or CustomDomainStatus.Verified) return;
-            t.CustomDomainStatus = CustomDomainStatus.PendingDns;
-            t.CustomDomainError = $"No DNS record found for {domain} yet. Add the record below; DNS changes can take a few hours to show.";
+            if (up) return;
+            Pending(t, now, $"No DNS record found for {domain} yet. Add the records below; DNS changes can take a few hours to show.");
             return;
         }
-        if (found.Any(expected.Contains))
+        if (!found.Any(expected.Contains))
         {
-            if (t.CustomDomainStatus is not (CustomDomainStatus.Live or CustomDomainStatus.Verified))
-            {
-                t.CustomDomainStatus = CustomDomainStatus.Verified;
-                t.CustomDomainVerifiedAt = now;
-            }
-            t.CustomDomainError = null;
+            Fail(t, now, $"{domain} points to {string.Join(", ", found.Take(4))}, not to LinkSuite. Change the record to the one below.");
             return;
         }
+        var token = t.CustomDomainToken;
+        if (!texts.Any(v => string.Equals(v.Trim(), token, StringComparison.Ordinal)))
+        {
+            if (up)
+            {
+                if (texts.Count == 0) return;
+                Fail(t, now, $"The TXT record {txtName} no longer holds this store's code, so {domain} isn't served. Put back the TXT record below.");
+                return;
+            }
+            Pending(t, now, texts.Count == 0
+                ? $"{domain} points to LinkSuite. Now add the TXT record below; it shows the domain is yours. DNS changes can take a few hours to show."
+                : $"The TXT record {txtName} doesn't hold this store's code yet. Set it to the value below; DNS changes can take a few hours to show.");
+            return;
+        }
+        if (!up)
+        {
+            t.CustomDomainStatus = CustomDomainStatus.Verified;
+            t.CustomDomainVerifiedAt = now;
+        }
+        t.CustomDomainPendingSince = null;
+        t.CustomDomainError = null;
+    }
+
+    private static void Pending(Tenant t, DateTimeOffset now, string error)
+    {
+        t.CustomDomainStatus = CustomDomainStatus.PendingDns;
+        t.CustomDomainError = Cap(error);
+        t.CustomDomainPendingSince ??= now;
+    }
+
+    private static void Fail(Tenant t, DateTimeOffset now, string error)
+    {
         t.CustomDomainStatus = CustomDomainStatus.Failed;
         t.CustomDomainLiveAt = null;
-        t.CustomDomainError = Cap($"{domain} points to {string.Join(", ", found.Take(4))}, not to LinkSuite. Change the record to the one below.");
+        t.CustomDomainError = Cap(error);
+        t.CustomDomainPendingSince ??= now;
     }
 
     private async Task<HashSet<IPAddress>> ExpectedAsync(CancellationToken ct)
@@ -318,16 +402,21 @@ public sealed class CustomDomainService(
 
     private CustomDomainDto ToDto(Tenant t, bool included)
     {
-        CustomDomainDnsRecord? dns = null;
+        CustomDomainDnsRecord? dns = null, verification = null;
         var target = CustomDomainRules.Normalize(options.Target) ?? "";
         var apexIp = string.IsNullOrWhiteSpace(options.ApexIp) ? null : options.ApexIp.Trim();
         if (t.CustomDomain is { } d)
+        {
             dns = CustomDomainRules.IsApex(d)
                 ? apexIp is not null ? new("A", "@", apexIp) : new("ALIAS", "@", target)
                 : new("CNAME", CustomDomainRules.RecordName(d), target);
+            if (t.CustomDomainToken is { } token) verification = new("TXT", CustomDomainRules.VerificationRecordName(d), token);
+        }
         var served = included && t.Status == TenantStatus.Active && t.CustomDomainStatus == CustomDomainStatus.Live;
+        var releasesAt = (t.CustomDomainStatus is CustomDomainStatus.PendingDns or CustomDomainStatus.Failed) && t.CustomDomainPendingSince is { } since
+            ? since + ReleaseAfter : (DateTimeOffset?)null;
         return new CustomDomainDto(t.CustomDomain, t.CustomDomainStatus, t.CustomDomainError, t.CustomDomainCheckedAt, t.CustomDomainVerifiedAt,
-            t.CustomDomainLiveAt, included, served, dns, target, apexIp);
+            t.CustomDomainLiveAt, included, served, dns, target, apexIp, verification, releasesAt);
     }
 
     private static string Cap(string s) => s.Length <= MaxErrorLength ? s : s[..MaxErrorLength];
@@ -400,10 +489,8 @@ public sealed class CustomDomainService(
         else
         {
             var why = string.IsNullOrWhiteSpace(r.Error) ? "the server reported an error" : r.Error.Trim();
-            t.CustomDomainStatus = CustomDomainStatus.Failed;
-            t.CustomDomainLiveAt = null;
             t.CustomDomainCertFailedAt = now;
-            t.CustomDomainError = Cap($"We couldn't set up the security certificate for {domain} ({why}). We'll try again within a few hours; check that the DNS record below is the only one for this name.");
+            Fail(t, now, $"We couldn't set up the security certificate for {domain} ({why}). We'll try again within a few hours; check that the DNS record below is the only one for this name.");
         }
         await db.SaveChangesAsync(ct);
         cache.Invalidate();
@@ -433,7 +520,60 @@ public sealed class CustomDomainService(
             await db.SaveChangesAsync(ct);
             cache.Invalidate();
         }
+        await ReleaseStaleAsync(now, ct);
         return checkedCount;
+    }
+
+    /// <summary>
+    /// Lets go of claims pending (or failed) for longer than <see cref="ReleaseAfter"/>, whatever the plan or business status, so a claim
+    /// nobody can verify never blocks the domain's real owner. Each release is a conditional update (still unverified, still that
+    /// domain), then the owner is emailed. Returns how many were released.
+    /// </summary>
+    public async Task<int> ReleaseStaleAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var cutoff = now - ReleaseAfter;
+        var stale = await db.Tenants.AsNoTracking()
+            .Where(t => t.CustomDomain != null && t.CustomDomainPendingSince != null && t.CustomDomainPendingSince < cutoff
+                && (t.CustomDomainStatus == CustomDomainStatus.PendingDns || t.CustomDomainStatus == CustomDomainStatus.Failed))
+            .OrderBy(t => t.CustomDomainPendingSince).Take(200)
+            .Select(t => new { t.Id, t.Name, Domain = t.CustomDomain!, t.Product })
+            .ToListAsync(ct);
+        var released = 0;
+        foreach (var s in stale)
+        {
+            var rows = await db.Tenants
+                .Where(t => t.Id == s.Id && t.CustomDomain == s.Domain && t.CustomDomainPendingSince != null && t.CustomDomainPendingSince < cutoff
+                    && (t.CustomDomainStatus == CustomDomainStatus.PendingDns || t.CustomDomainStatus == CustomDomainStatus.Failed))
+                .ExecuteUpdateAsync(u => u
+                    .SetProperty(t => t.CustomDomain, (string?)null)
+                    .SetProperty(t => t.CustomDomainStatus, (CustomDomainStatus?)null)
+                    .SetProperty(t => t.CustomDomainError, (string?)null)
+                    .SetProperty(t => t.CustomDomainCheckedAt, (DateTimeOffset?)null)
+                    .SetProperty(t => t.CustomDomainVerifiedAt, (DateTimeOffset?)null)
+                    .SetProperty(t => t.CustomDomainLiveAt, (DateTimeOffset?)null)
+                    .SetProperty(t => t.CustomDomainCertFailedAt, (DateTimeOffset?)null)
+                    .SetProperty(t => t.CustomDomainToken, (string?)null)
+                    .SetProperty(t => t.CustomDomainPendingSince, (DateTimeOffset?)null)
+                    .SetProperty(t => t.UpdatedAt, now), ct);
+            if (rows == 0) continue; // verified or changed meanwhile
+            released++;
+            var owner = await (from m in db.Memberships.IgnoreQueryFilters()
+                               join u in db.Users on m.UserId equals u.Id
+                               where m.TenantId == s.Id && m.Role == MemberRole.Owner && m.Status == MembershipStatus.Active && u.Email != null
+                               select new { u.Id, u.Email, u.FullName }).FirstOrDefaultAsync(ct);
+            if (owner is null) continue;
+            notifications.Email(owner.Email!, "store.domain_released", new Dictionary<string, string>
+            {
+                ["name"] = owner.FullName,
+                ["business"] = s.Name,
+                ["domain"] = s.Domain,
+                ["days"] = ((int)ReleaseAfter.TotalDays).ToString(),
+                ["link"] = $"{urls.Web(s.Product)}/dashboard/settings",
+            }, s.Id, owner.Id);
+            await db.SaveChangesAsync(ct);
+        }
+        if (released > 0) cache.Invalidate();
+        return released;
     }
 }
 
