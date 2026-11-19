@@ -62,7 +62,8 @@ export type BoostKind = "Featured" | "Top";
 export type BoostStatus = "Pending" | "Active" | "Expired";
 export type ReviewBasis = "Enquiry" | "Inspection" | "Stay";
 export type ListingEventKind = "View" | "WhatsApp" | "Call";
-export type PayoutStatus = "Requested" | "Paid" | "Rejected";
+/** Processing: Paystack is sending it. Failed: the transfer failed; the amount is back in the available balance. */
+export type PayoutStatus = "Requested" | "Processing" | "Paid" | "Failed" | "Rejected";
 
 // ---- Public ----
 export interface LocationDto {
@@ -576,12 +577,20 @@ export interface EarningsDto {
   availableMinor: number;
   pendingMinor: number;
   paidOutMinor: number;
+  /** Stays Paystack settled to the bank directly (direct settlement). */
+  settledMinor?: number;
   entries: EarningEntry[];
 }
 export interface PayoutAccount {
   bankName: string;
   accountNumber: string;
   accountName: string;
+  /** Paystack's code for the bank, when it was picked from the list. */
+  bankCode?: string | null;
+  /** The bank confirmed the account name. */
+  verified?: boolean;
+  /** Paystack settles this seller's sales straight to the account (a subaccount). */
+  directSettlement?: boolean;
 }
 export interface PayoutDto {
   id: string;
@@ -672,4 +681,18 @@ export interface MyBusinessDto {
   name: string;
   role: Role;
   current: boolean;
+}
+
+/** How payouts work on the platform right now (GET /api/payouts/settings). */
+export interface PayoutSettings {
+  /** Payouts are sent by Paystack Transfer once the platform approves them. */
+  automaticTransfers: boolean;
+  /** Direct settlement (a Paystack subaccount) can be turned on. */
+  directSettlement: boolean;
+  /** Bank accounts can be checked with the bank. */
+  canVerify: boolean;
+}
+export interface BankOption {
+  name: string;
+  code: string;
 }

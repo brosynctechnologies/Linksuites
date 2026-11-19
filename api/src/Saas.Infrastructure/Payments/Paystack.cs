@@ -88,18 +88,24 @@ public sealed class PaystackClient : IMerchantPayments
 
     private async Task<string> InitializeRemoteAsync(string secretKey, PaymentInit init, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.paystack.co/transaction/initialize")
+        var payload = new Dictionary<string, object?>
         {
-            Content = JsonContent.Create(new
-            {
-                email = init.Email,
-                amount = init.AmountMinor,
-                currency = init.Currency,
-                reference = init.Reference,
-                callback_url = init.CallbackUrl,
-                metadata = init.Metadata,
-            }),
+            ["email"] = init.Email,
+            ["amount"] = init.AmountMinor,
+            ["currency"] = init.Currency,
+            ["reference"] = init.Reference,
+            ["callback_url"] = init.CallbackUrl,
+            ["metadata"] = init.Metadata,
         };
+        if (init.Split is { } split)
+        {
+            // Split payment: the subaccount gets the payment less transaction_charge (a flat amount that overrides the subaccount's
+            // percentage); bearer "account" keeps Paystack's own fees on the platform's side, as without a split.
+            payload["subaccount"] = split.Subaccount;
+            payload["transaction_charge"] = split.PlatformFeeMinor;
+            payload["bearer"] = "account";
+        }
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.paystack.co/transaction/initialize") { Content = JsonContent.Create(payload) };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secretKey);
         using var response = await http.SendAsync(request, ct);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
@@ -198,6 +204,28 @@ public sealed class PaystackClient : IMerchantPayments
         var root = doc.RootElement;
         if (!root.TryGetProperty("event", out var ev) || ev.GetString() != "charge.success") return null;
         return root.TryGetProperty("data", out var data) ? ParseCharge(data) : null;
+    }
+
+    /// <summary>Returns a "transfer.success", "transfer.failed" or "transfer.reversed" webhook event, otherwise null.</summary>
+    public static Saas.Application.Payouts.TransferEvent? ParseTransferEvent(string rawBody)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(rawBody);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("event", out var ev) || ev.ValueKind != JsonValueKind.String) return null;
+            var name = ev.GetString();
+            if (name is not ("transfer.success" or "transfer.failed" or "transfer.reversed")) return null;
+            if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object) return null;
+            string? Text(string key) => data.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            var reference = Text("reference");
+            if (string.IsNullOrWhiteSpace(reference) || !data.TryGetProperty("amount", out var amount) || !amount.TryGetInt64(out var minor)) return null;
+            return new Saas.Application.Payouts.TransferEvent(name, reference, minor, Text("transfer_code"), Text("reason"));
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static VerifiedCharge? ParseCharge(JsonElement data)

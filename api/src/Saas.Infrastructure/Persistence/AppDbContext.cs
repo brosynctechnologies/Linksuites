@@ -103,6 +103,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<CourseCoupon> CourseCoupons => Set<CourseCoupon>();
     public DbSet<CourseOrder> CourseOrders => Set<CourseOrder>();
     public DbSet<Earning> Earnings => Set<Earning>();
+    public DbSet<PaymentSplit> PaymentSplits => Set<PaymentSplit>();
     public DbSet<Payout> Payouts => Set<Payout>();
     public DbSet<Certificate> Certificates => Set<Certificate>();
     public DbSet<SchoolProfile> SchoolProfiles => Set<SchoolProfile>();
@@ -1036,6 +1037,18 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
         {
             e.HasIndex(x => new { x.Status, x.CreatedAt });
             e.Property(x => x.Account).HasColumnType("jsonb").HasConversion(JsonConverter<PayoutAccount>(), JsonComparer<PayoutAccount>());
+            // One transfer attempt per reference: a webhook or re-check finds exactly one payout.
+            e.HasIndex(x => x.TransferReference).IsUnique().HasFilter("transfer_reference IS NOT NULL");
+            e.Property(x => x.TransferReference).HasMaxLength(100);
+            e.Property(x => x.TransferCode).HasMaxLength(100);
+            e.Property(x => x.TransferStatus).HasMaxLength(30);
+            e.Property(x => x.FailureReason).HasMaxLength(500);
+        });
+        b.Entity<PaymentSplit>(e =>
+        {
+            e.HasIndex(x => x.Reference).IsUnique();
+            e.Property(x => x.Reference).HasMaxLength(100);
+            e.Property(x => x.SubaccountCode).HasMaxLength(100);
         });
         b.Entity<Certificate>(e =>
         {

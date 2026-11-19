@@ -115,6 +115,13 @@ public static class DependencyInjection
         if (config.GetValue("Jobs:InvoicesEnabled", true))
             services.AddHostedService<InvoiceJobsHostedService>();
 
+        // Payouts to sellers (courses, stays): Paystack Transfers and subaccounts on the platform's account, each behind its own switch.
+        services.AddSingleton(config.GetSection(Saas.Application.Payouts.PayoutOptions.Section).Get<Saas.Application.Payouts.PayoutOptions>() ?? new());
+        services.AddHttpClient<PaystackTransfersClient>(c => c.Timeout = TimeSpan.FromSeconds(20));
+        services.AddScoped<Saas.Application.Payouts.IPayoutProvider>(sp => sp.GetRequiredService<PaystackTransfersClient>());
+        if (config.GetValue("Jobs:PayoutsEnabled", true))
+            services.AddHostedService<Payouts.PayoutJobsHostedService>();
+
         // Online Course Platform
         services.AddSingleton(config.GetSection("Platform").Get<Saas.Application.Auth.PlatformOptions>() ?? new());
         services.AddSingleton<Saas.Application.Platform.IErrorLog, Saas.Infrastructure.Platform.ErrorLogRecorder>();

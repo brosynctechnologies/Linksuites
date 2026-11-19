@@ -38,6 +38,17 @@ public static partial class CourseEndpoints
         academy.MapPost("/logo", (IFormFile file, StudioService s, CancellationToken ct) => s.UploadLogoAsync(file.ToUpload(), ct)).DisableAntiforgery();
         academy.MapPut("/payout-account", (PayoutAccountDto r, StudioService s, CancellationToken ct) => s.SetPayoutAccountAsync(r, ct))
             .Validate<PayoutAccountDto>().RequireAuthorization(Policies.Owner);
+        academy.MapPost("/payout-account/direct-settlement", (StudioService s, CancellationToken ct) => s.EnableDirectSettlementAsync(ct))
+            .RequireAuthorization(Policies.Owner);
+        academy.MapDelete("/payout-account/direct-settlement", (StudioService s, CancellationToken ct) => s.DisableDirectSettlementAsync(ct))
+            .RequireAuthorization(Policies.Owner);
+
+        // Bank accounts for payouts, shared by every product that collects through the platform (courses, stays).
+        var payoutBanks = app.MapGroup("/api/payouts").WithTags("Payouts").RequireAuthorization(Policies.Admin);
+        payoutBanks.MapGet("/settings", (PayoutAccountService s) => s.Settings());
+        payoutBanks.MapGet("/banks", (string? currency, PayoutAccountService s, CancellationToken ct) => s.BanksAsync(currency ?? "NGN", ct));
+        payoutBanks.MapPost("/resolve-account", (ResolveAccountRequest r, PayoutAccountService s, CancellationToken ct) => s.ResolveAsync(r, ct))
+            .RequireAuthorization(Policies.Owner).RequireRateLimiting(RateLimits.PublicWrite);
 
         var courses = studio.MapGroup("/studio").WithTags("Courses: studio").WritableBy(editors);
         courses.MapGet("/courses", (StudioService s, CancellationToken ct) => s.ListAsync(ct));
@@ -166,6 +177,9 @@ public static partial class CourseEndpoints
         admin.MapGet("/payouts", (PayoutStatus? status, PayoutAdminService s, CancellationToken ct) => s.ListAsync(status, ct)).RequireAuthorization(Policies.PlatformFinance);
         admin.MapPost("/payouts/{id:guid}/paid", (Guid id, PaidRequest r, PayoutAdminService s, CancellationToken ct) => s.MarkPaidAsync(id, r, ct)).RequireAuthorization(Policies.PlatformFinance);
         admin.MapPost("/payouts/{id:guid}/reject", (Guid id, NoteRequest r, PayoutAdminService s, CancellationToken ct) => s.RejectAsync(id, r.Note, ct)).RequireAuthorization(Policies.PlatformFinance);
+        // Automatic payouts: Finance's approval sends a Paystack Transfer (also the retry for a failed one).
+        admin.MapGet("/payouts/settings", (PayoutAdminService s) => s.Settings()).RequireAuthorization(Policies.PlatformFinance);
+        admin.MapPost("/payouts/{id:guid}/send", (Guid id, PayoutAdminService s, CancellationToken ct) => s.SendAsync(id, ct)).RequireAuthorization(Policies.PlatformFinance);
         admin.MapGet("/categories", (CourseAdminService s, CancellationToken ct) => s.CategoriesAsync(ct)).RequireAuthorization(Policies.PlatformModerator);
         admin.MapPost("/categories", (SaveCategoryRequest r, CourseAdminService s, CancellationToken ct) => s.SaveCategoryAsync(null, r, ct)).RequireAuthorization(Policies.PlatformModerator);
         admin.MapPut("/categories/{id:guid}", (Guid id, SaveCategoryRequest r, CourseAdminService s, CancellationToken ct) => s.SaveCategoryAsync(id, r, ct)).RequireAuthorization(Policies.PlatformModerator);

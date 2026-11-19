@@ -7594,6 +7594,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("reversed");
 
+                    b.Property<bool>("SettledByProvider")
+                        .HasColumnType("boolean")
+                        .HasColumnName("settled_by_provider");
+
                     b.Property<string>("Source")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -7629,6 +7633,50 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.ToTable("earnings", (string)null);
                 });
 
+            modelBuilder.Entity("Saas.Domain.Payouts.PaymentSplit", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<long>("FeeMinor")
+                        .HasColumnType("bigint")
+                        .HasColumnName("fee_minor");
+
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("reference");
+
+                    b.Property<string>("SubaccountCode")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("subaccount_code");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_payment_splits");
+
+                    b.HasIndex("Reference")
+                        .IsUnique()
+                        .HasDatabaseName("ix_payment_splits_reference");
+
+                    b.ToTable("payment_splits", (string)null);
+                });
+
             modelBuilder.Entity("Saas.Domain.Payouts.Payout", b =>
                 {
                     b.Property<Guid>("Id")
@@ -7644,9 +7692,18 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("amount_minor");
 
+                    b.Property<Guid?>("ApprovedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("approved_by");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("failure_reason");
 
                     b.Property<string>("Note")
                         .HasColumnType("text")
@@ -7674,6 +7731,29 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
 
+                    b.Property<int>("TransferAttempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("transfer_attempts");
+
+                    b.Property<string>("TransferCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("transfer_code");
+
+                    b.Property<string>("TransferReference")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("transfer_reference");
+
+                    b.Property<DateTimeOffset?>("TransferSentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("transfer_sent_at");
+
+                    b.Property<string>("TransferStatus")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("transfer_status");
+
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
@@ -7683,6 +7763,11 @@ namespace Saas.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId")
                         .HasDatabaseName("ix_payouts_tenant_id");
+
+                    b.HasIndex("TransferReference")
+                        .IsUnique()
+                        .HasDatabaseName("ix_payouts_transfer_reference")
+                        .HasFilter("transfer_reference IS NOT NULL");
 
                     b.HasIndex("Status", "CreatedAt")
                         .HasDatabaseName("ix_payouts_status_created_at");

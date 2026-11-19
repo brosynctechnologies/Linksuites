@@ -236,6 +236,13 @@ public static class EmailTemplates
                 $"We've sent {P("amount")} to your bank account. Transfer reference: {P("reference")}."),
             "payout.rejected" => ($"Payout request of {P("amount")} wasn't sent",
                 $"Your payout request of {P("amount")} wasn't sent. {P("note")}\n\nThe amount is back in your available balance."),
+            "payout.transfer_failed" => ($"Payout transfer {P("status")}: {P("business")}, {P("amount")}",
+                $"The Paystack transfer of {P("amount")} to {P("business")} {P("status")}.\n\n{P("reason")}\n\nTransfer reference: {P("reference")}\n\n" +
+                $"The amount is back in the business's available balance. Retry the transfer or reject the payout in the admin console: {P("link")}"),
+            "payout.transfer_otp" => ($"Payout transfers are waiting for an OTP: {P("business")}, {P("amount")}",
+                $"Paystack is holding the transfer of {P("amount")} to {P("business")} for an OTP (reference {P("reference")}).\n\n" +
+                $"Automatic payouts need transfer OTP turned off in the Paystack dashboard (Settings, Preferences, Transfers). " +
+                $"Finish or cancel this transfer in Paystack, then check the payout in the admin console: {P("link")}"),
             "listing.approved" => ($"{P("listing")} is live",
                 $"Good news: {P("listing")} was approved and now appears in search.\n\nSee it in your studio: {P("link")}"),
             "listing.rejected" => ($"Changes needed before {P("listing")} can go live",

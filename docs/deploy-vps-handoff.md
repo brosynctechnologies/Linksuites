@@ -308,6 +308,18 @@ Test access first: `ssh -T git@github-linksuite` should greet with the repo name
 | `Storage:Provider=R2` + R2 keys | [ ] | **Strongly recommended** before course/property media |
 | `Platform:AdminEmails` | done | First super-admin email(s) |
 | Product Paystack keys | later | Per-tenant invoice Paystack can wait |
+| `Payouts:AutomaticTransfers` (`Payouts__AutomaticTransfers`) | off | **Leave off until the live Paystack key is in place and the dashboard steps below are done.** When on, Finance's "Send" in Money → Payouts pays a tutor/host by Paystack Transfer from the platform's Paystack balance; Paystack's `transfer.success` / `transfer.failed` / `transfer.reversed` webhooks (same URL as payments) and a 5-minute re-check job settle it. Failed or reversed transfers go back to the business's available balance and Finance is emailed. When off, Finance pays by hand and marks payouts paid (unchanged). Sellers must pick their bank from the list (the account name is checked with the bank) once it is on |
+| `Payouts:PaystackSubaccounts` (`Payouts__PaystackSubaccounts`) | off | When on, a tutor/host can turn on "direct settlement" in Earnings: a Paystack subaccount is created for their checked bank account, and each course sale or short-let paid with Paystack is split at checkout (`subaccount` + `transaction_charge` = the platform fee, `bearer=account`). Paystack then settles the seller's share to their bank itself; those earnings show as "Paid by Paystack" and never enter payouts. Sales paid with another provider (OPay) are not split |
+| `Payouts:RecheckAfter` | default | How long a transfer stays in flight before the re-check job asks Paystack (`00:10:00`). `Jobs:PayoutsEnabled=false` stops the job |
+
+#### Paystack dashboard steps for automatic payouts (before switching `Payouts:AutomaticTransfers` on)
+
+1. Use the **live** secret key (`Paystack:SecretKey`); transfers and subaccounts use the platform's own key, the same one as course/stay payments.
+2. **Turn off transfer OTP**: Paystack asks for an OTP on every transfer by default, and an API can't give one, so transfers would wait at status `otp` (the console shows "Waiting for OTP" and Finance is emailed). In the Paystack dashboard: Settings → Preferences → Transfers, untick "Confirm transfers before sending" / OTP (or call `POST /transfer/disable_otp` then `POST /transfer/disable_otp_finalize` with the OTP Paystack sends to the business phone). Paystack may require the account to be on a plan that allows disabling OTP; ask Paystack support if the option is greyed out.
+3. Webhook URL (Settings → API Keys & Webhooks): `https://api.linksuite.brosync.ng/api/webhooks/paystack` (already set for payments; transfer events arrive on it, signed with the same key).
+4. Fund the Paystack **balance** (Transfers are paid from it, `source: balance`). Course sales and stays settle to the bank account by default; either keep enough in the balance or ask Paystack to keep settlements in the balance.
+5. Then set `Payouts__AutomaticTransfers=true` and restart the api. Existing sellers whose account was typed by hand show "Not checked with the bank" in Money → Payouts; ask them to re-save it by picking their bank, or pay them by hand while automatic transfers are off.
+6. For subaccounts: nothing extra in the dashboard; set `Payouts__PaystackSubaccounts=true`. Refunds of split payments come out of the platform's Paystack balance (the seller already has their share), so a refund of a "Paid by Paystack" sale must be recovered from the seller by hand.
 
 ### 4. Product scope for first deploy (optional but useful)
 

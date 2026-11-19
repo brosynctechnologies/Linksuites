@@ -9,7 +9,8 @@ using Saas.Domain.Courses;
 namespace Saas.Application.Courses;
 
 /// <summary>The tutor's studio: academy settings, courses, curriculum, lessons, video, files and quizzes.</summary>
-public sealed class StudioService(IAppDbContext db, CourseCore core, PlanService plans, IFileStorage storage, ICurrentUser user)
+public sealed class StudioService(IAppDbContext db, CourseCore core, PlanService plans, IFileStorage storage, ICurrentUser user,
+    PayoutAccountService accounts)
 {
     public const long MaxVideoBytes = 2L * 1024 * 1024 * 1024;
     public const long MaxResourceBytes = 50L * 1024 * 1024;
@@ -46,7 +47,26 @@ public sealed class StudioService(IAppDbContext db, CourseCore core, PlanService
     public async Task<AcademyDto> SetPayoutAccountAsync(PayoutAccountDto r, CancellationToken ct)
     {
         var a = await core.AcademyAsync(ct);
-        a.PayoutAccount = new PayoutAccount { BankName = r.BankName.Trim(), AccountNumber = r.AccountNumber.Trim(), AccountName = r.AccountName.Trim() };
+        a.PayoutAccount = await accounts.BuildAsync(r, a.PayoutAccount, a.Currency, ct);
+        await db.SaveChangesAsync(ct);
+        return ToDto(a);
+    }
+
+    /// <summary>Turns on direct settlement: a Paystack subaccount whose default share for the platform is the academy's sales fee.</summary>
+    public async Task<AcademyDto> EnableDirectSettlementAsync(CancellationToken ct)
+    {
+        var a = await core.AcademyAsync(ct);
+        var feePercent = Math.Clamp(await core.PlanLimitForTenantAsync(LimitKeys.AcademyFeePercent, ct), 0, 100);
+        var owner = await db.Memberships.Where(m => m.Role == MemberRole.Owner).Select(m => m.User!.Email).FirstOrDefaultAsync(ct);
+        a.PayoutAccount = await accounts.EnableDirectSettlementAsync(a.PayoutAccount, a.Name, feePercent, owner, ct);
+        await db.SaveChangesAsync(ct);
+        return ToDto(a);
+    }
+
+    public async Task<AcademyDto> DisableDirectSettlementAsync(CancellationToken ct)
+    {
+        var a = await core.AcademyAsync(ct);
+        a.PayoutAccount = PayoutAccountService.DisableDirectSettlement(a.PayoutAccount);
         await db.SaveChangesAsync(ct);
         return ToDto(a);
     }
@@ -380,7 +400,7 @@ public sealed class StudioService(IAppDbContext db, CourseCore core, PlanService
     }
 
     private AcademyDto ToDto(Academy a) => new(a.Name, a.Slug, a.Headline, a.Bio, a.LogoUrl, a.BrandColor, a.Currency,
-        a.PayoutAccount is { } p && user.Role is MemberRole.Owner or MemberRole.Admin ? new PayoutAccountDto(p.BankName, user.IsSupportView ? AccountMask.Last4(p.AccountNumber) : p.AccountNumber, p.AccountName) : null, core.AcademyUrl(a.Slug));
+        a.PayoutAccount is { } p && user.Role is MemberRole.Owner or MemberRole.Admin ? PayoutAccountService.ToDto(p, user.IsSupportView) : null, core.AcademyUrl(a.Slug));
 
     private async Task<StudioCourseDto> ToDtoAsync(Course c, CancellationToken ct)
     {

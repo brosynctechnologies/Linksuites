@@ -154,7 +154,7 @@ public sealed class StudioPeopleService(IAppDbContext db, CourseCore core, PlanS
             rows.Select(e => new EarningDto(e.Id, e.SourceId, titles.GetValueOrDefault(e.CourseId ?? Guid.Empty, e.Description), names.GetValueOrDefault(e.UserId, "Learner"),
                 e.Channel ?? SaleChannel.Academy, e.GrossMinor, e.FeeMinor, e.NetMinor, e.AvailableAt, e.CreatedAt,
                 ledger.States.GetValueOrDefault(e.Id, LedgerRules.EarningState.Pending).ToString(),
-                !e.Reversed && now - e.CreatedAt <= CourseRules.RefundWindow)).ToList(), page, pageSize, total));
+                !e.Reversed && now - e.CreatedAt <= CourseRules.RefundWindow)).ToList(), page, pageSize, total), ledger.SettledMinor);
     }
 
     public Task<IReadOnlyList<PayoutDto>> PayoutsAsync(CancellationToken ct) => payouts.ListAsync(ct);

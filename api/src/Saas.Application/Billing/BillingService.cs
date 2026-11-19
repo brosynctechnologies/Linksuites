@@ -6,7 +6,15 @@ using Saas.Domain.Core;
 
 namespace Saas.Application.Billing;
 
-public sealed record PaymentInit(string Email, long AmountMinor, string Currency, string Reference, string CallbackUrl, Dictionary<string, string> Metadata);
+/// <param name="Split">
+/// Paystack only: settle the payment to a seller's subaccount, keeping <see cref="PaymentSplitTerms.PlatformFeeMinor"/> for the platform.
+/// Other providers ignore it (the split is only ever made for Paystack checkouts).
+/// </param>
+public sealed record PaymentInit(string Email, long AmountMinor, string Currency, string Reference, string CallbackUrl, Dictionary<string, string> Metadata,
+    PaymentSplitTerms? Split = null);
+
+/// <summary>A Paystack split payment: the seller's subaccount (ACCT_...) gets the payment less the platform's flat fee.</summary>
+public sealed record PaymentSplitTerms(string Subaccount, long PlatformFeeMinor);
 
 /// <summary>A payment provider (Paystack today; Flutterwave or Stripe can implement the same interface).</summary>
 public interface IPaymentGateway

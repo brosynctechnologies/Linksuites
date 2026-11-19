@@ -256,8 +256,28 @@ stored), and a provider webhook naming a transfer reference is ignored: only an 
 
 | Method | Path | Returns |
 |---|---|---|
-| GET | `/api/admin/payouts?status=Requested\|Paid\|Rejected` | shared payout queue (courses + property): `[PayoutDto & { product, businessName, currency, bankName, accountNumber, accountName, amountMinor, status, reference, requestedAt, paidAt, note }]` |
-| POST | `/api/admin/payouts/{id}/paid` `{ reference }` · `/reject` `{ note }` | `PayoutDto` |
+| GET | `/api/admin/payouts?status=Requested\|Processing\|Paid\|Failed\|Rejected` | shared payout queue (courses + property): `[PayoutDto & { product, businessName, currency, bankName, accountNumber, accountName, amountMinor, status, reference, requestedAt, paidAt, note, transferReference, transferStatus, failureReason, transferAttempts, accountVerified }]` |
+| POST | `/api/admin/payouts/{id}/paid` `{ reference }` · `/reject` `{ note }` | `PayoutDto` (paid: `Requested` only; reject: `Requested` or `Failed`; 409 while `Processing`) |
+| GET | `/api/admin/payouts/settings` | `{ automaticTransfers, directSettlement, canVerify }` (config switches `Payouts:AutomaticTransfers`, `Payouts:PaystackSubaccounts`; `canVerify` = the platform Paystack key is set) |
+| POST | `/api/admin/payouts/{id}/send` | `PayoutDto`: Finance's approval sends a Paystack Transfer (409 when automatic transfers are off, when already `Processing`, or when the account was never checked with the bank). Also the retry for a `Failed` payout |
+
+**Automatic payouts (Paystack Transfers).** With `Payouts:AutomaticTransfers` on, `send` flips a `Requested` payout to `Processing`
+with one conditional update (two approvals send one transfer) and calls `POST /transfer` with `source: balance`, the business's
+transfer recipient and reference `po_{payoutId}` (`po_{payoutId}_{n}` for retry `n`). Paystack's answer, its `transfer.success` /
+`transfer.failed` / `transfer.reversed` webhooks (on `/api/webhooks/paystack`, HMAC-SHA512 signed with the platform key; the amount
+must match) and the re-check job (`GET /transfer/verify/{reference}` for transfers in flight over `Payouts:RecheckAfter`, default
+10 minutes) all apply the outcome to the current attempt only, once: success → `Paid` (reference = transfer reference, the business
+is emailed); failed/reversed (a reversal can follow a success) → `Failed`, the amount is available again, Finance is emailed
+(`payout.transfer_failed`). A refused `POST /transfer` (e.g. insufficient balance) fails the payout at once with Paystack's message.
+No answer (5xx, timeout) keeps it `Processing`; the re-check sends it again **with the same reference** if Paystack doesn't know it.
+Status `otp` (transfer OTP still on) keeps it `Processing`, notes why and emails Finance (`payout.transfer_otp`). Retrying a `Failed`
+payout needs the business's available balance to still cover it (409 otherwise: reject it instead). `Processing` counts against the
+business's available balance like `Requested`.
+
+**Direct settlement (Paystack subaccounts).** With `Payouts:PaystackSubaccounts` on, a seller can create a subaccount (see
+`COURSES_API.md` / `PROPERTY_API.md`). A course sale or stay paid with Paystack is then initialised with `subaccount`,
+`transaction_charge` (the platform fee of that sale, in kobo) and `bearer: account`; the split is stored per payment reference, and
+the earning is recorded with that fee and `settledByProvider`, ledger state `Settled`, outside pending/available/paid-out.
 | GET | `/api/platform/plans` | `[{ id, product, code, name, priceMinor, currency, interval, limits, features, isDefault, isHidden, sortOrder, activeSubscribers }]` |
 | POST | `/api/platform/plans` | `{ product, code, name, priceMinor, isHidden, sortOrder, limits, features }` → plan |
 | PUT | `/api/platform/plans/{id}` | same body (product and code can't change) → plan. Edits apply to new subscriptions and renewals only (see below); the default free plan can't be hidden. |

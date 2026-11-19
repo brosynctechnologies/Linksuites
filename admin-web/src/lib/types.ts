@@ -187,7 +187,8 @@ export interface PaymentRow {
   provider: "paystack" | "opay" | (string & {});
 }
 
-export type PayoutStatus = "Requested" | "Paid" | "Rejected";
+/** Processing: Finance approved it and Paystack is sending it. Failed: the Paystack transfer failed or was reversed (money back to available). */
+export type PayoutStatus = "Requested" | "Processing" | "Paid" | "Failed" | "Rejected";
 
 export interface PayoutRow {
   id: string;
@@ -204,6 +205,21 @@ export interface PayoutRow {
   businessName: string;
   currency: string;
   academyName?: string | null;
+  /** The current Paystack transfer attempt's reference. */
+  transferReference?: string | null;
+  /** Paystack's word on the transfer: pending, otp, success, failed, reversed... */
+  transferStatus?: string | null;
+  failureReason?: string | null;
+  transferAttempts?: number;
+  /** The bank confirmed the account name (needed for an automatic transfer). */
+  accountVerified?: boolean;
+}
+
+/** How payouts work right now (config switches on the API). */
+export interface PayoutSettings {
+  automaticTransfers: boolean;
+  directSettlement: boolean;
+  canVerify: boolean;
 }
 
 export interface PlanDto {
