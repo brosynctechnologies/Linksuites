@@ -16,6 +16,8 @@ public static partial class Slugs
         "api", "o", "login", "signup", "dashboard", "pricing", "admin", "app", "www", "static",
         "_next", "uploads", "about", "terms", "privacy", "help", "support", "b", "i", "q", "invite", "create",
         "parent", "student", "demo", "forgot-password", "reset-password", "account",
+        // Wave 4 (PWA): the installed apps' start page (school-web, care-web, course-web, property-web).
+        "start",
     };
 
     public static string From(string text)

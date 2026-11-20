@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
 import { Atkinson_Hyperlegible_Next, Zilla_Slab } from "next/font/google";
 import { SupportBanner } from "@/components/support-banner";
 import { APP_NAME, DEFAULT_DESCRIPTION, DEFAULT_TITLE, SITE_URL, baseOpenGraph, baseTwitter } from "@/lib/site";
+import { PwaSetup } from "@/components/pwa";
 import "./globals.css";
 
 /** Zilla Slab: titles, the school name, grades and figures (a textbook-cover slab). */
@@ -27,6 +29,7 @@ export const metadata: Metadata = {
   title: { default: DEFAULT_TITLE, template: `%s | ${APP_NAME}` },
   description: DEFAULT_DESCRIPTION,
   applicationName: APP_NAME,
+  appleWebApp: { capable: true, title: APP_NAME, statusBarStyle: "default" },
   alternates: { canonical: "/" },
   robots: { index: true, follow: true },
   openGraph: { ...baseOpenGraph, url: "/", title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION },
@@ -46,6 +49,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col bg-ruled font-sans text-ink">
         <SupportBanner />
         {children}
+        <Suspense fallback={null}>
+          <PwaSetup />
+        </Suspense>
       </body>
     </html>
   );

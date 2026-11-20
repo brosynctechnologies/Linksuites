@@ -12,6 +12,7 @@ import { useApi } from "@/lib/use-api";
 import { depositsOffReason, useBusiness, useServices } from "@/lib/use-business";
 import { AccountActivity } from "@/components/account-activity";
 import { ChangePassword } from "@/components/change-password";
+import { PushNotifications } from "@/components/pwa";
 import { CopyButton } from "@/components/copy-button";
 import {
   ApiErrorView,
@@ -47,6 +48,7 @@ export default function SettingsPage() {
         <PageHeader title="Settings" />
         <NoAccess />
         <div className="mt-6 max-w-3xl space-y-6">
+          <PushNotifications description="Get new bookings and changes on this device as notifications, even when BookLink is closed." />
           <ChangePassword />
           <AccountActivity tz={business?.timezone} />
         </div>

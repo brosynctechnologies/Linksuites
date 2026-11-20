@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Saas.Application.Billing;
 using Saas.Domain.Core;
 
 namespace Saas.Application.Common;
@@ -12,7 +13,7 @@ public sealed record UnreadCountDto(int Count);
 /// The in-app notification feed (the bell). Products call <see cref="Add"/> next to the email they queue; the row is saved with the
 /// caller's SaveChanges. Signed-in users read and mark their own notifications through the /api/me/notifications endpoints.
 /// </summary>
-public sealed class InAppNotifications(IAppDbContext db, ITenantContext tenant, ICurrentUser user, TimeProvider clock)
+public sealed class InAppNotifications(IAppDbContext db, ITenantContext tenant, ICurrentUser user, TimeProvider clock, NotificationQueue outbox)
 {
     public const int PageSize = 20;
     /// <summary>Every staff-side notification links into the staff app, whose pages all start with this.</summary>
@@ -22,12 +23,18 @@ public sealed class InAppNotifications(IAppDbContext db, ITenantContext tenant, 
     public static readonly TimeSpan ReadRetention = TimeSpan.FromDays(90);
     public static readonly TimeSpan UnreadRetention = TimeSpan.FromDays(180);
 
-    /// <summary>Adds one notification for one user. Saved by the caller's SaveChangesAsync, in the same transaction as the event.</summary>
-    public void Add(Guid userId, string product, string kind, string title, string body, string link, Guid? tenantId = null) =>
+    /// <summary>
+    /// Adds one notification for one user. Saved by the caller's SaveChangesAsync, in the same transaction as the event. Wave 4: it is
+    /// also queued as a Web Push, which reaches the user's phone if they turned notifications on in that product's app.
+    /// </summary>
+    public void Add(Guid userId, string product, string kind, string title, string body, string link, Guid? tenantId = null)
+    {
         db.UserNotifications.Add(new UserNotification
         {
             UserId = userId, TenantId = tenantId, Product = product, Kind = kind, Title = title, Body = body, Link = link,
         });
+        outbox.Push(userId, product, title, body, link);
+    }
 
     /// <summary>
     /// The signed-in user's notifications. A business token (support view included, which carries the owner's user id)

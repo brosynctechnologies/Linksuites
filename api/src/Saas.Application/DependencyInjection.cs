@@ -23,6 +23,7 @@ public static class DependencyInjection
         services.AddScoped<PlanService>();
         services.AddScoped<NotificationQueue>();
         services.AddScoped<InAppNotifications>();
+        services.AddScoped<PushSubscriptions>();
         services.AddScoped<BillingService>();
         services.AddScoped<PlanPaymentJobs>();
         services.AddScoped<PlanReminderJobs>();

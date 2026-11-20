@@ -6,6 +6,7 @@ import { careRoleLabel } from "@/lib/roles";
 import { AccountActivity } from "@/components/account-activity";
 import { SignatureCard } from "@/components/branding";
 import { ChangePassword } from "@/components/change-password";
+import { PushNotifications } from "@/components/pwa";
 import { Card, PageHeader, SectionTitle } from "@/components/ui";
 
 export default function AccountPage() {
@@ -40,6 +41,7 @@ export default function AccountPage() {
         </dl>
       </Card>
       <SignatureCard hasSignature={me.hasSignature} canEdit={!access.readOnly} />
+      <PushNotifications />
       {!access.readOnly && <ChangePassword />}
       {access.isDirector && <AccountActivity />}
     </div>

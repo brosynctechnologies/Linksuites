@@ -23,6 +23,7 @@ import {
 } from "@/components/ui";
 import { AccountActivity } from "@/components/account-activity";
 import { ChangePassword } from "@/components/change-password";
+import { PushNotifications } from "@/components/pwa";
 import { ImageIcon } from "@/components/icons";
 import { CustomDomainSection } from "@/components/custom-domain";
 
@@ -236,6 +237,7 @@ export default function SettingsPage() {
       {data && <SettingsForm key={data.id} store={data} onSaved={setData} />}
       <div className="mt-8 space-y-8">
         {data && <CustomDomainSection />}
+        <PushNotifications description="Get new orders on this phone as notifications, even when OrderLink is closed." />
         <ChangePassword />
         <AccountActivity />
       </div>

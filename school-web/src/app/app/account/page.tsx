@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/auth";
 import { roleLabel } from "@/lib/roles";
 import { AccountActivity } from "@/components/account-activity";
 import { ChangePassword } from "@/components/change-password";
+import { PushNotifications } from "@/components/pwa";
 import { Card, PageHeader, SectionTitle } from "@/components/ui";
 
 export default function AccountPage() {
@@ -25,6 +26,7 @@ export default function AccountPage() {
           <dd className="text-ink">{roleLabel(auth?.tenant?.role)}</dd>
         </dl>
       </Card>
+      <PushNotifications />
       <ChangePassword />
       {isOwner && <AccountActivity />}
     </div>

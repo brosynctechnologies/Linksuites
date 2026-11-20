@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
 import { Fraunces, Hanken_Grotesk } from "next/font/google";
 import { SupportBanner } from "@/components/support-banner";
 import { APP_NAME, SITE_URL } from "@/lib/config";
 import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, baseOpenGraph, baseTwitter } from "@/lib/site";
+import { PwaSetup } from "@/components/pwa";
 import "./globals.css";
 
 /** Display serif for titles, document headings and big amounts (optical size follows font size). */
@@ -25,6 +27,7 @@ export const metadata: Metadata = {
   title: { default: DEFAULT_TITLE, template: `%s | ${APP_NAME}` },
   description: DEFAULT_DESCRIPTION,
   applicationName: APP_NAME,
+  appleWebApp: { capable: true, title: APP_NAME, statusBarStyle: "default" },
   alternates: { canonical: "/" },
   robots: { index: true, follow: true },
   openGraph: { ...baseOpenGraph, url: "/", title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION },
@@ -44,6 +47,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col bg-desk font-sans text-graphite">
         <SupportBanner />
         {children}
+        <Suspense fallback={null}>
+          <PwaSetup />
+        </Suspense>
       </body>
     </html>
   );

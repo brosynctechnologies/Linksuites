@@ -26,6 +26,7 @@ import type { BillingDto, BusinessDto, DocumentTitle, FontStyle, HeaderLine, Log
 import { TemplatePicker } from "@/components/template-picker";
 import { AccountActivity } from "@/components/account-activity";
 import { ChangePassword } from "@/components/change-password";
+import { PushNotifications } from "@/components/pwa";
 import { businessForPreview } from "@/components/doc-view-parts";
 import { useFocusFirstInvalid } from "@/components/form-focus";
 import { InvoicePreview, type PreviewDoc } from "@/components/invoice-preview";
@@ -66,6 +67,7 @@ export default function SettingsPage() {
         <PageHeader title="Settings" back="/app/more" />
         <NoAccess />
         <div className="mt-6 max-w-3xl space-y-6">
+          <PushNotifications />
           <ChangePassword />
           <AccountActivity />
         </div>

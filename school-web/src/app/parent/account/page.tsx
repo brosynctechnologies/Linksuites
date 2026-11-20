@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { ChangePassword } from "@/components/change-password";
+import { PushNotifications } from "@/components/pwa";
 import { Button, Card, ErrorBox, Input, Notice, PageHeader, PageLoader, SectionTitle } from "@/components/ui";
 import { api } from "@/lib/api";
 import { getAuth, patchAuth, useAuth } from "@/lib/auth";
@@ -41,6 +42,7 @@ export default function ParentAccountPage() {
           </ul>
         )}
       </Card>
+      <PushNotifications description="Get results, fees, attendance and messages from the school as notifications on this phone." />
       <ChangePassword />
     </div>
   );

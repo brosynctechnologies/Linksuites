@@ -166,6 +166,13 @@ public sealed class StorefrontService(
                 ["link"] = $"{urls.WebBaseUrl.TrimEnd('/')}/dashboard/orders/{order.Id}",
             }, store.TenantId);
         }
+        // Wave 4 (PWA): owners who turned notifications on in the OrderLink app get the new order on their phone as well.
+        var ownerIds = !notifications.PushEnabled ? []
+            : await db.Memberships.Where(m => m.Role == MemberRole.Owner && m.Status == MembershipStatus.Active)
+                .Select(m => m.UserId).Distinct().ToListAsync(ct);
+        foreach (var ownerId in ownerIds)
+            notifications.Push(ownerId, Products.WhatsAppOrders, $"New order #{order.Number}",
+                $"{order.CustomerName} · {Money.Format(order.TotalMinor, order.Currency)}", $"/dashboard/orders/{order.Id}");
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);

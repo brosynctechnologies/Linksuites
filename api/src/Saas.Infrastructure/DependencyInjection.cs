@@ -69,6 +69,17 @@ public static class DependencyInjection
         if (config.GetValue("Notifications:DispatcherEnabled", true))
             services.AddHostedService<NotificationDispatcher>();
 
+        // Wave 4 (PWA): Web Push. Off (nothing queued, no dispatcher) until both VAPID keys are set.
+        var webPush = config.GetSection(WebPushOptions.Section).Get<WebPushOptions>() ?? new WebPushOptions();
+        webPush.Validate();
+        services.AddSingleton(webPush.Enabled ? new PushSettings(true, webPush.PublicKey!.Trim()) : PushSettings.Disabled);
+        if (webPush.Enabled)
+        {
+            services.AddSingleton(webPush);
+            services.AddHttpClient<IWebPushSender, WebPushSender>();
+            if (webPush.DispatcherEnabled) services.AddHostedService<PushDispatcher>();
+        }
+
         services.Configure<StorageOptions>(config.GetSection(StorageOptions.Section));
         if (string.Equals(config[$"{StorageOptions.Section}:Provider"], "R2", StringComparison.OrdinalIgnoreCase))
         {

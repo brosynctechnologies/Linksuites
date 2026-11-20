@@ -11,6 +11,7 @@ import { useApi } from "@/lib/use-api";
 import type { AcademyDto, UpdateAcademyRequest } from "@/lib/types";
 import { AccountActivity } from "@/components/account-activity";
 import { ChangePassword } from "@/components/change-password";
+import { PushNotifications } from "@/components/pwa";
 import { CopyButton } from "@/components/copy-button";
 import { ImageUpload, MarkdownField } from "@/components/editors";
 import { ApiErrorView, Button, Card, ErrorBox, Input, NoAccess, Notice, PageHeader, PageLoader, SectionTitle, cx } from "@/components/ui";
@@ -28,6 +29,7 @@ export default function AcademySettingsPage() {
         <PageHeader title="Academy settings" back="/studio/more" />
         <NoAccess text="Only the owner and admins change academy settings." />
         <div className="mt-6 space-y-6">
+          <PushNotifications />
           <ChangePassword />
           <AccountActivity />
         </div>
