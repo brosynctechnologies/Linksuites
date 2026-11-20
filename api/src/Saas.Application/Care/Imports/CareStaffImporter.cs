@@ -89,6 +89,8 @@ public sealed class CareStaffImporter(IAppDbContext db, CareAccess access, CareS
             "doctor" => (MemberRole.Staff, ClinicalRole.Doctor),
             "nurse" => (MemberRole.Staff, ClinicalRole.Nurse),
             "front desk" or "frontdesk" or "receptionist" => (MemberRole.Staff, ClinicalRole.FrontDesk),
+            "lab scientist" or "lab" or "laboratory scientist" => (MemberRole.Staff, ClinicalRole.LabScientist),
+            "pharmacist" => (MemberRole.Staff, ClinicalRole.Pharmacist),
             "cashier" => (MemberRole.Accountant, null),
             _ => null,
         };

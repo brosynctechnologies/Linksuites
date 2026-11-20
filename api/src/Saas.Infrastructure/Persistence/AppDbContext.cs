@@ -215,6 +215,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Saas.Domain.Care.DischargeSummary> DischargeSummaries => Set<Saas.Domain.Care.DischargeSummary>();
     public DbSet<Saas.Domain.Care.PatientLink> PatientLinks => Set<Saas.Domain.Care.PatientLink>();
     public DbSet<Saas.Domain.Care.PatientInvite> PatientInvites => Set<Saas.Domain.Care.PatientInvite>();
+    public DbSet<Saas.Domain.Care.LabTest> LabTests => Set<Saas.Domain.Care.LabTest>();
+    public DbSet<Saas.Domain.Care.LabAnalyte> LabAnalytes => Set<Saas.Domain.Care.LabAnalyte>();
+    public DbSet<Saas.Domain.Care.LabResultValue> LabResultValues => Set<Saas.Domain.Care.LabResultValue>();
+    public DbSet<Saas.Domain.Care.DrugItem> DrugItems => Set<Saas.Domain.Care.DrugItem>();
+    public DbSet<Saas.Domain.Care.DrugBatch> DrugBatches => Set<Saas.Domain.Care.DrugBatch>();
+    public DbSet<Saas.Domain.Care.StockReceipt> StockReceipts => Set<Saas.Domain.Care.StockReceipt>();
+    public DbSet<Saas.Domain.Care.StockMovement> StockMovements => Set<Saas.Domain.Care.StockMovement>();
+    public DbSet<Saas.Domain.Care.Dispensing> Dispensings => Set<Saas.Domain.Care.Dispensing>();
 
     /// <summary>Read by the global query filters on every query; null means "no tenant", which matches no rows.</summary>
     public Guid? CurrentTenantId => tenant.TenantId;
@@ -1353,6 +1361,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(10);
             e.Property(x => x.ResultFileKey).HasMaxLength(300);
             e.Property(x => x.ResultFileType).HasMaxLength(40);
+            // Wave 4: lab orders from the catalogue, with their sample number; the lab worklist reads open orders by status.
+            e.HasIndex(x => new { x.TenantId, x.Status, x.CreatedAt });
+            e.HasOne<Saas.Domain.Care.LabTest>().WithMany().HasForeignKey(x => x.LabTestId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(x => x.SampleNumber).HasMaxLength(20);
         });
         b.Entity<Saas.Domain.Care.TestResultAmendment>(e =>
         {
@@ -1489,6 +1501,81 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.Property(x => x.Email).HasMaxLength(200);
             e.Property(x => x.Phone).HasMaxLength(20);
         });
+        b.Entity<Saas.Domain.Care.LabTest>(e =>
+        {
+            // Wave 4: the lab catalogue (not clinical: the same for every patient).
+            e.HasIndex(x => new { x.TenantId, x.Name }).IsUnique();
+            e.HasOne<Saas.Domain.Care.PriceItem>().WithMany().HasForeignKey(x => x.PriceItemId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(x => x.Name).HasMaxLength(120);
+            e.Property(x => x.SampleType).HasMaxLength(60);
+            e.HasMany(x => x.Analytes).WithOne().HasForeignKey(x => x.LabTestId).OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<Saas.Domain.Care.LabAnalyte>(e =>
+        {
+            e.HasIndex(x => x.LabTestId);
+            e.Property(x => x.Name).HasMaxLength(80);
+            e.Property(x => x.Unit).HasMaxLength(30);
+            e.Property(x => x.Ranges).HasColumnType("jsonb")
+                .HasConversion(JsonConverter<List<Saas.Domain.Care.LabRange>>(), JsonComparer<List<Saas.Domain.Care.LabRange>>());
+        });
+        b.Entity<Saas.Domain.Care.LabResultValue>(e =>
+        {
+            // Wave 4: structured lab results. Numbers are plain (like vital signs); a text value is ClinicalText ciphertext (unbounded).
+            e.HasIndex(x => new { x.TenantId, x.TestRequestId });
+            e.HasOne<Saas.Domain.Care.TestRequest>().WithMany().HasForeignKey(x => x.TestRequestId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Saas.Domain.Care.Patient>().WithMany().HasForeignKey(x => x.PatientId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(x => x.Name).HasMaxLength(80);
+            e.Property(x => x.Unit).HasMaxLength(30);
+            e.Property(x => x.NumericValue).HasPrecision(12, 4);
+            e.Property(x => x.Low).HasPrecision(12, 4);
+            e.Property(x => x.High).HasPrecision(12, 4);
+            e.Property(x => x.CriticalLow).HasPrecision(12, 4);
+            e.Property(x => x.CriticalHigh).HasPrecision(12, 4);
+            e.Property(x => x.Flag).HasConversion<string>().HasMaxLength(12);
+        });
+        b.Entity<Saas.Domain.Care.DrugItem>(e =>
+        {
+            // Wave 4: pharmacy stock items; one item per price-list item, so a prescription item finds its stock.
+            e.HasIndex(x => new { x.TenantId, x.Name }).IsUnique();
+            e.HasIndex(x => new { x.TenantId, x.PriceItemId }).IsUnique().HasFilter("price_item_id IS NOT NULL");
+            e.HasOne<Saas.Domain.Care.PriceItem>().WithMany().HasForeignKey(x => x.PriceItemId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(x => x.Name).HasMaxLength(120);
+            e.Property(x => x.Form).HasMaxLength(40);
+            e.Property(x => x.Unit).HasMaxLength(20);
+        });
+        b.Entity<Saas.Domain.Care.DrugBatch>(e =>
+        {
+            // The backstop behind the per-item stock lock: a batch never goes below zero.
+            e.ToTable(t => t.HasCheckConstraint("ck_drug_batches_on_hand", "quantity_on_hand >= 0"));
+            e.HasIndex(x => new { x.TenantId, x.DrugItemId, x.ExpiresOn });
+            e.HasOne<Saas.Domain.Care.DrugItem>().WithMany().HasForeignKey(x => x.DrugItemId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Saas.Domain.Care.StockReceipt>().WithMany().HasForeignKey(x => x.ReceiptId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(x => x.BatchNumber).HasMaxLength(60);
+        });
+        b.Entity<Saas.Domain.Care.StockReceipt>(e =>
+        {
+            e.HasIndex(x => new { x.TenantId, x.ReceivedOn });
+            e.Property(x => x.Supplier).HasMaxLength(120);
+            e.Property(x => x.Reference).HasMaxLength(60);
+        });
+        b.Entity<Saas.Domain.Care.StockMovement>(e =>
+        {
+            e.HasIndex(x => new { x.TenantId, x.At });
+            e.HasIndex(x => new { x.TenantId, x.DrugItemId, x.At });
+            e.HasIndex(x => x.PrescriptionItemId);
+            e.HasOne<Saas.Domain.Care.DrugItem>().WithMany().HasForeignKey(x => x.DrugItemId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Saas.Domain.Care.DrugBatch>().WithMany().HasForeignKey(x => x.DrugBatchId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Saas.Domain.Care.Dispensing>().WithMany().HasForeignKey(x => x.DispensingId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Saas.Domain.Care.PrescriptionItem>().WithMany().HasForeignKey(x => x.PrescriptionItemId).OnDelete(DeleteBehavior.Restrict);
+            e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(12);
+            e.Property(x => x.Reason).HasMaxLength(300);
+        });
+        b.Entity<Saas.Domain.Care.Dispensing>(e =>
+        {
+            e.HasIndex(x => new { x.TenantId, x.PrescriptionId });
+            e.HasOne<Saas.Domain.Care.Prescription>().WithMany().HasForeignKey(x => x.PrescriptionId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<Saas.Domain.Care.Patient>().WithMany().HasForeignKey(x => x.PatientId).OnDelete(DeleteBehavior.Restrict);
+        });
         b.Entity<ExchangeRate>(e =>
         {
             e.HasIndex(x => new { x.AsOf, x.Currency }).IsUnique();
@@ -1517,6 +1604,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             DocumentCounter.CarePatient => "UPDATE clinic_profiles SET next_patient_number = next_patient_number + 1 WHERE tenant_id = {0} RETURNING next_patient_number - 1 AS \"Value\"",
             DocumentCounter.CareBill => "UPDATE clinic_profiles SET next_bill_number = next_bill_number + 1 WHERE tenant_id = {0} RETURNING next_bill_number - 1 AS \"Value\"",
             DocumentCounter.CareReceipt => "UPDATE clinic_profiles SET next_receipt_number = next_receipt_number + 1 WHERE tenant_id = {0} RETURNING next_receipt_number - 1 AS \"Value\"",
+            DocumentCounter.CareSample => "UPDATE clinic_profiles SET next_sample_number = next_sample_number + 1 WHERE tenant_id = {0} RETURNING next_sample_number - 1 AS \"Value\"",
             _ => throw new ArgumentOutOfRangeException(nameof(counter)),
         };
         var numbers = await Database.SqlQueryRaw<long>(sql, tenantId).ToListAsync(ct);

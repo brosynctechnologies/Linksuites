@@ -4,7 +4,12 @@ using Saas.Domain.Care;
 
 namespace Saas.Application.Care;
 
-public sealed record CreateTestRequest(Guid? PatientId, Guid? ConsultationId, Guid? AdmissionId, TestKind? Kind, string? Description, Guid? PriceItemId);
+/// <summary>
+/// A test request. Wave 4: with <c>LabTestId</c> (a test on the lab catalogue) the kind defaults to Lab, the description to the test's name
+/// and the price item to the test's own.
+/// </summary>
+public sealed record CreateTestRequest(Guid? PatientId, Guid? ConsultationId, Guid? AdmissionId, TestKind? Kind, string? Description, Guid? PriceItemId,
+    Guid? LabTestId = null);
 
 public sealed record RecordResultRequest(string? Text);
 
@@ -12,7 +17,7 @@ public sealed record TestRequestDto(
     Guid Id, Guid PatientId, Guid? ConsultationId, Guid? AdmissionId, Guid RequestedBy, string RequestedByName, TestKind Kind, string Description,
     Guid? PriceItemId, TestStatus Status, string? ResultText, bool HasFile, Guid? ResultedBy, string? ResultedByName, DateTimeOffset? ResultedAt,
     DateTimeOffset CreatedAt, Guid? ReviewedBy = null, string? ReviewedByName = null, DateTimeOffset? ReviewedAt = null,
-    DateTimeOffset? AmendedAt = null, IReadOnlyList<TestSupersededDto>? Superseded = null);
+    DateTimeOffset? AmendedAt = null, IReadOnlyList<TestSupersededDto>? Superseded = null, Guid? LabTestId = null);
 
 /// <summary>
 /// Wave 1: an earlier result of the test that was entered in error, for clinical staff only: what it said, who recorded and reviewed it, and
@@ -131,22 +136,30 @@ public sealed class TestService(
     {
         var caller = await access.CallerAsync(ct);
         CareOrders.EnsureDoctor(access, caller, DoctorsOnly);
-        if (r.Kind is not { } kind || !Enum.IsDefined(kind)) throw BadRequestException.Field("kind", "Choose lab, imaging or other.");
-        var description = CareOrders.Required("description", r.Description, MaxDescriptionLength, "Write the test you're requesting.");
+        // Wave 4: an order from the lab catalogue fills in the kind, the description and the price item from the catalogue test.
+        var lab = r.LabTestId is { } labTestId
+            ? await db.LabTests.AsNoTracking().Where(l => l.Id == labTestId && l.Active).Select(l => new { l.Name, l.PriceItemId }).FirstOrDefaultAsync(ct)
+              ?? throw BadRequestException.Field("labTestId", "That test isn't on the lab catalogue.")
+            : null;
+        var requestedKind = r.Kind ?? (lab is null ? null : TestKind.Lab);
+        if (requestedKind is not { } kind || !Enum.IsDefined(kind)) throw BadRequestException.Field("kind", "Choose lab, imaging or other.");
+        if (lab is not null && kind != TestKind.Lab) throw BadRequestException.Field("kind", "A test from the lab catalogue is a lab test.");
+        var description = CareOrders.Required("description", r.Description ?? lab?.Name, MaxDescriptionLength, "Write the test you're requesting.");
+        var priceItemId = r.PriceItemId ?? lab?.PriceItemId;
         var context = await CareOrders.ResolveAsync(db, caller, r.PatientId, r.ConsultationId, r.AdmissionId, clock.GetUtcNow(), ct);
-        await CareOrders.EnsurePriceItemAsync(db, r.PriceItemId, "priceItemId", ct);
+        await CareOrders.EnsurePriceItemAsync(db, priceItemId, "priceItemId", ct);
 
         await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         await CareOrders.LockAdmissionAsync(db, TenantId, context, ct); // an admission test is serialised with discharge, as prescriptions are
         var test = new TestRequest
         {
             TenantId = TenantId, PatientId = context.PatientId, ConsultationId = context.ConsultationId, AdmissionId = context.AdmissionId,
-            RequestedBy = caller.UserId, Kind = kind, Description = text.Protect(description), PriceItemId = r.PriceItemId,
+            RequestedBy = caller.UserId, Kind = kind, Description = text.Protect(description), PriceItemId = priceItemId, LabTestId = r.LabTestId,
         };
         db.TestRequests.Add(test);
         await db.SaveChangesAsync(ct);
         // Tests are charged whether or not the clinic dispenses drugs; the line shows the price item's name.
-        if (r.PriceItemId is { } itemId && await CareOrders.BillAsync(billing, context, ct) is { } billId)
+        if (priceItemId is { } itemId && await CareOrders.BillAsync(billing, context, ct) is { } billId)
         {
             await billing.AddLineAsync(billId, itemId, 1, test.Id.ToString(), ct);
             await CareOrders.BillDueIfVisitDoneAsync(db, notices, context, billId, ct);
@@ -165,7 +178,8 @@ public sealed class TestService(
     public async Task<TestResultDto> RecordResultAsync(Guid id, string? resultText, Upload? file, CancellationToken ct)
     {
         var caller = await access.CallerAsync(ct);
-        access.EnsureClinical(caller);
+        // Wave 4: a lab scientist records a lab test's result too (an analyser printout, say); only lab tests (403 for any other below).
+        if (!caller.IsLabScientist) access.EnsureClinical(caller);
         var body = CareOrders.Optional("text", resultText, MaxResultLength);
         if (body is null && file is null) throw BadRequestException.Field("text", "Write the result or attach the result file.");
         var stored = file is null ? null : await ReadFileAsync(file, ct);
@@ -173,6 +187,7 @@ public sealed class TestService(
         await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         await db.LockAsync(LockKey(TenantId, id), ct);
         var test = await db.TestRequests.FirstOrDefaultAsync(t => t.Id == id, ct) ?? throw new NotFoundException("Test");
+        if (caller.IsLabScientist && test.Kind != TestKind.Lab && test.LabTestId is null) throw new ForbiddenException(CareAccess.ClinicalRefused);
         if (test.Status == TestStatus.Resulted) throw new ConflictException(AlreadyResulted, "test_resulted");
 
         string? key = null;
@@ -191,6 +206,7 @@ public sealed class TestService(
         test.ResultFileType = stored?.ContentType;
         test.ResultedBy = caller.UserId;
         test.ResultedAt = now;
+        test.FirstResultedAt ??= now;
 
         // Post-build (user decision): nobody is told yet. The patient hears "a new result is ready" when a doctor reviews it (ReviewAsync).
         try
@@ -259,6 +275,9 @@ public sealed class TestService(
         test.ReviewedBy = null;
         test.ReviewedAt = null;
         test.AmendedAt = now;
+        // Wave 4: a lab test's structured values belong to the result being replaced; the corrected result is the text and file given here.
+        await db.LabResultValues.Where(v => v.TestRequestId == test.Id && v.SupersededAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(v => v.SupersededAt, (DateTimeOffset?)now), ct);
         db.AuditLogs.Add(new Saas.Domain.Core.AuditLog
         {
             TenantId = TenantId, ActorId = caller.UserId, Action = "care.result_amended", EntityType = nameof(TestRequest), EntityId = test.Id.ToString(),
@@ -304,6 +323,7 @@ public sealed class TestService(
         now = now.AddTicks(-(now.Ticks % 10)); // Postgres keeps microseconds
         test.ReviewedBy = caller.UserId;
         test.ReviewedAt = now;
+        test.FirstReviewedAt ??= now;
         db.AuditLogs.Add(new Saas.Domain.Core.AuditLog
         {
             TenantId = TenantId, ActorId = caller.UserId, Action = "care.result_reviewed", EntityType = nameof(TestRequest), EntityId = test.Id.ToString(),
@@ -431,7 +451,7 @@ public sealed class TestService(
         new(t.Id, t.PatientId, t.ConsultationId, t.AdmissionId, t.RequestedBy, names.GetValueOrDefault(t.RequestedBy, ""), t.Kind, description,
             t.PriceItemId, t.Status, result, t.ResultFileKey is not null, t.ResultedBy,
             t.ResultedBy is { } by ? names.GetValueOrDefault(by) : null, t.ResultedAt, t.CreatedAt,
-            t.ReviewedBy, t.ReviewedBy is { } rb ? names.GetValueOrDefault(rb) : null, t.ReviewedAt, t.AmendedAt, []);
+            t.ReviewedBy, t.ReviewedBy is { } rb ? names.GetValueOrDefault(rb) : null, t.ReviewedAt, t.AmendedAt, [], t.LabTestId);
 
     /// <summary>Serialises recording one test's result, so two results can't both land.</summary>
     public static long LockKey(Guid tenantId, Guid testId) =>

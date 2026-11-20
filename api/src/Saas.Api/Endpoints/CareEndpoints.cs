@@ -202,6 +202,45 @@ public static class CareEndpoints
             return file.RedirectUrl is { } url ? Results.Redirect(url) : Results.Stream(file.Content!, file.ContentType);
         }).AllowAnonymous().ExcludeFromDescription().WithTags("Care");
 
+        // Wave 4, lab: every member reads the catalogue (no patient data); leadership and lab scientists edit it. The worklist, one order
+        // (a logged department read), sample collection, the label (logged) and structured results are the lab's: clinical staff and lab
+        // scientists. Turnaround: the lab and leadership. Roles are checked in LabService through CareAccess.
+        care.MapGet("/lab/tests", (bool? active, LabService s, CancellationToken ct) => s.ListTestsAsync(active, ct));
+        care.MapPost("/lab/tests", (SaveLabTestRequest r, LabService s, CancellationToken ct) => s.CreateTestAsync(r, ct));
+        care.MapPut("/lab/tests/{id:guid}", (Guid id, SaveLabTestRequest r, LabService s, CancellationToken ct) => s.UpdateTestAsync(id, r, ct));
+        care.MapGet("/lab/worklist", (LabStage? stage, LabService s, CancellationToken ct) => s.WorklistAsync(stage, ct));
+        care.MapGet("/lab/orders/{id:guid}", (Guid id, LabService s, CancellationToken ct) => s.GetOrderAsync(id, ct));
+        care.MapPost("/lab/orders/{id:guid}/collect", (Guid id, LabService s, CancellationToken ct) => s.CollectAsync(id, ct));
+        care.MapGet("/lab/orders/{id:guid}/label.pdf", async (Guid id, LabService s, HttpContext http, CancellationToken ct) =>
+        {
+            var (pdf, name) = await s.LabelAsync(id, ct);
+            http.Response.Headers.CacheControl = "private, no-store";
+            return Results.File(pdf, "application/pdf", name);
+        });
+        care.MapPost("/lab/orders/{id:guid}/results", (Guid id, EnterLabResultsRequest r, LabService s, CancellationToken ct) => s.EnterResultsAsync(id, r, ct));
+        care.MapPost("/lab/orders/{id:guid}/amend", (Guid id, AmendLabResultsRequest r, LabService s, CancellationToken ct) => s.AmendResultsAsync(id, r, ct));
+        care.MapGet("/lab/turnaround", (DateOnly? from, DateOnly? to, LabService s, CancellationToken ct) => s.TurnaroundAsync(from, to, ct));
+
+        // Wave 4, pharmacy stock: pharmacists and leadership manage items, receipts and counts and read the stock reports and alerts (stock,
+        // never a patient). Dispensing is for pharmacists and clinical staff: the queue (no drug names), one prescription (a logged department
+        // read) and the dispense itself (first expiry first out, under the item locks). Roles are checked in PharmacyService.
+        care.MapGet("/pharmacy/items", (bool? active, PharmacyService s, CancellationToken ct) => s.ItemsAsync(active, ct));
+        care.MapPost("/pharmacy/items", (SaveStockItemRequest r, PharmacyService s, CancellationToken ct) => s.CreateItemAsync(r, ct));
+        care.MapGet("/pharmacy/items/{id:guid}", (Guid id, PharmacyService s, CancellationToken ct) => s.ItemAsync(id, ct));
+        care.MapPut("/pharmacy/items/{id:guid}", (Guid id, SaveStockItemRequest r, PharmacyService s, CancellationToken ct) => s.UpdateItemAsync(id, r, ct));
+        care.MapGet("/pharmacy/items/{id:guid}/batches", (Guid id, bool? all, PharmacyService s, CancellationToken ct) => s.BatchesAsync(id, all == true, ct));
+        care.MapGet("/pharmacy/receipts", (PharmacyService s, CancellationToken ct) => s.ReceiptsAsync(ct));
+        care.MapPost("/pharmacy/receipts", (ReceiveStockRequest r, PharmacyService s, CancellationToken ct) => s.ReceiveAsync(r, ct));
+        care.MapPost("/pharmacy/counts", (StockCountRequest r, PharmacyService s, CancellationToken ct) => s.CountAsync(r, ct));
+        care.MapGet("/pharmacy/movements", (DateOnly? from, DateOnly? to, Guid? itemId, PharmacyService s, CancellationToken ct) =>
+            s.MovementsAsync(from, to, itemId, ct));
+        care.MapGet("/pharmacy/expiring", (int? days, PharmacyService s, CancellationToken ct) => s.ExpiringAsync(days, ct));
+        care.MapGet("/pharmacy/alerts", (PharmacyService s, CancellationToken ct) => s.AlertsAsync(ct));
+        care.MapGet("/pharmacy/queue", (PharmacyService s, CancellationToken ct) => s.QueueAsync(ct));
+        care.MapGet("/pharmacy/prescriptions/{id:guid}", (Guid id, PharmacyService s, CancellationToken ct) => s.PrescriptionAsync(id, ct));
+        care.MapPost("/pharmacy/prescriptions/{id:guid}/dispense", (Guid id, DispenseRequest r, PharmacyService s, CancellationToken ct) =>
+            s.DispenseAsync(id, r, ct));
+
         // Bills: everyone reads (clinical references only for clinical staff); the cashier or leadership adds manual lines and removes lines.
         // Wave 1: ?q= (bill number, patient number or name) and paging (?offset=&limit=, at most 200 a page).
         care.MapGet("/bills", (Guid? patientId, BillStatus? status, string? q, int? offset, int? limit, BillingService s, CancellationToken ct) =>

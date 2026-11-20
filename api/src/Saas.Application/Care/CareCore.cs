@@ -56,7 +56,8 @@ public static class CareStaff
         MemberRole.Accountant => "Cashier",
         MemberRole.Staff => clinicalRole switch
         {
-            ClinicalRole.Doctor => "Doctor", ClinicalRole.Nurse => "Nurse", ClinicalRole.FrontDesk => "Front desk", _ => "Staff",
+            ClinicalRole.Doctor => "Doctor", ClinicalRole.Nurse => "Nurse", ClinicalRole.FrontDesk => "Front desk",
+            ClinicalRole.LabScientist => "Lab scientist", ClinicalRole.Pharmacist => "Pharmacist", _ => "Staff",
         },
         _ => role.ToString(),
     };

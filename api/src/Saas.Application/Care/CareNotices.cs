@@ -47,13 +47,19 @@ public sealed class CareNotices(
     public const string ImportFinished = "care.import_finished";
     /// <summary>Task 15 fix round 1: a portal account was linked (or linked again) to a patient; to the medical director, in-app.</summary>
     public const string PortalLinked = "care.portal_linked";
+    /// <summary>Wave 4: a lab result with a critical value, to the doctor who ordered it (in-app), as critical vitals are.</summary>
+    public const string CriticalResult = "care.critical_result";
+    /// <summary>Wave 4: a stock item fell to its reorder level, to pharmacists and the medical director (in-app).</summary>
+    public const string LowStock = "care.low_stock";
+    /// <summary>Wave 4: batches expiring within 90 days, to pharmacists and the medical director (in-app, once per batch).</summary>
+    public const string NearExpiry = "care.near_expiry";
 
     /// <summary>Every kind this helper writes, for tests and the web app's icons.</summary>
     public static readonly IReadOnlyList<string> Kinds =
     [
         AppointmentBooked, AppointmentChanged, AppointmentReminder, ResultReady, SummaryReady, BillDue, PaymentReceived,
         PatientWaiting, CriticalVital, MissedDose, LowDeposit, EmergencyAccess, PaymentMismatch, PaymentUnverified, ImportFinished,
-        PatientInvite, PortalLinked,
+        PatientInvite, PortalLinked, CriticalResult, LowStock, NearExpiry,
     ];
 
     /// <summary>
@@ -73,6 +79,7 @@ public sealed class CareNotices(
     public static string ResultReadyFor(string firstName) => $"A new result for {firstName} is ready in your CareLink portal.";
     public static string SummaryReadyFor(string firstName) => $"{firstName}'s discharge summary is ready in your CareLink portal.";
     public const string CriticalVitalText = "A patient you are seeing has a critical vital sign.";
+    public const string CriticalResultText = "A lab test you ordered has a critical result.";
     public const string EmergencyAccessText = "Emergency access was used on a patient record.";
 
     private Guid TenantId => tenant.TenantId ?? throw new ForbiddenException();
@@ -170,6 +177,46 @@ public sealed class CareNotices(
     /// <summary>The fixed critical-vital sentence, with no value (in-app only).</summary>
     public void CriticalVitalFor(Guid doctorId) =>
         feed.Add(doctorId, Products.Care, CriticalVital, "Critical vital sign", CriticalVitalText, "/app/queue", TenantId);
+
+    /// <summary>
+    /// Wave 4: the fixed critical-result sentence, with no test or value, to the doctor who ordered the test (in-app only). The link opens
+    /// the doctor's results to review, where the result waits.
+    /// </summary>
+    public void CriticalResultFor(Guid doctorId) =>
+        feed.Add(doctorId, Products.Care, CriticalResult, "Critical lab result", CriticalResultText, "/app/results-to-review", TenantId);
+
+    /// <summary>
+    /// Wave 4: "{item} is low: {n} {unit} left (reorder at {level})." to the pharmacists and the medical director (in-app only). Stock
+    /// names a drug the pharmacy holds, never a patient.
+    /// </summary>
+    public async Task LowStockAsync(string itemName, int onHand, string unit, int reorderLevel, Guid itemId, CancellationToken ct)
+    {
+        var body = $"{itemName} is low: {onHand} {unit} left (reorder at {reorderLevel}).";
+        foreach (var userId in await PharmacyStaffAsync(ct))
+            feed.Add(userId, Products.Care, LowStock, "Low stock", body, $"/app/pharmacy/items/{itemId}", TenantId);
+    }
+
+    /// <summary>Wave 4: "{n} batches expire within 90 days." to the pharmacists and the medical director (in-app only).</summary>
+    public async Task NearExpiryAsync(int batches, int days, CancellationToken ct)
+    {
+        var body = batches == 1 ? $"1 batch expires within {days} days." : $"{batches} batches expire within {days} days.";
+        foreach (var userId in await PharmacyStaffAsync(ct))
+            feed.Add(userId, Products.Care, NearExpiry, "Stock near expiry", body, "/app/pharmacy/alerts", TenantId);
+    }
+
+    /// <summary>The clinic's active pharmacists and medical director.</summary>
+    private async Task<List<Guid>> PharmacyStaffAsync(CancellationToken ct)
+    {
+        var tenantId = TenantId;
+        var directors = await db.Memberships.AsNoTracking()
+            .Where(m => m.TenantId == tenantId && m.Status == MembershipStatus.Active && m.Role == MemberRole.Owner).Select(m => m.UserId).ToListAsync(ct);
+        var pharmacists = await (from p in db.CareStaffProfiles.AsNoTracking()
+                                 join m in db.Memberships.AsNoTracking() on p.MembershipId equals m.Id
+                                 where m.TenantId == tenantId && m.Status == MembershipStatus.Active && m.Role != MemberRole.Accountant
+                                       && p.ClinicalRole == ClinicalRole.Pharmacist
+                                 select p.UserId).ToListAsync(ct);
+        return directors.Concat(pharmacists).Distinct().ToList();
+    }
 
     /// <summary>"A dose for patient {number} on {ward} is overdue." to the ward's nurses (in-app only). Never the drug.</summary>
     public void MissedDoseFor(IEnumerable<Guid> nurses, string patientNumber, string wardName, Guid admissionId)

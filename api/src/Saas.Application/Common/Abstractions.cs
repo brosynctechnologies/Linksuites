@@ -222,6 +222,14 @@ public interface IAppDbContext
     DbSet<Saas.Domain.Care.DischargeSummary> DischargeSummaries { get; }
     DbSet<Saas.Domain.Care.PatientLink> PatientLinks { get; }
     DbSet<Saas.Domain.Care.PatientInvite> PatientInvites { get; }
+    DbSet<Saas.Domain.Care.LabTest> LabTests { get; }
+    DbSet<Saas.Domain.Care.LabAnalyte> LabAnalytes { get; }
+    DbSet<Saas.Domain.Care.LabResultValue> LabResultValues { get; }
+    DbSet<Saas.Domain.Care.DrugItem> DrugItems { get; }
+    DbSet<Saas.Domain.Care.DrugBatch> DrugBatches { get; }
+    DbSet<Saas.Domain.Care.StockReceipt> StockReceipts { get; }
+    DbSet<Saas.Domain.Care.StockMovement> StockMovements { get; }
+    DbSet<Saas.Domain.Care.Dispensing> Dispensings { get; }
 
     DatabaseFacade Database { get; }
     Microsoft.EntityFrameworkCore.ChangeTracking.ChangeTracker ChangeTracker { get; }
@@ -250,7 +258,7 @@ public interface IAppDbContext
 
 public sealed record Paged<T>(IReadOnlyList<T> Items, int Page, int PageSize, int Total);
 
-public enum DocumentCounter { Invoice, Quote, Receipt, SchoolInvoice, SchoolReceipt, CarePatient, CareBill, CareReceipt }
+public enum DocumentCounter { Invoice, Quote, Receipt, SchoolInvoice, SchoolReceipt, CarePatient, CareBill, CareReceipt, CareSample }
 
 /// <summary>A keyed (HMAC) hash with a server secret, for values like IP addresses that must not be reversible by guessing.</summary>
 public interface IKeyedHash

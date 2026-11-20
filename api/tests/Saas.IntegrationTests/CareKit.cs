@@ -39,9 +39,11 @@ public sealed class CareKit(ApiFixture api)
             "Doctor" => ("Staff", "Doctor"),
             "Nurse" => ("Staff", "Nurse"),
             "FrontDesk" => ("Staff", "FrontDesk"),
+            "LabScientist" => ("Staff", "LabScientist"), // wave 4
+            "Pharmacist" => ("Staff", "Pharmacist"), // wave 4
             "Cashier" => ("Accountant", (string?)null),
             "Admin" => ("Admin", (string?)null),
-            _ => throw new ArgumentOutOfRangeException(nameof(clinicRole), clinicRole, "Use Doctor, Nurse, FrontDesk, Cashier or Admin."),
+            _ => throw new ArgumentOutOfRangeException(nameof(clinicRole), clinicRole, "Use Doctor, Nurse, FrontDesk, LabScientist, Pharmacist, Cashier or Admin."),
         };
         await api.MakeProAsync(clinic.TenantId, "care", "clinic"); // Free has three seats
         var email = $"{clinicRole.ToLowerInvariant()}-{Guid.NewGuid():N}@example.com";
