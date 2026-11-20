@@ -311,6 +311,8 @@ export function asList<T>(data: T[] | { items: T[] } | undefined | null): T[] {
  * yet (confirmSignOutWithUnsent in offline-register).
  */
 export async function logout() {
+  // Wave 4: this browser stops getting the account's push notifications (loaded on demand: pwa imports this module).
+  await import("./pwa").then((m) => m.forgetPushOnThisDevice()).catch(() => {});
   const refreshToken = getAuth()?.refreshToken;
   if (refreshToken) {
     await api("/api/auth/logout", { method: "POST", body: { refreshToken }, auth: false }).catch(() => {});

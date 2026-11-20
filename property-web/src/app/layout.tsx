@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
 import { Archivo, Instrument_Sans } from "next/font/google";
 import { SupportBanner } from "@/components/support-banner";
 import { APP_NAME, SITE_URL } from "@/lib/config";
 import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, baseOpenGraph, baseTwitter } from "@/lib/site";
+import { PwaSetup } from "@/components/pwa";
 import "./globals.css";
 
 /** Archivo with the width axis: headlines at wdth 112 (estate signboards), prices at wdth 100. */
@@ -25,6 +27,7 @@ export const metadata: Metadata = {
   title: { default: DEFAULT_TITLE, template: `%s | ${APP_NAME}` },
   description: DEFAULT_DESCRIPTION,
   applicationName: APP_NAME,
+  appleWebApp: { capable: true, title: APP_NAME, statusBarStyle: "default" },
   robots: { index: true, follow: true },
   // No root canonical: it would be inherited by every listing and search page and point them all at the home page.
   // Each indexable page sets its own `alternates.canonical`.
@@ -45,6 +48,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col bg-plaster font-sans text-asphalt">
         <SupportBanner />
         {children}
+        <Suspense fallback={null}>
+          <PwaSetup />
+        </Suspense>
       </body>
     </html>
   );

@@ -437,6 +437,30 @@ customer token here sees every product's and every clinic's rows, so care-web's 
 `POST /api/me/notifications/{id}/read` (never `read-all`, which would also mark other clinics' and products' rows). Patient notice links
 are `/portal/...?patient={id}`. No notice carries a diagnosis, a result or a drug name. Full routes: `docs/CARE_API.md`.
 
+## Push notifications (`/api/me/push`, Wave 4 PWA)
+
+Every product's web app is installable (manifest, icons, a service worker with an offline page) and can turn on Web Push for the
+signed-in user on that browser. Any signed-in token may use these routes; support view can read but not subscribe.
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/api/me/push` | `{ enabled, publicKey, subscriptions: [{ id, product, endpoint, createdAt, lastSentAt }] }`. `enabled` false (and `publicKey` null) when the server has no VAPID keys |
+| POST | `/api/me/push/subscriptions` | Body `{ product, endpoint, keys: { p256dh, auth } }` (`PushSubscription.toJSON()` plus the product code). Upserts by endpoint: a browser belongs to whoever subscribed it last. 400 with field errors (`product`, `endpoint`, `keys.p256dh`, `keys.auth`); 503 when push is not set up; 403 for support view |
+| POST | `/api/me/push/subscriptions/remove` | Body `{ endpoint }`. 204; 404 when it is not this user's |
+
+- `product` is a product code (`whatsapp-orders`, `invoices`, `bookings`, `courses`, `property`, `school`, `care`). A push goes to the
+  user's subscriptions for the notification's product only, so a SchoolLink notification never pops up from the CareLink app.
+- `endpoint` must be `https` on a browser push service (FCM, Mozilla, Apple, Windows), default port: the API calls it, so any other
+  host is refused. At most 10 browsers per user (the oldest is dropped). The apps remove the browser's subscription on sign-out.
+- What is pushed: every in-app notification (`InAppNotifications.Add` queues it next to the feed row) and OrderLink's new orders
+  (to the store owners, link `/dashboard/orders/{id}`). Rows go into the `web_push_messages` outbox in the event's transaction; the push
+  dispatcher sends them every 5 seconds (job name `push`), skips users with no subscription for the product, drops messages older
+  than 6 hours, deletes subscriptions the push service says are gone (404/410) or that failed 10 times in a row, retries a message
+  5 times, and purges outbox rows after 3 days.
+- **CareLink** pushes carry the notice title and the fixed body "Open CareLink to see the details." (no clinical detail on a lock
+  screen, and none stored in the outbox).
+- Payload (what `sw.js` shows): `{ title, body, link, tag }`; tapping opens `link` (an app path) in the app.
+
 ## Support view in the product apps
 
 Every product web app (OrderLink 3700, InvoiceLink 3800, BookLink 3900, LearnLink 4000, PropertyLink 4100, SchoolLink 4200, CareLink 4400) has a `/support` page:

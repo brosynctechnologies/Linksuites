@@ -131,8 +131,22 @@ Set these with user secrets or environment variables (`Section__Key`), never in 
 | `Storage:Provider=R2` + `Storage:R2*` | Cloudflare R2 for uploads (otherwise local `uploads/`); `R2PrivateBucket` is required and must not be public |
 | `Database:MigrateOnStartup` | apply migrations at boot (on in Development) |
 | `CustomDomains:Target`, `CustomDomains:ApexIp`, `CustomDomains:HostSecret`, `CustomDomains:CheckMinutes`, `Jobs:CustomDomainsEnabled` | OrderLink custom domains: the CNAME target host, the server IPv4 for apex A records, the secret the host script sends (`X-Host-Secret`; empty = host endpoints refuse all), the DNS check interval (10) |
+| `WebPush:PublicKey`, `WebPush:PrivateKey`, `WebPush:Subject`, `WebPush:DispatcherEnabled` | Web Push (VAPID) for the installable apps. Off until both keys are set; half a pair or a malformed key stops the API at startup. Generate once with `npx web-push generate-vapid-keys` (public = 65-byte P-256 point, private = 32 bytes, both base64url). `Subject` is a `mailto:` or `https:` contact. Routes: `docs/PLATFORM_API.md`, Push notifications |
 
 `appsettings.Development.json` contains a development-only JWT key; production must set its own.
+
+### Installable apps (PWA)
+
+Each product web app has `src/app/manifest.ts` (name, colours, `start_url`), icons in `public/` (`icon-192/512.png` and maskable
+versions, rendered from `src/app/icon.svg`), `public/sw.js` (the same file in every app) and `public/offline.html`. The worker is
+registered only in production builds, over https, on the app's own host (never on an OrderLink custom domain), as
+`/sw.js?v=<build>` (`NEXT_PUBLIC_SW_VERSION` from `next.config.ts`; set `SW_VERSION` to pin it), so each deploy installs a new worker
+and drops the old caches. It never caches pages or API responses: pages come from the network with the offline page as the fallback;
+only Next's immutable `/_next/static` files are cached. School, Care, Learn and Property use `start_url: /start`, which sends the
+person to the part of the app they last used (staff app, parent/student page, patient portal, studio...) or to sign in. Signed-in
+users see a small "Install" card after 3 visits (Android/Chrome install prompt, or "Share, then Add to Home Screen" on iPhone);
+"Not now" is remembered. The push opt-in is on the account/settings pages (CareLink patients and SchoolLink students: their
+notifications page).
 
 ## Deliberate choices and what is left
 

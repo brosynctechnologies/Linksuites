@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/lib/auth";
 import { ChangePassword } from "@/components/change-password";
+import { PushNotifications } from "@/components/pwa";
 import { Card, PageHeader, SectionTitle } from "@/components/ui";
 
 /** The learner's own account: who they're signed in as, and their password. The /learn layout guards the session. */
@@ -26,6 +27,7 @@ export default function LearnerAccountPage() {
             </div>
           </dl>
         </Card>
+        <PushNotifications />
         <ChangePassword />
       </div>
     </div>

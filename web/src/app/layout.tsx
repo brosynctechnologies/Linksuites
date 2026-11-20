@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
 import { Bricolage_Grotesque, Onest } from "next/font/google";
 import { SupportBanner } from "@/components/support-banner";
 import { APP_NAME, SITE_DESCRIPTION, SITE_TITLE, SITE_URL, baseOpenGraph, baseTwitter } from "@/lib/config";
+import { PwaSetup } from "@/components/pwa";
 import "./globals.css";
 
 /*
@@ -26,6 +28,7 @@ export const metadata: Metadata = {
   title: { default: SITE_TITLE, template: `%s | ${APP_NAME}` },
   description: SITE_DESCRIPTION,
   applicationName: APP_NAME,
+  appleWebApp: { capable: true, title: APP_NAME, statusBarStyle: "default" },
   alternates: { canonical: "/" },
   robots: { index: true, follow: true },
   openGraph: { ...baseOpenGraph, url: "/", title: SITE_TITLE, description: SITE_DESCRIPTION },
@@ -44,6 +47,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col font-sans">
         <SupportBanner />
         {children}
+        <Suspense fallback={null}>
+          <PwaSetup />
+        </Suspense>
       </body>
     </html>
   );

@@ -171,6 +171,7 @@ app.MapHealthChecks("/health");
 app.MapGet("/", () => Results.Redirect("/docs")).ExcludeFromDescription();
 
 app.MapCoreEndpoints();
+app.MapPushEndpoints();
 app.MapOrderSystemEndpoints();
 app.MapInvoiceEndpoints();
 app.MapBookingEndpoints();

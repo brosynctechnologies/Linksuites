@@ -35,6 +35,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<StoredFile> Files => Set<StoredFile>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<UserNotification> UserNotifications => Set<UserNotification>();
+    public DbSet<WebPushSubscription> WebPushSubscriptions => Set<WebPushSubscription>();
+    public DbSet<WebPushMessage> WebPushMessages => Set<WebPushMessage>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<PlatformAdmin> PlatformAdmins => Set<PlatformAdmin>();
     public DbSet<JobRun> JobRuns => Set<JobRun>();
@@ -319,6 +321,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.Property(n => n.Link).HasMaxLength(500);
             e.HasOne<AppUser>().WithMany().HasForeignKey(n => n.UserId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<Tenant>().WithMany().HasForeignKey(n => n.TenantId).OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<WebPushSubscription>(e =>
+        {
+            e.HasIndex(s => s.Endpoint).IsUnique();
+            e.HasIndex(s => new { s.UserId, s.Product });
+            e.Property(s => s.Product).HasMaxLength(30);
+            e.Property(s => s.Endpoint).HasMaxLength(Saas.Application.Common.WebPushRules.MaxEndpoint);
+            e.Property(s => s.P256dh).HasMaxLength(200);
+            e.Property(s => s.Auth).HasMaxLength(100);
+            e.HasOne<AppUser>().WithMany().HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<WebPushMessage>(e =>
+        {
+            e.HasIndex(m => new { m.Status, m.CreatedAt });
+            e.Property(m => m.Product).HasMaxLength(30);
+            e.Property(m => m.Title).HasMaxLength(200);
+            e.Property(m => m.Body).HasMaxLength(1000);
+            e.Property(m => m.Link).HasMaxLength(500);
+            e.Property(m => m.Error).HasMaxLength(500);
+            e.HasOne<AppUser>().WithMany().HasForeignKey(m => m.UserId).OnDelete(DeleteBehavior.Cascade);
         });
         b.Entity<AuditLog>(e =>
         {

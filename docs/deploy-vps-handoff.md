@@ -31,6 +31,20 @@ This document is for any Cursor session that continues the LinkSuite deploy. Rea
 | Errors | Admin console → Errors (Support, super admin): API crashes and web app crash pages, one row per kind with a count. A new API error emails super and support admins once (at most 10 an hour) |
 | Legal pages | `https://linksuite.brosync.ng/privacy` and `/terms` (hub), linked from every footer and signup form. Their contact line uses `CONTACT_EMAIL` when set, else "reply to any email from LinkSuite" |
 
+### Web Push / installable apps (Wave 4, not yet deployed)
+
+- Migration `Wave4WebPush` (tables `web_push_subscriptions`, `web_push_messages`) applies on API start.
+- Push is **off** until both VAPID keys are in `/opt/linksuite/.env`. Generate the pair once, off the server:
+  `npx web-push generate-vapid-keys` → put the public key in `WEB_PUSH_PUBLIC_KEY` and the private key with
+  `ssh -t healthtutor-vps bash /opt/linksuite/deploy/set-secret.sh WEB_PUSH_PRIVATE_KEY`; optional `WEB_PUSH_SUBJECT`
+  (default `mailto:support@brosync.ng`). Compose passes them to the API as `WebPush__PublicKey`, `WebPush__PrivateKey`,
+  `WebPush__Subject`. Then `docker compose -f docker-compose.vps.yml up -d api`. Never rotate the keys casually: every phone's
+  subscription stops working and users must turn notifications on again.
+- Check: `GET https://api.linksuite.brosync.ng/api/me/push` (signed in) answers `enabled: true`; the admin health page shows job `push`.
+- The web apps need no new env: icons, `sw.js` and `offline.html` are in each app's `public/`, and each build gets a new worker
+  version. Service workers only register over https on each app's own host.
+- Outbound: the API makes HTTPS calls to `fcm.googleapis.com` (Android/Chrome) and other browser push services.
+
 ### Verified at go-live (2 Nov 2026)
 
 - 11 containers up; all 10 `https://…linksuite.brosync.ng/` return 200 (API root 302 → `/docs`); `https://api.linksuite.brosync.ng/health` = Healthy; HTTP → HTTPS 301.

@@ -9,6 +9,7 @@ import { useApi } from "@/lib/use-api";
 import type { AgencyKind, AgencyProfileDto, AgentProfileDto } from "@/lib/types";
 import { AccountActivity } from "@/components/account-activity";
 import { ChangePassword } from "@/components/change-password";
+import { PushNotifications } from "@/components/pwa";
 import { Avatar, Rating, VerifiedSeal } from "@/components/badges";
 import { ApiErrorView, Button, Card, ErrorBox, Input, Notice, PageHeader, PageLoader, SectionTitle, Select, Textarea, linkClass } from "@/components/ui";
 
@@ -81,6 +82,7 @@ export default function ProfilePage() {
           </ul>
         </Card>
       )}
+      <PushNotifications />
       <ChangePassword />
       <AccountActivity />
     </div>

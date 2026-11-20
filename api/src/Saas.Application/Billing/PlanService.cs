@@ -147,8 +147,30 @@ public sealed class PlanService(IAppDbContext db, ITenantContext tenant, TimePro
 }
 
 /// <summary>Adds outbox rows; they are saved with the caller's SaveChanges and sent by the dispatcher.</summary>
-public sealed class NotificationQueue(IAppDbContext db)
+public sealed class NotificationQueue(IAppDbContext db, PushSettings push)
 {
+    /// <summary>
+    /// Wave 4 (PWA): queues a Web Push for one user's browsers in one product's app, sent after the caller's SaveChanges commits. Does
+    /// nothing when push is not configured; users without a subscription for the product are skipped by the dispatcher. In-app
+    /// notifications (<see cref="InAppNotifications.Add"/>) call this; so does OrderLink for a new order.
+    /// </summary>
+    public bool PushEnabled => push.Enabled;
+
+    public void Push(Guid userId, string product, string title, string body, string link)
+    {
+        if (!push.Enabled) return;
+        static string Cut(string s, int max) => s.Length > max ? s[..(max - 1)] + "…" : s;
+        db.WebPushMessages.Add(new WebPushMessage
+        {
+            UserId = userId,
+            Product = product,
+            Title = Cut(title, 200),
+            Body = product == Products.Care ? WebPushRules.CareBody : Cut(body, 1000),
+            // Only a path inside the app: the service worker opens it on its own origin.
+            Link = link.StartsWith('/') && !link.StartsWith("//") && link.Length <= 500 ? link : "/",
+        });
+    }
+
     public void Email(string to, string templateKey, Dictionary<string, string> payload, Guid? tenantId = null, Guid? userId = null) =>
         db.Notifications.Add(new Notification
         {

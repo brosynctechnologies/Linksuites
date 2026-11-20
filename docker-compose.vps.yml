@@ -85,6 +85,10 @@ services:
       Email__SmtpSecurity: ${SMTP_SECURITY:-StartTls}
       Email__SmtpUsername: ${SMTP_USERNAME:-}
       Email__SmtpPassword: ${SMTP_PASSWORD:-}
+      # Web Push for the installable apps (Wave 4): off until both VAPID keys are set.
+      WebPush__PublicKey: ${WEB_PUSH_PUBLIC_KEY:-}
+      WebPush__PrivateKey: ${WEB_PUSH_PRIVATE_KEY:-}
+      WebPush__Subject: ${WEB_PUSH_SUBJECT:-mailto:support@brosync.ng}
       Paystack__SecretKey: ${PAYSTACK_SECRET_KEY:-}
       Billing__PlanProvider: ${BILLING_PROVIDER:-paystack}
       Opay__MerchantId: ${OPAY_MERCHANT_ID:-}

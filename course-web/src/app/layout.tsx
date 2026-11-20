@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
 import { Figtree, Literata } from "next/font/google";
 import { SupportBanner } from "@/components/support-banner";
 import { APP_NAME, SITE_URL } from "@/lib/config";
 import { SITE_DESCRIPTION, SITE_TITLE, baseOpenGraph, baseTwitter } from "@/lib/site";
+import { PwaSetup } from "@/components/pwa";
 import "./globals.css";
 
 /** Figtree: all UI, numbers and the studio. */
@@ -31,6 +33,7 @@ export const metadata: Metadata = {
   title: { default: SITE_TITLE, template: `%s | ${APP_NAME}` },
   description: SITE_DESCRIPTION,
   applicationName: APP_NAME,
+  appleWebApp: { capable: true, title: APP_NAME, statusBarStyle: "default" },
   robots: { index: true, follow: true },
   openGraph: { ...baseOpenGraph, title: SITE_TITLE, description: SITE_DESCRIPTION },
   twitter: { ...baseTwitter },
@@ -49,6 +52,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col bg-mist font-sans text-ink">
         <SupportBanner />
         {children}
+        <Suspense fallback={null}>
+          <PwaSetup />
+        </Suspense>
       </body>
     </html>
   );

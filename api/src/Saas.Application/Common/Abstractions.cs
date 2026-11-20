@@ -46,6 +46,8 @@ public interface IAppDbContext
     DbSet<StoredFile> Files { get; }
     DbSet<Notification> Notifications { get; }
     DbSet<UserNotification> UserNotifications { get; }
+    DbSet<WebPushSubscription> WebPushSubscriptions { get; }
+    DbSet<WebPushMessage> WebPushMessages { get; }
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<PlatformAdmin> PlatformAdmins { get; }
     DbSet<JobRun> JobRuns { get; }

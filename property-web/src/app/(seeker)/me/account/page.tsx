@@ -2,6 +2,7 @@
 
 import { useAuth } from "@/lib/auth";
 import { ChangePassword } from "@/components/change-password";
+import { PushNotifications } from "@/components/pwa";
 import { Card, PageHeader, SectionTitle } from "@/components/ui";
 
 /** The seeker's own account: who they're signed in as, and their password. The (seeker) layout guards the session. */
@@ -26,6 +27,7 @@ export default function SeekerAccountPage() {
             </div>
           </dl>
         </Card>
+        <PushNotifications />
         <ChangePassword />
       </div>
     </div>
