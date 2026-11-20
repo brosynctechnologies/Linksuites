@@ -431,10 +431,29 @@ public sealed class FakePlatformGateway : IPlanPaymentGateway
     /// <summary>Holds each refund call open this long, so tests can overlap two requests.</summary>
     public TimeSpan RefundDelay { get; set; }
 
-    public async Task RefundAsync(string reference, long amountMinor, CancellationToken ct)
+    /// <summary>
+    /// Refunds of these references are taken, but the answer is lost (a timeout after Paystack took it): the caller sees an
+    /// exception that is not a refusal.
+    /// </summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, bool> RefundTimesOut { get; } = new();
+    /// <summary>Refunds of these references are refused by Paystack (400), with this message.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, string> RefundRefused { get; } = new();
+    /// <summary>What a refund status lookup answers per reference; by default Refunded when a refund was taken, otherwise NotFound.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, RefundState> RefundStates { get; } = new();
+
+    public async Task RefundAsync(string reference, long amountMinor, int attempt, CancellationToken ct)
     {
         if (RefundDelay > TimeSpan.Zero) await Task.Delay(RefundDelay, ct);
+        if (RefundRefused.TryGetValue(reference, out var refusal)) throw new RefundRefusedException($"Paystack didn't accept the refund: {refusal}");
         lock (Refunds) Refunds.Add((reference, amountMinor));
+        if (RefundTimesOut.ContainsKey(reference))
+            throw new ServiceUnavailableException("Paystack didn't answer in time. Check the refund in your Paystack dashboard before trying again.");
+    }
+
+    public Task<RefundState> RefundStatusAsync(string reference, int attempt, CancellationToken ct)
+    {
+        if (RefundStates.TryGetValue(reference, out var state)) return Task.FromResult(state);
+        lock (Refunds) return Task.FromResult(Refunds.Any(r => r.Reference == reference) ? RefundState.Refunded : RefundState.NotFound);
     }
 }
 
@@ -538,6 +557,8 @@ public sealed class FakeOpay : HttpMessageHandler
             if (!Statuses.TryGetValue(original, out var paid) || paid.Status != "SUCCESS")
                 return Answer(new { code = "02006", message = "original payment not found." });
             if (!Refunds.TryAdd(reference, refund)) return Answer(new { code = "20000", message = "Duplicate merchant order number" });
+            RefundStatuses[reference] = RefundStatus;
+            if (RefundAnswerLost) return new HttpResponseMessage(System.Net.HttpStatusCode.GatewayTimeout);
             return Answer(new
             {
                 code = "00000", message = "SUCCESSFUL",
@@ -548,8 +569,36 @@ public sealed class FakeOpay : HttpMessageHandler
                 },
             });
         }
+        if (path == "/api/v1/international/payment/refund/query")
+        {
+            // OPay's "Query Refund Status": the refund's own reference, signed like the status call.
+            if (!Signed(root, auth.Parameter)) return Refuse();
+            var reference = root.GetProperty("reference").GetString()!;
+            RefundQueries.AddOrUpdate(reference, 1, (_, n) => n + 1);
+            if (RefundQueryUnavailable) return Answer(new { code = "50003", message = "service not available, please try again" });
+            if (!Refunds.TryGetValue(reference, out var refund)) return Answer(new { code = "02006", message = "not found" });
+            return Answer(new
+            {
+                code = "00000", message = "SUCCESSFUL",
+                data = new
+                {
+                    reference, originalReference = refund.OriginalReference, orderNo = "211003140885499643", originalOrderNo = "211003140885503763",
+                    country = refund.Country, amount = new { total = refund.Total, currency = refund.Currency },
+                    orderStatus = RefundStatuses.GetValueOrDefault(reference, "SUCCESS"),
+                },
+            });
+        }
         return new HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
     }
+
+    /// <summary>Each refund's <c>orderStatus</c> as the refund query reports it (set when the refund is created; tests may change it).</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, string> RefundStatuses { get; } = new();
+    /// <summary>Refund queries per refund reference.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<string, int> RefundQueries { get; } = new();
+    /// <summary>Refund queries answer 50003.</summary>
+    public bool RefundQueryUnavailable { get; set; }
+    /// <summary>Refunds are taken, but the answer never arrives (504), like a timeout after OPay took the refund.</summary>
+    public bool RefundAnswerLost { get; set; }
 
     public sealed record RefundRequest(string Reference, string OriginalReference, long Total, string Currency, string Country);
 

@@ -243,6 +243,17 @@ public static class EmailTemplates
             "payout.transfer_failed" => ($"Payout transfer {P("status")}: {P("business")}, {P("amount")}",
                 $"The Paystack transfer of {P("amount")} to {P("business")} {P("status")}.\n\n{P("reason")}\n\nTransfer reference: {P("reference")}\n\n" +
                 $"The amount is back in the business's available balance. Retry the transfer or reject the payout in the admin console: {P("link")}"),
+            "payout.transfer_late_success" => ($"Payout transfer succeeded after it was marked failed: {P("business")}, {P("amount")}",
+                $"Paystack reports the transfer of {P("amount")} to {P("business")} succeeded (reference {P("reference")}), after the payout was marked " +
+                $"failed or rejected. {P("reason")}\n\nThe payout is now Paid and the amount is held from the business's balance again. Check whether " +
+                $"the business was paid again in the meantime (a retry, a new payout or a bank transfer) and recover any double payment: {P("link")}"),
+            "payout.clawback" => ($"Refund of a directly settled sale: recover {P("amount")} from {P("business")}",
+                $"A refund of {P("sale")} (reference {P("reference")}) came out of the platform's balance, but Paystack had already settled the " +
+                $"seller's share to {P("business")}.\n\n{P("amount")} has been taken back from the business's next payouts. If they have no further " +
+                $"sales, recover it by hand: {P("link")}"),
+            "refund.unconfirmed" => ($"Refund not confirmed: {P("kind")} {P("reference")}",
+                $"The refund of {P("amount")} for a {P("kind")} at {P("business")} (reference {P("reference")}, {P("provider")}) isn't confirmed: " +
+                $"{P("status")}.\n\nThe sale is already cancelled. Check the refund in the {P("provider")} dashboard and send it by hand if it didn't go through."),
             "payout.transfer_otp" => ($"Payout transfers are waiting for an OTP: {P("business")}, {P("amount")}",
                 $"Paystack is holding the transfer of {P("amount")} to {P("business")} for an OTP (reference {P("reference")}).\n\n" +
                 $"Automatic payouts need transfer OTP turned off in the Paystack dashboard (Settings, Preferences, Transfers). " +

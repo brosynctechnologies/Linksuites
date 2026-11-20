@@ -270,6 +270,137 @@ public sealed class OpaySalesTests(ApiFixture api)
         Assert.Single(api.Opay.Refunds.Values, r => r.OriginalReference == reference);
     }
 
+    // Fix round: retries after a failed OPay refund (I4) and refunds without a clear answer (I3)
+
+    [Fact]
+    public async Task A_retry_after_opay_failed_a_refund_is_a_new_refund_not_a_duplicate()
+    {
+        var (tutor, learner, course, _) = await CourseAsync("RetryRefund", 400_000, Opay);
+        var checkout = await CourseCheckoutAsync(learner, course);
+        var orderId = checkout.GetProperty("orderId").GetGuid();
+        var reference = ReferenceOf(checkout);
+        api.Opay.Pay(reference);
+        Assert.True(await CourseVerifyAsync(learner, orderId, reference));
+
+        api.Opay.RefundStatus = "FAIL";
+        try
+        {
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, (await tutor.PostAsync($"/api/studio/orders/{orderId}/refund", null, Ct)).StatusCode);
+        }
+        finally { api.Opay.RefundStatus = "SUCCESS"; }
+        Assert.Equal(OrderState.Paid, (await OrderAsync(reference)).Status);
+
+        // The tutor tries again: a new refund reference, which OPay takes. (The old one would only be answered "duplicate".)
+        (await tutor.PostAsync($"/api/studio/orders/{orderId}/refund", null, Ct)).EnsureSuccessStatusCode();
+        Assert.True(api.Opay.Refunds.ContainsKey($"{reference}_rf2"));
+        Assert.Equal("SUCCESS", api.Opay.RefundStatuses[$"{reference}_rf2"]);
+        Assert.Equal(OrderState.Refunded, (await OrderAsync(reference)).Status);
+    }
+
+    [Fact]
+    public async Task A_duplicate_refund_is_only_success_when_opay_says_so()
+    {
+        var (tutor, learner, course, _) = await CourseAsync("DuplicateRefund", 400_000, Opay);
+        var checkout = await CourseCheckoutAsync(learner, course);
+        var orderId = checkout.GetProperty("orderId").GetGuid();
+        var reference = ReferenceOf(checkout);
+        api.Opay.Pay(reference);
+        Assert.True(await CourseVerifyAsync(learner, orderId, reference));
+
+        // OPay already has a failed refund under the first reference (sent before this fix): "duplicate" is not success.
+        api.Opay.Refunds[$"{reference}_rf"] = new FakeOpay.RefundRequest($"{reference}_rf", reference, 400_000, "NGN", "NG");
+        api.Opay.RefundStatuses[$"{reference}_rf"] = "FAIL";
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, (await tutor.PostAsync($"/api/studio/orders/{orderId}/refund", null, Ct)).StatusCode);
+        Assert.Equal(OrderState.Paid, (await OrderAsync(reference)).Status);
+        Assert.Equal(1, api.Opay.RefundQueries[$"{reference}_rf"]);
+
+        (await tutor.PostAsync($"/api/studio/orders/{orderId}/refund", null, Ct)).EnsureSuccessStatusCode();
+        Assert.True(api.Opay.Refunds.ContainsKey($"{reference}_rf2"));
+    }
+
+    [Fact]
+    public async Task A_refund_without_a_clear_answer_stays_pending_until_the_recheck_settles_it()
+    {
+        // Paystack takes the refund but the answer times out.
+        var (tutor, learner, course, tenantId) = await CourseAsync("PendingRefund", 300_000);
+        var checkout = await CourseCheckoutAsync(learner, course);
+        var orderId = checkout.GetProperty("orderId").GetGuid();
+        var reference = ReferenceOf(checkout);
+        api.Gateway.Charges[reference] = new VerifiedCharge(reference, 300_000, "NGN", DateTimeOffset.UtcNow);
+        Assert.True(await CourseVerifyAsync(learner, orderId, reference));
+
+        api.Gateway.RefundTimesOut[reference] = true;
+        var answer = await tutor.PostAsync($"/api/studio/orders/{orderId}/refund", null, Ct);
+        Assert.Equal(HttpStatusCode.Accepted, answer.StatusCode);
+        var order = await OrderAsync(reference);
+        Assert.Equal(OrderState.Refunded, order.Status); // not put back: the money may already be on its way
+        Assert.NotNull(order.RefundPendingSince);
+        Assert.True(await api.WithDbAsync(db => db.Earnings.IgnoreQueryFilters().Where(e => e.TenantId == tenantId).AllAsync(e => e.Reversed, Ct)));
+        // A second click doesn't send it again.
+        Assert.Equal(HttpStatusCode.Conflict, (await tutor.PostAsync($"/api/studio/orders/{orderId}/refund", null, Ct)).StatusCode);
+        Assert.Single(api.Gateway.Refunds, r => r.Reference == reference);
+
+        // The sales re-check asks Paystack, which has the refund.
+        await SalesRecheckAsync(DateTimeOffset.UtcNow.AddMinutes(30));
+        order = await OrderAsync(reference);
+        Assert.Null(order.RefundPendingSince);
+        Assert.Equal(OrderState.Refunded, order.Status);
+        Assert.Single(api.Gateway.Refunds, r => r.Reference == reference);
+    }
+
+    [Fact]
+    public async Task A_pending_refund_opay_reports_failed_or_cannot_confirm_in_a_day_alerts_Finance()
+    {
+        var (_, listing) = await ShortLetAsync("Opay Lost Refund");
+        var guest = ApiFixture.On(Opay, await kit.SeekerAsync("OpayLostGuest"));
+        var booking = await BookAsync(guest, listing, daysAhead: 30);
+        var stayId = booking.GetProperty("stayId").GetGuid();
+        var reference = ReferenceOf(booking);
+        api.Opay.Pay(reference);
+        await Json(await guest.PostAsJsonAsync($"/api/stays/{stayId}/verify", new { reference }, Ct));
+
+        api.Opay.RefundAnswerLost = true;
+        try
+        {
+            var cancelled = await Json(await guest.PostAsync($"/api/stays/{stayId}/cancel", null, Ct));
+            Assert.Equal("Cancelled", cancelled.GetProperty("status").GetString());
+            Assert.True(cancelled.GetProperty("refundPending").GetBoolean());
+        }
+        finally { api.Opay.RefundAnswerLost = false; }
+        var stay = await StayAsync(reference);
+        Assert.Equal(StayStatus.Cancelled, stay.Status);
+        Assert.NotNull(stay.RefundPendingSince);
+
+        // OPay can't be asked yet: still pending, nobody alerted.
+        api.Opay.RefundQueryUnavailable = true;
+        try
+        {
+            await SalesRecheckAsync(DateTimeOffset.UtcNow.AddMinutes(30));
+            Assert.NotNull((await StayAsync(reference)).RefundPendingSince);
+            Assert.DoesNotContain(await RefundAlertsAsync(), n => n.Payload["reference"] == reference);
+
+            // A day later and still no answer: Finance is told, once.
+            await SalesRecheckAsync(DateTimeOffset.UtcNow.AddHours(25));
+            await SalesRecheckAsync(DateTimeOffset.UtcNow.AddHours(26));
+            Assert.Single(await RefundAlertsAsync(), n => n.Payload["reference"] == reference);
+        }
+        finally { api.Opay.RefundQueryUnavailable = false; }
+
+        // OPay then says the refund failed: kept pending (Finance sends it by hand), never reported as refunded.
+        api.Opay.RefundStatuses[$"{reference}_rf"] = "FAIL";
+        await SalesRecheckAsync(DateTimeOffset.UtcNow.AddHours(27));
+        Assert.NotNull((await StayAsync(reference)).RefundPendingSince);
+    }
+
+    private async Task SalesRecheckAsync(DateTimeOffset now)
+    {
+        using var scope = api.Services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<SalesPaymentJobs>().RunOnceAsync(now, Ct);
+    }
+
+    private Task<List<Saas.Domain.Core.Notification>> RefundAlertsAsync() =>
+        api.WithDbAsync(db => db.Notifications.AsNoTracking().Where(n => n.TemplateKey == "refund.unconfirmed").ToListAsync(Ct));
+
     // Boosts
 
     [Fact]

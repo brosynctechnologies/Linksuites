@@ -578,18 +578,22 @@ public sealed class AuthService(
             if (await SlugInUseAsync(wanted, ct)) throw BadRequestException.Field("slug", "That link is taken. Choose another.");
         }
         var user = await users.FindByIdAsync(userId.ToString()) ?? throw Unauthorized();
-        var owned = await db.Memberships.IgnoreQueryFilters().CountAsync(m => m.UserId == userId && m.Role == MemberRole.Owner
-            && m.Status == MembershipStatus.Active && m.Tenant!.Product == product && m.Tenant.Status != TenantStatus.Closed, ct);
-        if (owned >= MaxOwnedPerProduct)
-            throw new BadRequestException($"You already own {MaxOwnedPerProduct} businesses on {Products.Brand(product)}, the most one account can. Contact support if you need more.");
-
         var country = string.IsNullOrWhiteSpace(r.Country) ? current.Country : r.Country.Trim().ToUpperInvariant();
+        // As at sign-up, an OrderLink store needs a WhatsApp number that can be dialled.
+        if (product == Products.WhatsAppOrders && (string.IsNullOrWhiteSpace(r.WhatsappNumber) || PhoneNumbers.Normalize(r.WhatsappNumber, country) is null))
+            throw BadRequestException.Field("whatsappNumber", "Enter a valid WhatsApp number.");
         var name = r.Name!.Trim();
         // The provisioners read a sign-up; this is the one the owner would have filled in.
         var signup = new SignupRequest(user.FullName, user.Email!, "", country, product, BusinessName: name, StoreName: name,
             WhatsappNumber: r.WhatsappNumber, AccountKind: r.AccountKind, Slug: r.SlugKey);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
+        // One owner adding businesses from two tabs at once: the per-user lock makes the count and the insert one step, so the limit holds.
+        await db.LockAsync(BitConverter.ToInt64(userId.ToByteArray(), 8) ^ 0x0B05_1E55, ct);
+        var owned = await db.Memberships.IgnoreQueryFilters().CountAsync(m => m.UserId == userId && m.Role == MemberRole.Owner
+            && m.Status == MembershipStatus.Active && m.Tenant!.Product == product && m.Tenant.Status != TenantStatus.Closed, ct);
+        if (owned >= MaxOwnedPerProduct)
+            throw new BadRequestException($"You already own {MaxOwnedPerProduct} businesses on {Products.Brand(product)}, the most one account can. Contact support if you need more.");
         var t = new Tenant
         {
             Name = name,

@@ -114,14 +114,21 @@ ListingFilter { purpose?, location? (slug), type? (slug), minPrice?, maxPrice?, 
 SavedSearchDto { id, name, filter: ListingFilter, frequency, lastSentAt, createdAt }
 InspectionDto { id, listingId, listingTitle, areaName, seekerName, seekerPhone, agentName, agentPhone, scheduledAt, status, notes }
 MyStayDto { id, listingId, listingTitle, listingUrl, coverUrl, areaName, checkIn, checkOut, guests, nights, totalMinor, currency, status,
-  holdExpiresAt, refundMinor, agentName, agentPhone (once confirmed), checkInTime, checkOutTime, address (once confirmed), houseRules }
+  holdExpiresAt, refundMinor, agentName, agentPhone (once confirmed), checkInTime, checkOutTime, address (once confirmed), houseRules,
+  paid, nightlyMinor, cleaningMinor, refundPending }
 ```
 
 Short-let rules: check-out after check-in, check-in not in the past, `minNights` ≤ nights ≤ 90, 1 ≤ guests ≤ `maxGuests`, no host-closed
 dates. Price = nights × nightly + cleaning. Guest cancels > 48 h before 14:00 on check-in day: full refund; later: refund minus one night;
 not after check-in. Host cancels: full refund. A paid stay is refunded once: the cancel claims it (Confirmed → Cancelled) before
 the refund is sent, so a second cancel at the same time (a double click, or guest and host together) gets 409 "This stay has already
-been cancelled." The refund goes to the provider that took the payment (Paystack or OPay, see below); if it refuses, the stay goes back to Confirmed and the cancel fails (503).
+been cancelled." The refund goes to the provider that took the payment (Paystack or OPay, see below); if it definitely refuses, the stay goes back to Confirmed and the cancel fails (503). If the provider gives no clear answer (timeout, 5xx), the cancellation stands with `refundPending: true`; the sales re-check confirms the refund with the provider and emails Finance if it can't within 24 hours (see PLATFORM_API.md).
+
+Stays Paystack split to the host (direct settlement): the host can't cancel them (409 "This sale was paid to you directly by Paystack.
+Ask LinkSuite support to refund it."); Finance can (`POST /api/admin/stays/{id}/refund`, full refund, `cancelledBy: Platform`). When the
+platform refunds such a stay (Finance, a guest cancellation, a payment that landed after the guest cancelled or after the hold ran out),
+the host's settled share less what they keep is posted as a clawback earning (negative `netMinor`, `status: Clawback`) that comes off
+their next payouts, and Finance is emailed the amount to recover.
 
 Providers: stays and boosts are paid to the platform through the provider chosen in the admin console's Payment settings (Paystack or OPay). Each stay and boost records it (`provider`), and the return check, callbacks, the background re-check (every 10 minutes for 48 hours, for unpaid stays and boosts whose callback never came) and refunds always use that provider, so payments taken before a switch keep working. Paystack payments also confirm from the signed `POST /api/webhooks/paystack`; OPay callbacks arrive on `POST /api/webhooks/opay`, which reads only the reference and asks the provider (at most every 30 seconds per stay or boost).
 

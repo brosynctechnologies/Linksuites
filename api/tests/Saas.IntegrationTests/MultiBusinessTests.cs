@@ -141,4 +141,22 @@ public sealed class MultiBusinessTests(ApiFixture api)
         Assert.Equal(HttpStatusCode.BadRequest, eleventh.StatusCode);
         Assert.Contains("10", await eleventh.Content.ReadAsStringAsync(Ct));
     }
+
+    [Fact]
+    public async Task Adding_businesses_at_once_never_passes_the_limit()
+    {
+        var (owner, auth) = await api.SignupAsync("RaceShops");
+        for (var i = 2; i <= 9; i++)
+            await Json(await owner.PostAsJsonAsync("/api/me/businesses", new { name = $"RaceShops {i}", whatsappNumber = "08031234567" }, Ct));
+
+        // Five tabs add the tenth at the same moment: one gets it.
+        var answers = await Task.WhenAll(Enumerable.Range(0, 5).Select(i =>
+            owner.PostAsJsonAsync("/api/me/businesses", new { name = $"RaceShops last {i}", whatsappNumber = "08031234567" }, Ct)));
+        Assert.Single(answers, a => a.IsSuccessStatusCode);
+        var userId = auth.GetProperty("user").GetProperty("id").GetGuid();
+        Assert.Equal(10, await api.WithDbAsync(db => db.Memberships.IgnoreQueryFilters().CountAsync(m => m.UserId == userId && m.Role == MemberRole.Owner, Ct)));
+
+        var badNumber = await owner.PostAsJsonAsync("/api/me/businesses", new { name = "Bad Number", whatsappNumber = "call me" }, Ct);
+        Assert.Equal(HttpStatusCode.BadRequest, badNumber.StatusCode);
+    }
 }

@@ -8,7 +8,7 @@ using Saas.Domain.Courses;
 namespace Saas.Application.Courses;
 
 /// <summary>The tutor's learners and money: dashboard, students, Q&amp;A, reviews, coupons, earnings, payouts and refunds.</summary>
-public sealed class StudioPeopleService(IAppDbContext db, CourseCore core, PlanService plans, SalesGateways gateways, ICurrentUser user, PayoutService payouts)
+public sealed class StudioPeopleService(IAppDbContext db, CourseCore core, PlanService plans, CourseRefunds refunds, ICurrentUser user, PayoutService payouts)
 {
     public async Task<StudioDashboardDto> DashboardAsync(CancellationToken ct)
     {
@@ -145,8 +145,9 @@ public sealed class StudioPeopleService(IAppDbContext db, CourseCore core, PlanS
         pageSize = Math.Clamp(pageSize, 1, 100);
         var academy = await core.AcademyAsync(ct);
         var ledger = await LedgerAsync(ct);
-        var total = await db.Earnings.CountAsync(e => e.Source == EarningSource.CourseOrder, ct);
-        var rows = await db.Earnings.AsNoTracking().Where(e => e.Source == EarningSource.CourseOrder).OrderByDescending(e => e.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        // Sales, and clawbacks of refunded sales Paystack had settled to the tutor (negative).
+        var total = await db.Earnings.CountAsync(e => e.Source == EarningSource.CourseOrder || e.Source == EarningSource.CourseClawback, ct);
+        var rows = await db.Earnings.AsNoTracking().Where(e => e.Source == EarningSource.CourseOrder || e.Source == EarningSource.CourseClawback).OrderByDescending(e => e.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
         var names = await NamesAsync(rows.Select(e => e.UserId), ct);
         var titles = await db.Courses.ToDictionaryAsync(c => c.Id, c => c.Title, ct);
         var now = core.Now;
@@ -154,7 +155,7 @@ public sealed class StudioPeopleService(IAppDbContext db, CourseCore core, PlanS
             rows.Select(e => new EarningDto(e.Id, e.SourceId, titles.GetValueOrDefault(e.CourseId ?? Guid.Empty, e.Description), names.GetValueOrDefault(e.UserId, "Learner"),
                 e.Channel ?? SaleChannel.Academy, e.GrossMinor, e.FeeMinor, e.NetMinor, e.AvailableAt, e.CreatedAt,
                 ledger.States.GetValueOrDefault(e.Id, LedgerRules.EarningState.Pending).ToString(),
-                !e.Reversed && now - e.CreatedAt <= CourseRules.RefundWindow)).ToList(), page, pageSize, total), ledger.SettledMinor);
+                e.Source == EarningSource.CourseOrder && !e.Reversed && !e.SettledByProvider && now - e.CreatedAt <= CourseRules.RefundWindow)).ToList(), page, pageSize, total), ledger.SettledMinor);
     }
 
     public Task<IReadOnlyList<PayoutDto>> PayoutsAsync(CancellationToken ct) => payouts.ListAsync(ct);
@@ -167,39 +168,16 @@ public sealed class StudioPeopleService(IAppDbContext db, CourseCore core, PlanS
 
     /// <summary>
     /// Refunds a learner within the refund window through the provider that took the payment (Paystack or OPay), removing access and the
-    /// earning. The order is claimed first with a conditional update, so a double click refunds once; the claim is undone if the provider
-    /// refuses.
+    /// earning (see <see cref="CourseRefunds"/>). True when the provider gave no clear answer and the refund is pending. A sale Paystack
+    /// settled to the tutor directly is refused (409): only Finance refunds it.
     /// </summary>
-    public async Task RefundAsync(Guid orderId, CancellationToken ct)
+    public async Task<bool> RefundAsync(Guid orderId, CancellationToken ct)
     {
         var order = await db.CourseOrders.FirstOrDefaultAsync(o => o.Id == orderId, ct) ?? throw new NotFoundException("Order");
         if (order.Status != OrderState.Paid) throw new ConflictException("Only paid orders can be refunded.");
         if (core.Now - (order.PaidAt ?? order.CreatedAt) > CourseRules.RefundWindow)
             throw new ConflictException("Refunds are only possible within 7 days of purchase.");
-        var now = core.Now;
-        var claimed = await db.CourseOrders.Where(o => o.Id == order.Id && o.Status == OrderState.Paid)
-            .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderState.Refunded).SetProperty(o => o.RefundedAt, (DateTimeOffset?)now), ct);
-        if (claimed == 0) throw new ConflictException("This order has already been refunded.");
-        try
-        {
-            if (order.TotalMinor > 0) await gateways.RefundAsync(order.Provider, order.Reference, order.TotalMinor, ct);
-        }
-        catch
-        {
-            await db.CourseOrders.Where(o => o.Id == order.Id).ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderState.Paid)
-                .SetProperty(o => o.RefundedAt, (DateTimeOffset?)null), CancellationToken.None);
-            throw;
-        }
-        order.Status = OrderState.Refunded;
-        order.RefundedAt = now;
-        await db.Earnings.Where(e => e.Source == EarningSource.CourseOrder && e.SourceId == order.Id).ExecuteUpdateAsync(s => s.SetProperty(e => e.Reversed, true), ct);
-        var enrollment = await db.Enrollments.FirstOrDefaultAsync(e => e.CourseId == order.CourseId && e.UserId == order.UserId, ct);
-        if (enrollment is not null && !enrollment.Revoked)
-        {
-            enrollment.Revoked = true;
-            await db.Courses.Where(c => c.Id == order.CourseId).ExecuteUpdateAsync(s => s.SetProperty(c => c.StudentsCount, c => c.StudentsCount - 1), ct);
-        }
-        await db.SaveChangesAsync(ct);
+        return await refunds.RefundAsync(order, byPlatform: false, ct);
     }
 
     public Task<LedgerRules.Ledger> LedgerAsync(CancellationToken ct) => payouts.LedgerAsync(ct);

@@ -25,7 +25,12 @@ public interface IPaymentGateway
     Task<string> InitializeAsync(PaymentInit init, CancellationToken ct);
     /// <summary>Asks the provider whether a charge succeeded.</summary>
     Task<VerifiedCharge?> VerifyAsync(string reference, CancellationToken ct);
-    Task RefundAsync(string reference, long amountMinor, CancellationToken ct);
+    /// <summary>
+    /// Refunds all or part of <paramref name="reference"/>. <paramref name="attempt"/> numbers genuine retries after a refusal (OPay gives
+    /// each attempt its own refund reference). Throws <see cref="Common.RefundRefusedException"/> when the provider definitely did not
+    /// take it; any other exception means the outcome is unknown.
+    /// </summary>
+    Task RefundAsync(string reference, long amountMinor, int attempt, CancellationToken ct);
 }
 
 public sealed record PlanDto(

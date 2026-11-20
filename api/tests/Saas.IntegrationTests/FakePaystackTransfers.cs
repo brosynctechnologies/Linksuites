@@ -36,6 +36,12 @@ public sealed class FakePaystackTransfers : HttpMessageHandler
     /// <summary>The next POST /transfer is refused with this message (400), like "Your balance is not enough to fulfil this request".</summary>
     public string? RefuseNextTransfer { get; set; }
 
+    /// <summary>Answers given to the next verify calls for a reference, in order (then verify answers normally again).</summary>
+    public ConcurrentDictionary<string, ConcurrentQueue<(HttpStatusCode Code, string Message)>> VerifyAnswers { get; } = new(StringComparer.Ordinal);
+
+    public void AnswerNextVerify(string reference, HttpStatusCode code, string message) =>
+        VerifyAnswers.GetOrAdd(reference, _ => new()).Enqueue((code, message));
+
     private int counter;
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -101,6 +107,8 @@ public sealed class FakePaystackTransfers : HttpMessageHandler
         if (request.Method == HttpMethod.Get && path.StartsWith("/transfer/verify/", StringComparison.Ordinal))
         {
             var reference = Uri.UnescapeDataString(path["/transfer/verify/".Length..]);
+            if (VerifyAnswers.TryGetValue(reference, out var queued) && queued.TryDequeue(out var answer))
+                return Answer(answer.Code, new { status = false, message = answer.Message });
             return Transfers.TryGetValue(reference, out var t)
                 ? Answer(HttpStatusCode.OK, new { status = true, message = "Transfer retrieved", data = new { reference, amount = t.Amount, status = t.Status, transfer_code = t.TransferCode } })
                 : Answer(HttpStatusCode.NotFound, new { status = false, message = "Transfer not found" });
