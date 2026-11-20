@@ -5,10 +5,12 @@ import { useState } from "react";
 import { api, ApiError, toApiError } from "@/lib/api";
 import { formatMoney } from "@/lib/money";
 import { useApi } from "@/lib/use-api";
-import type { OrderDto, OrderStatus, PaymentStatus } from "@/lib/types";
+import { useAuth } from "@/lib/auth";
+import type { OnlinePaymentStatus, OrderDto, OrderStatus, PaymentStatus } from "@/lib/types";
 import { OrderTicket, type TicketRow } from "@/components/order-ticket";
 import {
   ApiErrorView,
+  Badge,
   Button,
   ErrorBox,
   Input,
@@ -28,8 +30,36 @@ const ACTIONS: { status: OrderStatus; label: string; variant: "primary" | "secon
   { status: "Cancelled", label: "Cancel order", variant: "danger" },
 ];
 
+/** An online payment's status as colour plus a word. */
+function OnlinePaymentBadge({ status }: { status: OnlinePaymentStatus }) {
+  if (status === "Succeeded")
+    return (
+      <Badge tone="leaf" dot>
+        Paid
+      </Badge>
+    );
+  if (status === "Mismatch")
+    return (
+      <Badge tone="hibiscus" dot>
+        Amount didn&apos;t match
+      </Badge>
+    );
+  if (status === "Abandoned")
+    return (
+      <Badge tone="neutral" dot>
+        Not completed
+      </Badge>
+    );
+  return (
+    <Badge tone="marigold" dot>
+      Waiting
+    </Badge>
+  );
+}
+
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const readOnly = !!useAuth()?.support;
   const { data: order, error, loading, reload, setData } = useApi<OrderDto>(`/api/orders/${id}`);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);
@@ -224,6 +254,48 @@ export default function OrderDetailPage() {
             )}
           </dl>
         </Panel>
+
+        {/* Online payments */}
+        {order.payments && order.payments.length > 0 && (
+          <Panel className="lg:col-start-1">
+            <h2 className="font-display text-lg font-bold text-ink">Online payments</h2>
+            <ul className="mt-3 divide-y divide-line">
+              {order.payments.map((p) => (
+                <li key={p.reference} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3 first:pt-0 last:pb-0">
+                  <div className="min-w-0 flex-1">
+                    <p className="flex flex-wrap items-center gap-2">
+                      <span className="font-display text-lg font-bold text-ink num">{formatMoney(p.amountMinor, p.currency)}</span>
+                      <OnlinePaymentBadge status={p.status} />
+                    </p>
+                    <p className="text-xs break-all text-subtle">
+                      Reference <span className="font-medium text-ink-2">{p.reference}</span>
+                    </p>
+                    <p className="text-xs text-subtle">
+                      {p.paidAt ? `Paid ${formatDate(p.paidAt)}` : `Started ${formatDate(p.createdAt)}`}
+                    </p>
+                    {p.status === "Mismatch" && (
+                      <p className="mt-1 text-sm text-ink-2">The amount paid doesn&apos;t match the order total. Check it in Paystack before you deliver.</p>
+                    )}
+                  </div>
+                  {p.status === "Pending" && !readOnly && (
+                    <Button
+                      variant="secondary"
+                      loading={busy === `verify-${p.reference}`}
+                      disabled={!!busy}
+                      onClick={() =>
+                        act(`verify-${p.reference}`, () =>
+                          api<OrderDto>(`/api/orders/${id}/payments/${encodeURIComponent(p.reference)}/verify`, { method: "POST" }),
+                        )
+                      }
+                    >
+                      Check with Paystack
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        )}
 
         {/* History */}
         {order.history.length > 0 && (

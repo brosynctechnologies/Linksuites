@@ -98,6 +98,8 @@ export interface VariantDto {
   priceMinor: number | null;
   inStock: boolean;
   sku: string | null;
+  /** Null when this variant does not track stock. */
+  stockQty: number | null;
 }
 export interface ProductDto {
   id: string;
@@ -122,6 +124,9 @@ export interface SaveVariant {
   priceMinor?: number | null;
   inStock: boolean;
   sku: string | null;
+  stockQty?: number | null;
+  /** The count the form loaded for this existing variant: compare-and-set, like the product's. */
+  expectedStockQty?: number | null;
 }
 export interface SaveProductRequest {
   name: string;
@@ -210,6 +215,8 @@ export interface OrderDto extends OrderSummaryDto {
   history: OrderHistoryDto[];
   whatsappMessage: string | null;
   customerWhatsappUrl: string;
+  /** Online payments (Paystack) started for this order. */
+  payments?: OrderPaymentDto[];
 }
 export interface DashboardDto {
   currency: string;
@@ -283,6 +290,8 @@ export interface PublicVariant {
   /** Always filled: falls back to the product price. */
   priceMinor: number;
   inStock: boolean;
+  /** Set only when stock is tracked and at or under the store's low-stock threshold. */
+  stockLeft?: number | null;
 }
 export interface PublicProductDto {
   id: string;
@@ -292,6 +301,8 @@ export interface PublicProductDto {
   priceMinor: number;
   compareAtPriceMinor: number | null;
   inStock: boolean;
+  /** Set only when stock is tracked and at or under the store's low-stock threshold. */
+  stockLeft?: number | null;
   categoryId: string | null;
   images: { url: string }[];
   options: ProductOption[];
@@ -343,6 +354,8 @@ export interface PlaceOrderResponse {
   currency: string;
   whatsappUrl: string;
   orderUrl: string;
+  /** The order page with ?pay=1 when the store takes online payments. */
+  payUrl?: string | null;
 }
 export interface PublicOrderDto {
   code: string;
@@ -364,6 +377,104 @@ export interface PublicOrderDto {
   showBranding: boolean;
   /** Delivery with no zone: the fee is agreed with the seller on WhatsApp. */
   deliveryToBeAgreed?: boolean;
+  /** The store takes online payments and this order can be paid now. */
+  canPayOnline?: boolean;
+}
+
+// ---- Online payments (the store's own Paystack) ----
+export type OnlinePaymentStatus = "Pending" | "Succeeded" | "Mismatch" | "Abandoned";
+export interface OrderPaymentDto {
+  reference: string;
+  amountMinor: number;
+  currency: string;
+  status: OnlinePaymentStatus;
+  createdAt: string;
+  paidAt: string | null;
+}
+/** GET/PUT/DELETE /api/store/payments. */
+export interface StorePaymentsDto {
+  connected: boolean;
+  /** The plan includes online payments. */
+  available: boolean;
+  webhookUrl: string;
+}
+
+// ---- Stock ----
+export type StockStatus = "InStock" | "Low" | "SoldOut";
+export interface InventoryItemDto {
+  productId: string;
+  variantId: string | null;
+  productName: string;
+  variantTitle: string | null;
+  stockQty: number;
+  status: StockStatus;
+}
+export interface InventoryDto {
+  /** The plan includes stock tracking. */
+  enabled: boolean;
+  lowStockThreshold: number;
+  items: InventoryItemDto[];
+}
+export type StockAdjustmentKind = "Sale" | "Cancellation" | "Adjustment" | "Count";
+export interface StockAdjustmentDto {
+  id: string;
+  productId: string;
+  variantId: string | null;
+  productName: string;
+  variantTitle: string | null;
+  delta: number;
+  quantityAfter: number;
+  kind: StockAdjustmentKind;
+  reason: string;
+  byName: string | null;
+  orderId: string | null;
+  orderNumber: number | null;
+  createdAt: string;
+}
+
+// ---- Team ----
+export type Role = "Owner" | "Admin" | "Staff";
+export type InviteRole = Exclude<Role, "Owner">;
+export interface MemberDto {
+  /** Membership id. */
+  id: string;
+  userId: string;
+  fullName: string;
+  email: string;
+  role: Role;
+  isYou: boolean;
+  joinedAt: string;
+}
+export interface InviteDto {
+  id: string;
+  email: string;
+  role: InviteRole;
+  invitedAt: string;
+  expiresAt: string;
+}
+export interface TeamDto {
+  members: MemberDto[];
+  invites: InviteDto[];
+  /** used = members + pending invites; limit -1 = unlimited. */
+  seats: { used: number; limit: number };
+}
+export interface PublicInviteDto {
+  businessName: string;
+  email: string;
+  role: string;
+  hasAccount: boolean;
+  expired: boolean;
+}
+
+// ---- Notifications ----
+export interface UserNotificationDto {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  link: string | null;
+  createdAt: string;
+  readAt: string | null;
 }
 
 /** GET /api/me/businesses: the businesses of this product the user belongs to. */

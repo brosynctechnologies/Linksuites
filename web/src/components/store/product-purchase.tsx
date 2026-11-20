@@ -30,6 +30,9 @@ export function ProductPurchase({
 
   const unitPrice = variant?.priceMinor ?? product.priceMinor;
   const inStock = product.inStock && (!variant || variant.inStock) && !comboMissing;
+  // "Only N left": the API sends a count only when stock is tracked and at or under the store's threshold.
+  const stockLeft = hasOptions ? (variant?.stockLeft ?? null) : (product.stockLeft ?? null);
+  const maxQty = stockLeft != null && stockLeft > 0 ? Math.min(99, stockLeft) : 99;
   // A variant's price is always filled (it falls back to the product price), so compare the
   // price actually shown with the product price rather than checking for an empty variant price.
   const showCompare = unitPrice === product.priceMinor && product.compareAtPriceMinor != null && product.compareAtPriceMinor > product.priceMinor;
@@ -51,7 +54,7 @@ export function ProductPurchase({
     addToCart(slug, {
       productId: product.id,
       variantId: variant?.id ?? null,
-      quantity: qty,
+      quantity: Math.min(qty, maxQty),
       name: product.name,
       variantTitle: variant?.title ?? null,
       unitPriceMinor: unitPrice,
@@ -67,6 +70,20 @@ export function ProductPurchase({
         <span className="font-display text-3xl font-bold text-ink">{formatMoney(unitPrice, currency)}</span>
         {showCompare && <span className="text-base text-subtle line-through">{formatMoney(product.compareAtPriceMinor, currency)}</span>}
       </p>
+      {!product.inStock || (variant && !variant.inStock) ? (
+        <p className="-mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-hibiscus-deep">
+          <span className="h-1.5 w-1.5 rounded-full bg-hibiscus" aria-hidden="true" />
+          Sold out
+        </p>
+      ) : (
+        stockLeft != null &&
+        stockLeft > 0 && (
+          <p className="-mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-marigold-deep">
+            <span className="h-1.5 w-1.5 rounded-full bg-marigold" aria-hidden="true" />
+            Only {stockLeft} left
+          </p>
+        )
+      )}
 
       {hasOptions &&
         product.options.map((opt, i) => (
@@ -90,7 +107,7 @@ export function ProductPurchase({
                     } ${ok ? "" : "text-subtle line-through opacity-60"}`}
                   >
                     {val}
-                    {!ok && <span className="sr-only"> (unavailable)</span>}
+                    {!ok && <span className="sr-only"> (sold out)</span>}
                   </button>
                 );
               })}
@@ -107,9 +124,15 @@ export function ProductPurchase({
             −
           </button>
           <span className="w-9 text-center font-semibold text-ink" aria-live="polite">
-            {qty}
+            {Math.min(qty, maxQty)}
           </span>
-          <button type="button" className={stepBtn} onClick={() => setQty((q) => Math.min(99, q + 1))} aria-label="Increase quantity">
+          <button
+            type="button"
+            className={stepBtn}
+            onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
+            disabled={qty >= maxQty}
+            aria-label="Increase quantity"
+          >
             +
           </button>
         </div>
@@ -148,7 +171,7 @@ export function ProductPurchase({
                 comboMissing ? (
                   "Not available"
                 ) : (
-                  "Out of stock"
+                  "Sold out"
                 )
               ) : !complete ? (
                 `Choose ${product.options
@@ -158,7 +181,7 @@ export function ProductPurchase({
               ) : (
                 <>
                   <span>Add to cart</span>
-                  <span className="font-display text-lg font-bold">{formatMoney(unitPrice * qty, currency)}</span>
+                  <span className="font-display text-lg font-bold">{formatMoney(unitPrice * Math.min(qty, maxQty), currency)}</span>
                 </>
               )}
             </button>

@@ -308,10 +308,24 @@ export function UpgradePrompt({ message }: { message?: string }) {
   );
 }
 
+/** A page this role can't use (Staff on a settings page): say who can, instead of showing forms the API refuses. */
+export function NoAccess({ text = "Only the store owner and admins can change this. Ask the store owner if something here needs changing." }: { text?: string }) {
+  return (
+    <div className="rounded-panel border border-line bg-surface p-4 sm:p-5">
+      <p className="font-display text-lg font-bold text-ink">Ask the store owner</p>
+      <p className="mt-1 max-w-prose text-sm text-ink-2">{text}</p>
+      <Link href="/dashboard" className={buttonClass("secondary", "mt-3")}>
+        Go to home
+      </Link>
+    </div>
+  );
+}
+
 /** Render an API error, switching to the upgrade prompt for 402 plan_limit. */
 export function ApiErrorView({ error, onRetry }: { error: ApiError | null | undefined; onRetry?: () => void }) {
   if (!error) return null;
   if (error.isPlanLimit) return <UpgradePrompt message={error.detail} />;
+  if (error.status === 403 && !error.detail) return <NoAccess />;
   return <ErrorBox error={error} onRetry={onRetry} />;
 }
 

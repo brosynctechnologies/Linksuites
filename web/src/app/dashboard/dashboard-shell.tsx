@@ -8,9 +8,11 @@ import { useAuth, useHydrated } from "@/lib/auth";
 import { APP_NAME, storeLink } from "@/lib/config";
 import { useApi } from "@/lib/use-api";
 import type { DashboardDto } from "@/lib/types";
-import { Skeleton, cx } from "@/components/ui";
+import { NoAccess, PageHeader, Skeleton, cx } from "@/components/ui";
 import { BoxIcon, ExternalIcon, HomeIcon, LogoutIcon, MenuIcon, OrdersIcon } from "@/components/icons";
-import { secondaryNav } from "@/components/dashboard-nav";
+import { navFor, secondaryNav } from "@/components/dashboard-nav";
+import { NotificationBell } from "@/components/notification-bell";
+import { canManageSettings, isSettingsPath, toRole } from "@/lib/roles";
 
 const primary = [
   { href: "/dashboard", label: "Home", icon: HomeIcon, exact: true },
@@ -80,6 +82,10 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     router.replace("/login");
   }
 
+  const role = toRole(auth.tenant.role);
+  const nav = navFor(role);
+  // Staff opening a settings page directly: a short note instead of forms the API would refuse (403).
+  const blocked = isSettingsPath(pathname) && !canManageSettings(role);
   const newCount = summary?.newOrders ?? 0;
   const moreActive = pathname === "/dashboard/more" || secondaryNav.some((n) => isActive(pathname, n.href));
   const countLabel = newCount > 0 ? `, ${newCount} new` : "";
@@ -100,7 +106,12 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             <span className="h-2.5 w-2.5 rounded-full bg-marigold" aria-hidden="true" />
             {APP_NAME}
           </Link>
-          <p className="mt-2 font-display text-xl leading-tight font-bold break-words text-white">{auth.tenant.name}</p>
+          <div className="mt-2 flex items-start justify-between gap-2">
+            <p className="min-w-0 pt-2 font-display text-xl leading-tight font-bold break-words text-white">{auth.tenant.name}</p>
+            <div className="-mr-2">
+              <NotificationBell tone="dark" align="start" />
+            </div>
+          </div>
           <a
             href={storeLink(auth.tenant.slug)}
             target="_blank"
@@ -133,7 +144,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           </ul>
           <p className="mt-6 mb-1 px-3 text-xs font-medium text-white/55">Store setup</p>
           <ul className="space-y-0.5">
-            {secondaryNav.map((item) => (
+            {nav.map((item) => (
               <li key={item.href}>
                 <RailLink href={item.href} active={isActive(pathname, item.href)} icon={<item.icon />}>
                   {item.label}
@@ -175,7 +186,16 @@ export function DashboardShell({ children }: { children: ReactNode }) {
       </header>
 
       <main id="main" className="min-w-0 flex-1 px-4 pt-5 pb-safe-bar sm:px-6 lg:px-10 lg:pt-10 lg:pb-12">
-        <div className="mx-auto max-w-5xl">{children}</div>
+        <div className="mx-auto max-w-5xl">
+          {blocked ? (
+            <div>
+              <PageHeader title={secondaryNav.find((n) => isActive(pathname, n.href))?.label ?? "Settings"} back="/dashboard/more" />
+              <NoAccess />
+            </div>
+          ) : (
+            children
+          )}
+        </div>
       </main>
 
       {/* Mobile bottom bar */}
