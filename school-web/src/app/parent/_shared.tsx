@@ -44,7 +44,7 @@ import type {
   PortalTermDto,
   PortalTimetableDto,
 } from "@/lib/types/portals";
-import { SCHOOL_DAYS, type PortalExamTimetableDto } from "@/lib/types/academic";
+import { SCHOOL_DAYS, type PortalExamTimetableDto, type StudentSubjectAttendanceDto } from "@/lib/types/academic";
 
 export const RESULTS_HELD = "Results are held. Please see the school office.";
 export const PORTAL_UNAVAILABLE = "This school's portal is unavailable.";
@@ -509,6 +509,34 @@ export function AttendanceCard({ data }: { data: PortalAttendanceDto | null | un
       <p className="mt-1 text-sm text-muted">Days present of days the class was open{pct !== null ? ` (${pct}%)` : ""}. Late days are not counted as present.</p>
       <p className="mt-1 text-sm break-words text-slate-700">{line}.</p>
     </Card>
+  );
+}
+
+/** Attendance per subject this term (lesson registers). Renders nothing while the school doesn't take them. */
+export function SubjectAttendanceCard({ data }: { data: StudentSubjectAttendanceDto | null | undefined }) {
+  if (!data || !data.enabled) return null;
+  return (
+    <section className="space-y-3" aria-labelledby="subject-attendance">
+      <SectionTitle id="subject-attendance">By subject · {data.termName}</SectionTitle>
+      {data.subjects.length === 0 ? (
+        <p className="text-sm text-muted">No lesson registers have been taken yet this term.</p>
+      ) : (
+        <div className="ruled-sheet">
+          <ul className="ruled-rows" aria-label="Attendance by subject">
+            {data.subjects.map((s) => (
+              <li key={s.classSubjectId} className="ruled-pad flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 py-3">
+                <span className="min-w-0 font-bold break-words text-ink">{s.subject}</span>
+                <span className="tnum text-sm text-slate-700">
+                  {s.present} present, {s.absent} absent, {s.late} late of {s.lessons} {s.lessons === 1 ? "lesson" : "lessons"}
+                  {s.percent !== null ? ` (${s.percent}%)` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <p className="text-xs text-muted">The share counts lessons present or late. The daily register above is the one the report card uses.</p>
+    </section>
   );
 }
 

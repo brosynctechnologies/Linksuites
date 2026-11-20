@@ -36,6 +36,7 @@ public static class StudentEndpoints
             return Results.File(pdf, "application/pdf", "report-card.pdf");
         });
         student.MapGet("/timetable", (PortalService s, CancellationToken ct) => s.StudentTimetableAsync(ct));
+        student.MapGet("/subject-attendance", (Guid? termId, SubjectAttendanceService s, CancellationToken ct) => s.ForSelfAsync(termId, ct));
         student.MapGet("/exam-timetable", (ExamTimetableService s, CancellationToken ct) => s.ForSelfAsync(ct));
 
         // A published paper for the student's own class, inside its window. The payload never includes the answer key.

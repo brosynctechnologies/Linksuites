@@ -77,6 +77,14 @@ public static class ParentEndpoints
         // Announcements that reach the child, and conversations with the class teacher or the school office (text and one private image).
         parent.MapGet("/children/{studentId:guid}/announcements", (Guid studentId, AnnouncementService s, CancellationToken ct) => s.ForChildAsync(studentId, ct));
         parent.MapGet("/children/{studentId:guid}/assignments", (Guid studentId, AssignmentService s, CancellationToken ct) => s.ForChildAsync(studentId, ct));
+        // A parent sends the homework for a child whose level has no student logins: text and one private file (a PDF or an image).
+        parent.MapPost("/children/{studentId:guid}/assignments/{id:guid}/submit", async (Guid studentId, Guid id, HttpRequest request, AssignmentService s, CancellationToken ct) =>
+        {
+            var form = await request.ReadFormAsync(ct);
+            var file = form.Files.GetFile("file");
+            return await s.ParentSubmitAsync(studentId, id, form["body"], file is null ? null : file.ToUpload(), ct);
+        }).RequireRateLimiting(RateLimits.PublicWrite).DisableAntiforgery();
+        parent.MapGet("/children/{studentId:guid}/subject-attendance", (Guid studentId, Guid? termId, SubjectAttendanceService s, CancellationToken ct) => s.ForChildAsync(studentId, termId, ct));
         parent.MapGet("/children/{studentId:guid}/threads", (Guid studentId, MessageService s, CancellationToken ct) => s.ParentThreadsAsync(studentId, ct));
         parent.MapPost("/children/{studentId:guid}/threads", (Guid studentId, StartThreadRequest r, MessageService s, CancellationToken ct) => s.StartAsync(studentId, r, ct))
             .RequireRateLimiting(RateLimits.PublicWrite);

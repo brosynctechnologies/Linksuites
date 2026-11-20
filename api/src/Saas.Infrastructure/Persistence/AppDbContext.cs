@@ -162,6 +162,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<MessageThread> MessageThreads => Set<MessageThread>();
     public DbSet<Message> Messages => Set<Message>();
     public DbSet<TimetableSlot> TimetableSlots => Set<TimetableSlot>();
+    public DbSet<SubjectRegister> SubjectRegisters => Set<SubjectRegister>();
+    public DbSet<SubjectAttendanceMark> SubjectAttendanceMarks => Set<SubjectAttendanceMark>();
     public DbSet<Location> Locations => Set<Location>();
     public DbSet<PropertyType> PropertyTypes => Set<PropertyType>();
     public DbSet<Amenity> Amenities => Set<Amenity>();
@@ -870,6 +872,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.HasOne<SchoolClass>().WithMany().HasForeignKey(x => x.ClassId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<ClassSubject>().WithMany().HasForeignKey(x => x.ClassSubjectId).OnDelete(DeleteBehavior.Cascade);
             e.Property(x => x.Day).HasConversion<string>().HasMaxLength(3);
+        });
+        b.Entity<SubjectRegister>(e =>
+        {
+            e.HasIndex(x => new { x.ClassSubjectId, x.Date, x.Period }).IsUnique();
+            // The day's lessons of a class, and a class subject's registers in a term (the reports).
+            e.HasIndex(x => new { x.TenantId, x.ClassId, x.Date });
+            e.HasIndex(x => new { x.ClassSubjectId, x.TermId });
+            e.HasOne<SchoolClass>().WithMany().HasForeignKey(x => x.ClassId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<ClassSubject>().WithMany().HasForeignKey(x => x.ClassSubjectId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Term>().WithMany().HasForeignKey(x => x.TermId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<StaffProfile>().WithMany().HasForeignKey(x => x.TakenByStaffId).OnDelete(DeleteBehavior.SetNull);
+            e.Property(x => x.ClientId).HasMaxLength(80);
+        });
+        b.Entity<SubjectAttendanceMark>(e =>
+        {
+            e.HasIndex(x => new { x.RegisterId, x.EnrolmentId }).IsUnique();
+            e.HasIndex(x => x.EnrolmentId);
+            e.HasOne<SubjectRegister>().WithMany().HasForeignKey(x => x.RegisterId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Enrolment>().WithMany().HasForeignKey(x => x.EnrolmentId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(10);
         });
         b.Entity<ImportBatch>(e =>
         {

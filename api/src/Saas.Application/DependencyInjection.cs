@@ -190,6 +190,7 @@ public static class DependencyInjection
         services.AddScoped<School.StudentAccess>();
         services.AddScoped<School.SchoolPublicService>();
         services.AddScoped<School.AttendanceService>();
+        services.AddScoped<School.SubjectAttendanceService>();
         services.AddScoped<School.ScoreService>();
         services.AddScoped<School.AssignmentService>();
         services.AddScoped<School.LessonPlanService>();

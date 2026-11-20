@@ -320,7 +320,10 @@ export interface AssignmentSubmissionDto {
   feedback: string | null;
   fileName: string | null;
   fileUrl: string | null;
+  /** The last work sent came from a parent's account (a child of a level without student logins). */
+  sentByParent: boolean;
 }
+/** `GET /api/school/assignments/{id}` and the list. The counts are of the class's active students. */
 export interface AssignmentDto {
   id: string;
   classSubjectId: string;
@@ -331,6 +334,10 @@ export interface AssignmentDto {
   maxMarks: number | null;
   assessmentComponentId: string | null;
   submissions: AssignmentSubmissionDto[];
+  submittedCount: number;
+  missingCount: number;
+  lateCount: number;
+  markedCount: number;
 }
 export interface CreateAssignmentRequest {
   classSubjectId: string;
@@ -361,13 +368,120 @@ export interface StudentAssignmentDto {
   fileName: string | null;
   fileUrl: string | null;
 }
-/** Parent homework: title, due, submitted, and the teacher's mark. No instructions or files. */
+/**
+ * Parent homework for their own child: the work set, what was sent, the mark and the teacher's comment. `canSubmit` is true when the
+ * parent may send it (the child's level has no student logins, and it isn't marked or was reopened).
+ */
 export interface ParentAssignmentDto {
   id: string;
+  subject: string;
   title: string;
+  instructions: string;
   dueAt: string;
+  maxMarks: number | null;
   submitted: boolean;
+  late: boolean;
+  submittedAt: string | null;
+  sentByParent: boolean;
+  body: string | null;
+  fileName: string | null;
+  fileUrl: string | null;
   mark: number | null;
+  feedback: string | null;
+  canSubmit: boolean;
+}
+
+// ---- Attendance per subject (SubjectAttendanceService) ----
+/** Excused is for the daily register only. */
+export type SubjectAttendanceStatus = "Present" | "Absent" | "Late";
+export const SUBJECT_ATTENDANCE_STATUSES: SubjectAttendanceStatus[] = ["Present", "Absent", "Late"];
+export interface SubjectAttendanceSettingsDto {
+  enabled: boolean;
+}
+export interface SubjectLessonDto {
+  classId: string;
+  className: string;
+  classSubjectId: string;
+  subject: string;
+  subjectCode: string;
+  period: number;
+  start: string;
+  end: string;
+  taken: boolean;
+  present: number;
+  absent: number;
+  late: number;
+}
+/** `GET /api/school/subject-attendance/lessons?date=`. `lessons` is empty while the school has it off, and on a Sunday. */
+export interface SubjectLessonsDto {
+  enabled: boolean;
+  date: string;
+  lessons: SubjectLessonDto[];
+}
+export interface SubjectMarkDto {
+  enrolmentId: string;
+  studentId: string;
+  studentName: string;
+  admissionNo: string;
+  status: SubjectAttendanceStatus;
+}
+/** One lesson's register. `taken` is false until saved (every mark is then Present); `locked`: the class's term is locked. */
+export interface SubjectRegisterDto {
+  classSubjectId: string;
+  classId: string;
+  className: string;
+  subject: string;
+  date: string;
+  period: number;
+  start: string;
+  end: string;
+  taken: boolean;
+  locked: boolean;
+  clientId: string | null;
+  marks: SubjectMarkDto[];
+}
+export interface SaveSubjectRegisterRequest {
+  clientId: string;
+  marks: { enrolmentId: string; status: SubjectAttendanceStatus }[];
+}
+/** `percent` is present or late of the lessons marked; null with none. */
+export interface SubjectAttendanceRowDto {
+  enrolmentId: string;
+  studentId: string;
+  name: string;
+  admissionNo: string;
+  lessons: number;
+  present: number;
+  absent: number;
+  late: number;
+  percent: number | null;
+}
+export interface SubjectAttendanceReportDto {
+  classSubjectId: string;
+  classId: string;
+  className: string;
+  subject: string;
+  termId: string;
+  termName: string;
+  lessons: number;
+  students: SubjectAttendanceRowDto[];
+}
+export interface StudentSubjectDto {
+  classSubjectId: string;
+  subject: string;
+  subjectCode: string;
+  lessons: number;
+  present: number;
+  absent: number;
+  late: number;
+  percent: number | null;
+}
+/** Staff (`/api/school/students/{id}/subject-attendance`) and the portals. In the portals `subjects` is empty while it is off. */
+export interface StudentSubjectAttendanceDto {
+  enabled: boolean;
+  termId: string;
+  termName: string;
+  subjects: StudentSubjectDto[];
 }
 
 // ---- Lesson plans (LessonPlanService) ----

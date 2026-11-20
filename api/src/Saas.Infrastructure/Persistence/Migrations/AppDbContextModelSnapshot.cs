@@ -9747,6 +9747,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("reopened");
 
+                    b.Property<bool>("SentByParent")
+                        .HasColumnType("boolean")
+                        .HasColumnName("sent_by_parent");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -11986,6 +11990,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(60)")
                         .HasColumnName("slug");
 
+                    b.Property<bool>("SubjectAttendanceEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("subject_attendance_enabled");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
                         .HasColumnName("tenant_id");
@@ -12397,6 +12405,134 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_subjects_tenant_id_name");
 
                     b.ToTable("subjects", (string)null);
+                });
+
+            modelBuilder.Entity("Saas.Domain.School.SubjectAttendanceMark", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("EnrolmentId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("enrolment_id");
+
+                    b.Property<Guid>("RegisterId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("register_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_subject_attendance_marks");
+
+                    b.HasIndex("EnrolmentId")
+                        .HasDatabaseName("ix_subject_attendance_marks_enrolment_id");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("ix_subject_attendance_marks_tenant_id");
+
+                    b.HasIndex("RegisterId", "EnrolmentId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_subject_attendance_marks_register_id_enrolment_id");
+
+                    b.ToTable("subject_attendance_marks", (string)null);
+                });
+
+            modelBuilder.Entity("Saas.Domain.School.SubjectRegister", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClassId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("class_id");
+
+                    b.Property<Guid>("ClassSubjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("class_subject_id");
+
+                    b.Property<string>("ClientId")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("client_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateOnly>("Date")
+                        .HasColumnType("date")
+                        .HasColumnName("date");
+
+                    b.Property<TimeOnly>("End")
+                        .HasColumnType("time without time zone")
+                        .HasColumnName("end");
+
+                    b.Property<int>("Period")
+                        .HasColumnType("integer")
+                        .HasColumnName("period");
+
+                    b.Property<TimeOnly>("Start")
+                        .HasColumnType("time without time zone")
+                        .HasColumnName("start");
+
+                    b.Property<Guid?>("TakenByStaffId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("taken_by_staff_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TermId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("term_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_subject_registers");
+
+                    b.HasIndex("ClassId")
+                        .HasDatabaseName("ix_subject_registers_class_id");
+
+                    b.HasIndex("TakenByStaffId")
+                        .HasDatabaseName("ix_subject_registers_taken_by_staff_id");
+
+                    b.HasIndex("TermId")
+                        .HasDatabaseName("ix_subject_registers_term_id");
+
+                    b.HasIndex("ClassSubjectId", "TermId")
+                        .HasDatabaseName("ix_subject_registers_class_subject_id_term_id");
+
+                    b.HasIndex("ClassSubjectId", "Date", "Period")
+                        .IsUnique()
+                        .HasDatabaseName("ix_subject_registers_class_subject_id_date_period");
+
+                    b.HasIndex("TenantId", "ClassId", "Date")
+                        .HasDatabaseName("ix_subject_registers_tenant_id_class_id_date");
+
+                    b.ToTable("subject_registers", (string)null);
                 });
 
             modelBuilder.Entity("Saas.Domain.School.SubjectResult", b =>
@@ -15664,6 +15800,67 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_subjects_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Saas.Domain.School.SubjectAttendanceMark", b =>
+                {
+                    b.HasOne("Saas.Domain.School.Enrolment", null)
+                        .WithMany()
+                        .HasForeignKey("EnrolmentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_subject_attendance_marks_enrolments_enrolment_id");
+
+                    b.HasOne("Saas.Domain.School.SubjectRegister", null)
+                        .WithMany()
+                        .HasForeignKey("RegisterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_subject_attendance_marks_subject_registers_register_id");
+
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_subject_attendance_marks_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Saas.Domain.School.SubjectRegister", b =>
+                {
+                    b.HasOne("Saas.Domain.School.SchoolClass", null)
+                        .WithMany()
+                        .HasForeignKey("ClassId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_subject_registers_school_classes_class_id");
+
+                    b.HasOne("Saas.Domain.School.ClassSubject", null)
+                        .WithMany()
+                        .HasForeignKey("ClassSubjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_subject_registers_class_subjects_class_subject_id");
+
+                    b.HasOne("Saas.Domain.School.StaffProfile", null)
+                        .WithMany()
+                        .HasForeignKey("TakenByStaffId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_subject_registers_staff_profiles_taken_by_staff_id");
+
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_subject_registers_tenants_tenant_id");
+
+                    b.HasOne("Saas.Domain.School.Term", null)
+                        .WithMany()
+                        .HasForeignKey("TermId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_subject_registers_terms_term_id");
                 });
 
             modelBuilder.Entity("Saas.Domain.School.SubjectResult", b =>

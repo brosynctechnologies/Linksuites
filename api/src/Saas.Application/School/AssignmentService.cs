@@ -7,17 +7,29 @@ namespace Saas.Application.School;
 public sealed record CreateAssignmentRequest(
     Guid ClassSubjectId, Guid TermId, string? Title, string? Instructions, DateTimeOffset? DueAt, decimal? MaxMarks, Guid? AssessmentComponentId);
 public sealed record MarkAssignmentRequest(decimal? Mark, string? Feedback, bool? Reopen, bool? Received);
+/// <summary><c>SentByParent</c>: the last work sent came from a parent's account (a child of a level without student logins).</summary>
 public sealed record AssignmentSubmissionDto(
     Guid EnrolmentId, string Name, string AdmissionNo, AssignmentSubmissionStatus Status, bool Submitted, bool Late,
-    string? Body, DateTimeOffset? SubmittedAt, decimal? Mark, string? Feedback, string? FileName, string? FileUrl);
+    string? Body, DateTimeOffset? SubmittedAt, decimal? Mark, string? Feedback, string? FileName, string? FileUrl, bool SentByParent);
+/// <summary>
+/// One assignment with every active student of the class. The counts are of that roster: submitted (sent or recorded received), missing
+/// (not yet), late (sent after the due date) and marked.
+/// </summary>
 public sealed record AssignmentDto(
     Guid Id, Guid ClassSubjectId, Guid TermId, string Title, string Instructions, DateTimeOffset DueAt,
-    decimal? MaxMarks, Guid? AssessmentComponentId, IReadOnlyList<AssignmentSubmissionDto> Submissions);
+    decimal? MaxMarks, Guid? AssessmentComponentId, IReadOnlyList<AssignmentSubmissionDto> Submissions,
+    int SubmittedCount, int MissingCount, int LateCount, int MarkedCount);
 public sealed record StudentAssignmentDto(
     Guid Id, string Title, string Instructions, DateTimeOffset DueAt, decimal? MaxMarks, bool Submitted, bool Late,
     string? Body, decimal? Mark, string? Feedback, string? FileName, string? FileUrl);
-/// <summary>What a parent may see: the title, when it is due, whether it has come in, and the mark once the teacher has saved one.</summary>
-public sealed record ParentAssignmentDto(Guid Id, string Title, DateTimeOffset DueAt, bool Submitted, decimal? Mark);
+/// <summary>
+/// What a parent sees of their own child's homework: the work set, what was sent, the mark and the teacher's comment.
+/// <c>CanSubmit</c> is true when the parent may send the work: the child's level has no student logins, and the work is not marked
+/// (or the teacher reopened it).
+/// </summary>
+public sealed record ParentAssignmentDto(
+    Guid Id, string Subject, string Title, string Instructions, DateTimeOffset DueAt, decimal? MaxMarks, bool Submitted, bool Late,
+    DateTimeOffset? SubmittedAt, bool SentByParent, string? Body, string? FileName, string? FileUrl, decimal? Mark, string? Feedback, bool CanSubmit);
 public sealed record AssignmentFile(Stream? Content, string? RedirectUrl, string ContentType, string FileName);
 
 /// <summary>
@@ -48,6 +60,16 @@ public sealed class AssignmentService(
         var rows = await db.Assignments.AsNoTracking().Where(a => a.ClassSubjectId == cs.Id && a.TermId == termId)
             .OrderBy(a => a.DueAt).ThenBy(a => a.Title).ToListAsync(ct);
         return await WithRosterAsync(cls, rows, ct);
+    }
+
+    /// <summary>One assignment and its roster: who has sent the work, who hasn't, and what is late. A teacher of another subject gets 404.</summary>
+    public async Task<AssignmentDto> GetAsync(Guid id, CancellationToken ct)
+    {
+        RefuseBursar();
+        var assignment = await db.Assignments.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, ct) ?? throw new NotFoundException("This assignment");
+        if (!access.IsLeadership && !await access.TeachesClassSubjectAsync(assignment.ClassSubjectId, ct))
+            throw new NotFoundException("This assignment");
+        return (await WithRosterAsync(await ClassOfAsync(assignment.ClassSubjectId, ct), [assignment], ct))[0];
     }
 
     public async Task<AssignmentDto> CreateAsync(CreateAssignmentRequest r, CancellationToken ct)
@@ -151,11 +173,28 @@ public sealed class AssignmentService(
     public async Task<StudentAssignmentDto> SubmitAsync(Guid id, string? text, Upload? file, CancellationToken ct)
     {
         var me = await students.RequireSelfAsync(ct);
-        var enrolment = await CurrentEnrolmentAsync(me.StudentId, ct) ?? throw new NotFoundException("This assignment");
+        var (assignment, enrolment) = await AssignmentOfChildAsync(id, me.StudentId, ct);
+        var row = await SubmitCoreAsync(assignment, enrolment, text, file, sentByParent: false, ct);
+        return StudentDto(assignment, row);
+    }
+
+    /// <summary>The assignment, when it is set for the child's current class; 404 otherwise (another class, another school, unknown).</summary>
+    private async Task<(Assignment Assignment, Enrolment Enrolment)> AssignmentOfChildAsync(Guid id, Guid studentId, CancellationToken ct)
+    {
+        var enrolment = await CurrentEnrolmentAsync(studentId, ct) ?? throw new NotFoundException("This assignment");
         var assignment = await db.Assignments.FirstOrDefaultAsync(a => a.Id == id, ct) ?? throw new NotFoundException("This assignment");
         var classId = await db.ClassSubjects.Where(c => c.Id == assignment.ClassSubjectId).Select(c => c.ClassId).FirstAsync(ct);
         if (classId != enrolment.ClassId) throw new NotFoundException("This assignment");
+        return (assignment, enrolment);
+    }
 
+    /// <summary>
+    /// Stores the work (text and at most one private file) for the enrolment, replacing what was sent before. Refused once marked, until the
+    /// teacher reopens it. Late is decided by the server's clock against the due date.
+    /// </summary>
+    private async Task<AssignmentSubmission> SubmitCoreAsync(
+        Assignment assignment, Enrolment enrolment, string? text, Upload? file, bool sentByParent, CancellationToken ct)
+    {
         var body = (text ?? "").Trim();
         if (body.Length > MaxBodyLength) throw BadRequestException.Field("body", $"Use {MaxBodyLength} characters or fewer.");
         var stored = file is null || file.Length <= 0 ? null : await ReadFileAsync(file, ct);
@@ -183,32 +222,58 @@ public sealed class AssignmentService(
         row.Late = now > assignment.DueAt;
         row.Status = AssignmentSubmissionStatus.Received;
         row.Reopened = false;
+        row.SentByParent = sentByParent;
         await SaveAsync(ct);
         await tx.CommitAsync(ct);
         await DeleteQuietlyAsync(oldKey, ct);
-        return StudentDto(assignment, row);
+        return row;
     }
 
     // ---------- Parent ----------
+
+    public const string ChildSendsOwnWork = "Your child sends this work from their own student account.";
 
     public async Task<IReadOnlyList<ParentAssignmentDto>> ForChildAsync(Guid studentId, CancellationToken ct)
     {
         await parents.RequireChildAsync(studentId, ct);
         var enrolment = await CurrentEnrolmentAsync(studentId, ct);
         if (enrolment is null) return [];
-        var classSubjectIds = await db.ClassSubjects.AsNoTracking().Where(c => c.ClassId == enrolment.ClassId).Select(c => c.Id).ToListAsync(ct);
+        var parentSends = !await HasStudentLoginsAsync(enrolment.ClassId, ct);
+        var subjects = await db.ClassSubjects.AsNoTracking().Where(c => c.ClassId == enrolment.ClassId)
+            .Join(db.Subjects.AsNoTracking(), c => c.SubjectId, s => s.Id, (c, s) => new { c.Id, s.Name }).ToDictionaryAsync(x => x.Id, x => x.Name, ct);
+        var classSubjectIds = subjects.Keys.ToList();
         var rows = await db.Assignments.AsNoTracking().Where(a => classSubjectIds.Contains(a.ClassSubjectId))
             .OrderByDescending(a => a.DueAt).ThenBy(a => a.Title).ToListAsync(ct);
         var ids = rows.Select(a => a.Id).ToList();
         var submissions = await db.AssignmentSubmissions.AsNoTracking()
             .Where(s => ids.Contains(s.AssignmentId) && s.EnrolmentId == enrolment.Id)
             .ToDictionaryAsync(s => s.AssignmentId, ct);
-        return rows.Select(a =>
-        {
-            submissions.TryGetValue(a.Id, out var submission);
-            return new ParentAssignmentDto(a.Id, a.Title, a.DueAt, IsSubmitted(submission), submission?.Mark);
-        }).ToList();
+        return rows.Select(a => ParentDto(a, subjects.GetValueOrDefault(a.ClassSubjectId) ?? "", submissions.GetValueOrDefault(a.Id), parentSends)).ToList();
     }
+
+    /// <summary>
+    /// A parent sends the work for their own child, for a level without student logins (nursery and young primary children). The same
+    /// rules as a student's own submission: text and one private file, late by the due date, refused once marked until reopened.
+    /// </summary>
+    public async Task<ParentAssignmentDto> ParentSubmitAsync(Guid studentId, Guid id, string? text, Upload? file, CancellationToken ct)
+    {
+        await parents.RequireChildAsync(studentId, ct);
+        var (assignment, enrolment) = await AssignmentOfChildAsync(id, studentId, ct);
+        if (await HasStudentLoginsAsync(enrolment.ClassId, ct)) throw new ForbiddenException(ChildSendsOwnWork);
+        var row = await SubmitCoreAsync(assignment, enrolment, text, file, sentByParent: true, ct);
+        var subject = await db.ClassSubjects.AsNoTracking().Where(c => c.Id == assignment.ClassSubjectId)
+            .Join(db.Subjects.AsNoTracking(), c => c.SubjectId, s => s.Id, (c, s) => s.Name).FirstAsync(ct);
+        return ParentDto(assignment, subject, row, parentSends: true);
+    }
+
+    private Task<bool> HasStudentLoginsAsync(Guid classId, CancellationToken ct) =>
+        db.SchoolClasses.AsNoTracking().Where(c => c.Id == classId)
+            .Join(db.Levels.AsNoTracking(), c => c.LevelId, l => l.Id, (c, l) => l.HasStudentLogins).FirstOrDefaultAsync(ct);
+
+    private ParentAssignmentDto ParentDto(Assignment a, string subject, AssignmentSubmission? row, bool parentSends) => new(
+        a.Id, subject, a.Title, a.Instructions, a.DueAt, a.MaxMarks, IsSubmitted(row), row?.Late ?? false, row?.SubmittedAt, row?.SentByParent ?? false,
+        row?.Body, row?.FileName, row?.FileKey is null ? null : signer.AssignmentFileUrl(row.Id), row?.Mark, row?.Feedback,
+        parentSends && (row?.Mark is null || row.Reopened));
 
     // ---------- Rules ----------
 
@@ -341,13 +406,16 @@ public sealed class AssignmentService(
                 mine.TryGetValue(r.EnrolmentId, out var submission);
                 return ToSubmission(r, submission);
             }).ToList();
-            return new AssignmentDto(a.Id, a.ClassSubjectId, a.TermId, a.Title, a.Instructions, a.DueAt, a.MaxMarks, a.AssessmentComponentId, list);
+            var submitted = list.Count(s => s.Submitted);
+            return new AssignmentDto(a.Id, a.ClassSubjectId, a.TermId, a.Title, a.Instructions, a.DueAt, a.MaxMarks, a.AssessmentComponentId, list,
+                submitted, list.Count - submitted, list.Count(s => s.Late), list.Count(s => s.Mark is not null));
         }).ToList();
     }
 
     private AssignmentSubmissionDto ToSubmission(RosterRow roster, AssignmentSubmission? row) => new(
         roster.EnrolmentId, roster.Name, roster.AdmissionNo, row?.Status ?? AssignmentSubmissionStatus.None, IsSubmitted(row), row?.Late ?? false,
-        row?.Body, row?.SubmittedAt, row?.Mark, row?.Feedback, row?.FileName, row?.FileKey is null ? null : signer.AssignmentFileUrl(row.Id));
+        row?.Body, row?.SubmittedAt, row?.Mark, row?.Feedback, row?.FileName, row?.FileKey is null ? null : signer.AssignmentFileUrl(row.Id),
+        row?.SentByParent ?? false);
 
     private StudentAssignmentDto StudentDto(Assignment assignment, AssignmentSubmission? row) => new(
         assignment.Id, assignment.Title, assignment.Instructions, assignment.DueAt, assignment.MaxMarks, IsSubmitted(row), row?.Late ?? false,
