@@ -360,8 +360,11 @@ public sealed class PaystackPayoutTests(ApiFixture api)
         var ledger = await LedgerAsync(tenantId);
         Assert.Equal(2_000_000 - earning.NetMinor, ledger.AvailableMinor);
         Assert.Equal(LedgerRules.EarningState.Clawback, ledger.States[clawback.Id]);
-        var alert = Assert.Single(await ClawbackAlertsAsync(), n => n.Payload["reference"] == reference);
-        Assert.Contains("Clawback Academy", alert.Payload["business"]);
+        // One email per Finance recipient (how many depends on the admins earlier tests created).
+        var alerts = (await ClawbackAlertsAsync()).Where(n => n.Payload["reference"] == reference).ToList();
+        Assert.NotEmpty(alerts);
+        Assert.All(alerts.GroupBy(n => n.Recipient), g => Assert.Single(g));
+        Assert.Contains("Clawback Academy", alerts[0].Payload["business"]);
 
         // Refunding again changes nothing.
         Assert.Equal(HttpStatusCode.Conflict, (await admin.PostAsync($"/api/admin/course-orders/{orderId}/refund", null, Ct)).StatusCode);

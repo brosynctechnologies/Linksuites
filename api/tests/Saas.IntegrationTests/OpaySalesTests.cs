@@ -382,7 +382,9 @@ public sealed class OpaySalesTests(ApiFixture api)
             // A day later and still no answer: Finance is told, once.
             await SalesRecheckAsync(DateTimeOffset.UtcNow.AddHours(25));
             await SalesRecheckAsync(DateTimeOffset.UtcNow.AddHours(26));
-            Assert.Single(await RefundAlertsAsync(), n => n.Payload["reference"] == reference);
+            var alerts = (await RefundAlertsAsync()).Where(n => n.Payload["reference"] == reference).ToList();
+            Assert.NotEmpty(alerts);
+            Assert.All(alerts.GroupBy(n => n.Recipient), g => Assert.Single(g)); // once for each Finance recipient
         }
         finally { api.Opay.RefundQueryUnavailable = false; }
 
