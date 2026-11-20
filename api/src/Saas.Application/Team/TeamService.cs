@@ -68,6 +68,7 @@ public sealed class TeamService(
         // A clinical role means something only to a CareLink clinic; elsewhere it is dropped.
         var tenantId = tenant.TenantId!.Value;
         var product = await db.Tenants.Where(x => x.Id == tenantId).Select(x => x.Product).FirstAsync(ct);
+        EnsureRoleFits(product, r.Role);
         var clinicalRole = product == Products.Care
             ? Care.CareStaff.CheckInvite(user.Role ?? MemberRole.Staff, r.Role, r.ClinicalRole)
             : null;
@@ -102,6 +103,8 @@ public sealed class TeamService(
     {
         var member = await LoadMemberAsync(membershipId, ct);
         if (member.Role == MemberRole.Owner) throw new ConflictException("The owner's role can't be changed.");
+        var tenantId = tenant.TenantId!.Value;
+        EnsureRoleFits(await db.Tenants.Where(x => x.Id == tenantId).Select(x => x.Product).FirstAsync(ct), r.Role);
         var previousRole = member.Role;
         member.Role = r.Role;
         await Care.CareStaff.OnRoleChangedAsync(db, member, previousRole, user.Role, user.UserId, ct);
@@ -123,6 +126,13 @@ public sealed class TeamService(
     }
 
     public static string HashToken(string token) => Codes.Sha256($"invite:{token}");
+
+    /// <summary>OrderLink has two team roles, Admin (everything but billing) and Staff (orders and products); it has no Accountant.</summary>
+    private static void EnsureRoleFits(string product, MemberRole role)
+    {
+        if (product == Products.WhatsAppOrders && role == MemberRole.Accountant)
+            throw BadRequestException.Field("role", "Choose Admin or Staff.");
+    }
 
     private IQueryable<Invitation> PendingInvites(DateTimeOffset now) =>
         db.Invitations.Where(i => i.AcceptedAt == null && i.ExpiresAt > now);

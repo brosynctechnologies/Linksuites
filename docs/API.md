@@ -74,6 +74,25 @@ The same routes serve every product and the admin console; full rules are in `do
 `StoreDto = { id, name, slug, description, logoUrl, coverUrl, whatsappNumber, currency, themeColor, isOpen, openingHours, country, storeUrl }`
 `whatsappNumber` is stored in international digits (e.g. `2348031234567`); local input like `0803 123 4567` is accepted and normalised.
 
+### Roles (wave 4)
+
+Every seller route needs the OrderLink product and one of its team roles. **Staff**: orders, products, categories, stock (view and
+adjust), the dashboard and `GET /api/store`. **Admin**: everything Staff can do plus settings (store, delivery zones, discount codes,
+the low-stock threshold, custom domain check, online payment settings view) and the team. **Owner**: everything, plus billing
+checkout, the Paystack key and setting or removing the custom domain. Anyone else gets 403. Team members are invited with the shared
+`/api/team` routes (Admin or Staff; `Accountant` is refused with 400 on OrderLink). Seats: Free 1 (the owner), Pro 3.
+
+### Online payments (Pro `online_payments`)
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/store/payments` | — (Owner/Admin) | `{ connected, available, webhookUrl }` |
+| PUT | `/api/store/payments` | `{ secretKey, force? }` (Owner) | same; 400 field `secretKey`, 402 without the plan, 409 `checkouts_open` (a checkout started in the last 24 hours; resend with `force: true`) |
+| DELETE | `/api/store/payments?force=` | — (Owner) | same |
+
+The key is stored encrypted and never returned. A replaced or removed key still confirms checkouts for 7 days. The store pastes
+`webhookUrl` (`/api/webhooks/paystack/orders/{tenantId}`) into its Paystack dashboard; events are verified with the store's key.
+
 ### Custom domain (Wave 3; plans with `custom_domain`, OrderLink Pro)
 
 | Method | Path | Body | Returns |
@@ -132,9 +151,30 @@ The script passes the header to curl from a 600-permission temp file (`--config`
 
 `CategoryDto = { id, name, position, productCount }`
 `ProductDto = { id, categoryId, categoryName, name, slug, description, priceMinor, compareAtPriceMinor, inStock, stockQty, isActive, position, images: [{ id, url, position }], options: [{ name, values: string[] }], variants: [VariantDto] }`
-`VariantDto = { id, optionValues: string[], title, priceMinor, inStock, sku }` — `priceMinor` null means "use product price"; `title` is e.g. `"Large / Red"`.
-`SaveProductRequest = { name, description, categoryId, priceMinor, compareAtPriceMinor, inStock, stockQty, isActive, position, options: [{ name, values }], variants: [{ id?, optionValues, priceMinor?, inStock, sku }] }`
+`VariantDto = { id, optionValues: string[], title, priceMinor, inStock, sku, stockQty }` — `priceMinor` null means "use product price"; `title` is e.g. `"Large / Red"`.
+`SaveProductRequest = { name, description, categoryId, priceMinor, compareAtPriceMinor, inStock, stockQty, expectedStockQty?, isActive, position, options: [{ name, values }], variants: [{ id?, optionValues, priceMinor?, inStock, sku, stockQty?, expectedStockQty? }] }`
 `stockQty` null = stock not tracked. If `options` is non-empty, `variants` should list each combination the seller sells.
+Stock counts (product and variant) are compare-and-set: send `expectedStockQty` (the count the form loaded, null if untracked) and the
+count changes only if it still matches (409 `stock_changed` otherwise, because orders came in). A new variant takes `stockQty` as sent;
+an existing variant's count changes only when `expectedStockQty` is sent. Setting a count needs the Pro plan (`inventory`; 402
+`plan_limit` on Free); clearing it (null) is always allowed. Each change is logged (`Count`).
+
+## Stock (auth; Pro `inventory`)
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/inventory?filter=all\|low&q=` | — | `{ enabled, lowStockThreshold, items: [{ productId, variantId, productName, variantTitle, stockQty, status }] }` (`status`: `InStock`, `Low`, `SoldOut`; items empty when `enabled` is false) |
+| PUT | `/api/inventory/settings` | `{ lowStockThreshold }` (0-10000; Owner/Admin) | same shape, `items` empty |
+| POST | `/api/inventory/adjustments` | `{ productId, variantId?, delta, reason }` (delta non-zero, ±100000; reason 1-200) | `StockAdjustmentDto`; 409 `not_tracked`, 409 `not_enough_stock` (below zero), 402 on Free |
+| GET | `/api/inventory/adjustments?productId=&variantId=&page=&pageSize=50` | — | `Paged<StockAdjustmentDto>`, newest first |
+
+`StockAdjustmentDto = { id, productId, variantId, productName, variantTitle, delta, quantityAfter, kind, reason, byName, orderId, orderNumber, createdAt }`;
+`kind`: `Sale` (an order took it), `Cancellation` (a cancelled order gave it back), `Adjustment` (by hand), `Count` (set in the product form).
+Rules: stock is tracked only on a plan with `inventory` (Pro). On Free, saved counts are kept but ignored (nothing is taken, nothing
+shows). A placed order takes stock from the product's count and the variant's count (each tracked one) with a conditional update, so
+concurrent orders never oversell; a cancelled order gives back exactly what it took. When a count reaches the store's
+`lowStockThreshold` (default 5) or lower, the owners get one email (`order.low_stock`) and one in-app notification (link
+`/app/inventory?filter=low`); the next alert for that item comes only after its count has gone back above the threshold.
 
 ## Delivery zones and discount codes (auth)
 
@@ -153,12 +193,14 @@ Discount `type` is `"Percent"` (value 1–100) or `"Fixed"` (value in minor unit
 | GET | `/api/orders/{id}` | — | `OrderDto` |
 | PATCH | `/api/orders/{id}/status` | `{ status, note }` | `OrderDto` |
 | PATCH | `/api/orders/{id}/payment` | `{ paymentStatus }` (`"Unpaid"`/`"Paid"`) | `OrderDto` |
+| POST | `/api/orders/{id}/payments/{reference}/verify` | — | `OrderDto` after asking Paystack about one of the order's online checkouts |
 | GET | `/api/dashboard` | — | `DashboardDto` |
 
 Order `status`: `New`, `Confirmed`, `Paid`, `Delivered`, `Cancelled`. `fulfilment`: `Delivery`, `Pickup`.
 `Paged<T> = { items: T[], page, pageSize, total }`
 `OrderSummaryDto = { id, number, code, customerName, phone, fulfilment, totalMinor, currency, status, paymentStatus, itemCount, createdAt }`
-`OrderDto = OrderSummaryDto & { address, note, deliveryZoneName, subtotalMinor, deliveryFeeMinor, discountMinor, discountCode, items: [{ productId, variantId, name, variant, unitPriceMinor, quantity, lineTotalMinor }], history: [{ status, note, createdAt }], whatsappMessage, customerWhatsappUrl }`
+`OrderDto = OrderSummaryDto & { address, note, deliveryZoneName, subtotalMinor, deliveryFeeMinor, discountMinor, discountCode, items: [{ productId, variantId, name, variant, unitPriceMinor, quantity, lineTotalMinor }], history: [{ status, note, createdAt }], whatsappMessage, customerWhatsappUrl, payments: [{ reference, amountMinor, currency, status, createdAt, paidAt }] }`
+(online checkout `status`: `Pending`, `Succeeded`, `Mismatch` (Paystack reported another amount or currency; not applied), `Abandoned` (not found after a day; a later confirmation still applies))
 `DashboardDto = { currency, todayOrders, todaySalesMinor, monthSalesMinor, newOrders, productCount, recentOrders: OrderSummaryDto[] }` (sales exclude cancelled orders)
 
 ## Billing (auth)
@@ -179,8 +221,10 @@ Order `status`: `New`, `Confirmed`, `Paid`, `Delivered`, `Cancelled`. `fulfilmen
 | GET | `/api/public/stores/{slug}/products` | — | `PublicProductDto[]` (active only) |
 | GET | `/api/public/stores/{slug}/products/{productSlug}` | — | `PublicProductDto` |
 | POST | `/api/public/stores/{slug}/quote` | `QuoteRequest` | `QuoteDto` |
-| POST | `/api/public/stores/{slug}/orders` | `PlaceOrderRequest` | `{ code, number, totalMinor, currency, whatsappUrl, orderUrl }` |
+| POST | `/api/public/stores/{slug}/orders` | `PlaceOrderRequest` | `{ code, number, totalMinor, currency, whatsappUrl, orderUrl, payUrl }` |
 | GET | `/api/public/orders/{code}` | — | `PublicOrderDto` |
+| POST | `/api/public/orders/{code}/pay` | `{ email? }` | `{ authorizationUrl, reference }`; 409 `online_payments_unavailable`, `order_paid`, `order_cancelled`, `delivery_fee_not_agreed` |
+| POST | `/api/public/orders/{code}/verify` | `{ reference }` | `PublicOrderDto` after asking Paystack (the return check); 404 for another order's reference |
 | GET | `/api/public/domains/{host}` | — | `{ slug }` for a served custom domain (Live, plan includes it, business active); 404 otherwise. Cached a minute. |
 
 On a custom domain the OrderLink web app (`web/src/proxy.ts`) serves the store at `/` (`/p/{product}`, `/cart`, `/checkout` too; the
@@ -194,6 +238,17 @@ on `/api/public/*` also accepts `https://<served custom domain>` origins (checke
 `PlaceOrderRequest = QuoteRequest & { customerName, phone, address, note }` — `address` required for `Delivery`; `deliveryZoneId` required for `Delivery` when the store has zones.
 After placing an order, send the browser to `whatsappUrl` (a `https://wa.me/...` link with the order pre-filled). The order is already saved, so the seller has a record even if the customer never presses send.
 `PublicOrderDto = { code, number, storeName, storeSlug, status, paymentStatus, fulfilment, items: [{ name, variant, quantity, lineTotalMinor }], subtotalMinor, deliveryFeeMinor, discountMinor, totalMinor, currency, createdAt, whatsappUrl, showBranding, deliveryToBeAgreed }`
+Wave 4: `PublicProductDto` and its variants carry `stockLeft` (a number only when stock is tracked on Pro and the count is at or under the
+store's threshold, for "Only N left"; null otherwise) and `inStock` is false when sold out (an order for it is 409 `out_of_stock`).
+`PublicOrderDto.canPayOnline` is true when the store takes online payments (Pro and a Paystack key), the business is active and the order
+is open, unpaid, non-zero and its total is final (not "delivery to be agreed"). `payUrl` (and a "Pay online:" line in the WhatsApp
+message) is the order page with `?pay=1`. Paying: `pay` saves a Pending checkout for the order total (reference `ol_{orderId}_{random}`)
+and returns Paystack's page; Paystack sends the customer back to `/o/{code}?reference=...`, which calls `verify`. The order becomes Paid
+only when Paystack confirms a charge of exactly that amount and currency, through the store's webhook, the return check, or the
+background re-check (every 5 minutes: checkouts 15 minutes to 7 days old, at most every 10 minutes in their first day, then hourly; one
+still not found after a day is marked Abandoned). Each checkout is applied once. A charge for an order already paid or cancelled is
+recorded and the owners are told to refund; a mismatched charge leaves the order unpaid and the owners are told (email `order.payment`
+and in-app).
 A quote line's `productSlug` is the product's current slug: carts link with it, so a renamed product's cart link still works. `deliveryToBeAgreed` is true for a delivery order placed while the store had no delivery zones (no fee): the WhatsApp message says "Delivery - to be agreed" instead of a ₦0 fee.
 
 ## Reserved store slugs

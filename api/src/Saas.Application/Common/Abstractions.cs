@@ -61,6 +61,9 @@ public interface IAppDbContext
     DbSet<Customer> Customers { get; }
     DbSet<Order> Orders { get; }
     DbSet<OrderStatusHistory> OrderStatusHistory { get; }
+    DbSet<OrderItem> OrderItems { get; }
+    DbSet<StockAdjustment> StockAdjustments { get; }
+    DbSet<OrderPayment> OrderPayments { get; }
 
     DbSet<BusinessSettings> BusinessSettings { get; }
     DbSet<Client> Clients { get; }

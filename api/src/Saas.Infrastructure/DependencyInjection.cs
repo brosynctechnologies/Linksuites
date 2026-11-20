@@ -159,6 +159,9 @@ public static class DependencyInjection
         services.AddSingleton<Saas.Application.Orders.IDomainResolver, Platform.SystemDomainResolver>();
         if (config.GetValue("Jobs:CustomDomainsEnabled", true))
             services.AddHostedService<Platform.CustomDomainJobsHostedService>();
+        // OrderLink online order payments: the stranded checkout re-check and retiring a replaced Paystack key.
+        if (config.GetValue("Jobs:OrdersEnabled", true))
+            services.AddHostedService<Platform.OrderJobsHostedService>();
 
         // Booking System
         services.AddSingleton<IDbErrors, Bookings.PostgresDbErrors>();

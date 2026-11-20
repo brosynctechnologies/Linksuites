@@ -44,7 +44,7 @@ public static class OrderPricing
 public static class WhatsAppMessage
 {
     /// <summary>The pre-filled message the customer sends to the seller.</summary>
-    public static string Build(Order order, string orderUrl)
+    public static string Build(Order order, string orderUrl, string? payUrl = null)
     {
         var c = order.Currency;
         var sb = new StringBuilder();
@@ -78,7 +78,15 @@ public static class WhatsAppMessage
         if (order.Fulfilment == Fulfilment.Delivery && !string.IsNullOrWhiteSpace(order.Address))
             sb.AppendLine($"Address: {order.Address}");
         if (!string.IsNullOrWhiteSpace(order.Note)) sb.AppendLine($"Note: {order.Note}");
-        sb.Append($"Order link: {orderUrl}");
+        if (payUrl is not null)
+        {
+            sb.AppendLine($"Order link: {orderUrl}");
+            sb.Append($"Pay online: {payUrl}");
+        }
+        else
+        {
+            sb.Append($"Order link: {orderUrl}");
+        }
         return sb.ToString();
     }
 

@@ -13,12 +13,12 @@ public sealed record PublicStoreDto(
 
 public sealed record ImageUrlDto(string Url);
 public sealed record OptionDto(string Name, IReadOnlyList<string> Values);
-public sealed record PublicVariantDto(Guid Id, IReadOnlyList<string> OptionValues, string Title, long PriceMinor, bool InStock);
+public sealed record PublicVariantDto(Guid Id, IReadOnlyList<string> OptionValues, string Title, long PriceMinor, bool InStock, int? StockLeft = null);
 
 public sealed record PublicProductDto(
     Guid Id, string Slug, string Name, string? Description, long PriceMinor, long? CompareAtPriceMinor,
     bool InStock, Guid? CategoryId, IReadOnlyList<ImageUrlDto> Images, IReadOnlyList<OptionDto> Options,
-    IReadOnlyList<PublicVariantDto> Variants);
+    IReadOnlyList<PublicVariantDto> Variants, int? StockLeft = null);
 
 public sealed record CartItemRequest(Guid ProductId, Guid? VariantId, int Quantity);
 
@@ -46,7 +46,7 @@ public sealed record QuoteDto(
     IReadOnlyList<QuoteLineDto> Lines, long SubtotalMinor, long DeliveryFeeMinor, long DiscountMinor,
     long TotalMinor, string Currency, string? DiscountMessage);
 
-public sealed record PlaceOrderResult(string Code, long Number, long TotalMinor, string Currency, string WhatsappUrl, string OrderUrl);
+public sealed record PlaceOrderResult(string Code, long Number, long TotalMinor, string Currency, string WhatsappUrl, string OrderUrl, string? PayUrl = null);
 
 public sealed record PublicOrderItemDto(string Name, string? Variant, int Quantity, long LineTotalMinor);
 
@@ -54,7 +54,7 @@ public sealed record PublicOrderDto(
     string Code, long Number, string StoreName, string StoreSlug, OrderStatus Status, OrderPaymentStatus PaymentStatus,
     Fulfilment Fulfilment, IReadOnlyList<PublicOrderItemDto> Items, long SubtotalMinor, long DeliveryFeeMinor,
     long DiscountMinor, long TotalMinor, string Currency, DateTimeOffset CreatedAt, string WhatsappUrl, bool ShowBranding,
-    bool DeliveryToBeAgreed = false);
+    bool DeliveryToBeAgreed = false, bool CanPayOnline = false);
 
 public sealed class QuoteRequestValidator : AbstractValidator<QuoteRequest>
 {

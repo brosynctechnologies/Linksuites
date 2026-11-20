@@ -11,7 +11,7 @@ public sealed record CategoryDto(Guid Id, string Name, int Position, int Product
 public sealed record SaveCategoryRequest(string Name, int Position);
 
 public sealed record ImageDto(Guid Id, string Url, int Position);
-public sealed record VariantDto(Guid Id, IReadOnlyList<string> OptionValues, string Title, long? PriceMinor, bool InStock, string? Sku);
+public sealed record VariantDto(Guid Id, IReadOnlyList<string> OptionValues, string Title, long? PriceMinor, bool InStock, string? Sku, int? StockQty = null);
 
 public sealed record ProductDto(
     Guid Id, Guid? CategoryId, string? CategoryName, string Name, string Slug, string? Description, long PriceMinor,
@@ -19,7 +19,34 @@ public sealed record ProductDto(
     IReadOnlyList<OptionDto> Options, IReadOnlyList<VariantDto> Variants);
 
 public sealed record SaveOptionRequest(string Name, List<string> Values);
-public sealed record SaveVariantRequest(Guid? Id, List<string> OptionValues, long? PriceMinor, bool InStock, string? Sku);
+/// <summary>
+/// A variant in the product form. Its stock follows the product's rule: a new variant takes <see cref="StockQty"/> as sent; an existing
+/// one changes stock only when <see cref="ExpectedStockQty"/> is sent (compare-and-set against the count the form loaded), so an older
+/// client that doesn't know about variant stock never wipes it.
+/// </summary>
+public sealed record SaveVariantRequest
+{
+    public Guid? Id { get; init; }
+    public List<string> OptionValues { get; init; } = [];
+    public long? PriceMinor { get; init; }
+    public bool InStock { get; init; } = true;
+    public string? Sku { get; init; }
+    public int? StockQty { get; init; }
+
+    public int? ExpectedStockQty
+    {
+        get => _expectedStockQty;
+        init
+        {
+            _expectedStockQty = value;
+            HasExpectedStockQty = true;
+        }
+    }
+    private readonly int? _expectedStockQty;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasExpectedStockQty { get; private init; }
+}
 
 public sealed record SaveProductRequest
 {
@@ -80,7 +107,12 @@ public sealed class SaveProductRequestValidator : AbstractValidator<SaveProductR
         RuleFor(x => x.Variants).Must(v => v.Count <= 100).WithMessage("Use at most 100 variants.");
         RuleFor(x => x).Must(VariantsMatchOptions)
             .WithName("variants").WithMessage("Each variant must pick one value from every option.");
-        RuleForEach(x => x.Variants).ChildRules(v => v.RuleFor(x => x.PriceMinor).GreaterThanOrEqualTo(0));
+        RuleForEach(x => x.Variants).ChildRules(v =>
+        {
+            v.RuleFor(x => x.PriceMinor).GreaterThanOrEqualTo(0);
+            v.RuleFor(x => x.StockQty).InclusiveBetween(0, 1_000_000);
+        });
+        RuleFor(x => x.StockQty).LessThanOrEqualTo(1_000_000);
     }
 
     private static bool VariantsMatchOptions(SaveProductRequest r) =>
@@ -90,7 +122,7 @@ public sealed class SaveProductRequestValidator : AbstractValidator<SaveProductR
                 && v.OptionValues.Select((value, i) => r.Options[i].Values.Contains(value)).All(ok => ok));
 }
 
-public sealed class CatalogService(IAppDbContext db, StoreSettingsService stores, PlanService plans, IFileStorage storage)
+public sealed class CatalogService(IAppDbContext db, StoreSettingsService stores, PlanService plans, IFileStorage storage, StockLedger ledger)
 {
     public async Task<IReadOnlyList<CategoryDto>> ListCategoriesAsync(CancellationToken ct) =>
         await db.Categories.AsNoTracking().OrderBy(c => c.Position).ThenBy(c => c.Name)
@@ -166,10 +198,17 @@ public sealed class CatalogService(IAppDbContext db, StoreSettingsService stores
         product.PriceMinor = r.PriceMinor;
         product.CompareAtPriceMinor = r.CompareAtPriceMinor;
         product.InStock = r.InStock;
+        var tracking = await ledger.TrackingAsync(ct);
+        // Stock changes made by this save: (variant id or null for the product, expected count, new count). Applied after the save.
+        var stockChanges = new List<(Guid? VariantId, int? Expected, int? Next)>();
+        var counts = new List<(Guid? VariantId, int? Before, int? After)>();
         // Without an expected count (new products, older clients) the stock is written as sent. With one, see below.
-        var compareAndSetStock = false;
-        if (id is null || !r.HasExpectedStockQty) product.StockQty = r.StockQty;
-        else compareAndSetStock = r.StockQty != r.ExpectedStockQty; // unchanged in the form: leave the live count alone
+        if (id is null || !r.HasExpectedStockQty)
+        {
+            if (r.StockQty != product.StockQty) counts.Add((null, product.StockQty, r.StockQty));
+            product.StockQty = r.StockQty;
+        }
+        else if (r.StockQty != r.ExpectedStockQty) stockChanges.Add((null, r.ExpectedStockQty, r.StockQty)); // unchanged in the form: leave the live count alone
         product.IsActive = r.IsActive;
         product.Position = r.Position;
 
@@ -189,8 +228,13 @@ public sealed class CatalogService(IAppDbContext db, StoreSettingsService stores
             var variant = v.Id is { } vid ? product.Variants.FirstOrDefault(x => x.Id == vid) : null;
             if (variant is null)
             {
-                variant = new ProductVariant { ProductId = product.Id };
+                variant = new ProductVariant { ProductId = product.Id, StockQty = v.StockQty };
                 product.Variants.Add(variant);
+                if (v.StockQty is not null) counts.Add((variant.Id, null, v.StockQty));
+            }
+            else if (v.HasExpectedStockQty && v.StockQty != v.ExpectedStockQty)
+            {
+                stockChanges.Add((variant.Id, v.ExpectedStockQty, v.StockQty));
             }
             variant.OptionValues = v.OptionValues.Select(x => x.Trim()).ToList();
             variant.PriceMinor = v.PriceMinor;
@@ -198,24 +242,36 @@ public sealed class CatalogService(IAppDbContext db, StoreSettingsService stores
             variant.Sku = string.IsNullOrWhiteSpace(v.Sku) ? null : v.Sku.Trim();
         }
 
-        if (!compareAndSetStock)
-        {
-            await db.SaveChangesAsync(ct);
-            return await GetProductAsync(product.Id, ct);
-        }
+        // Free plan: no stock tracking. Turning tracking off (a null count) is allowed; setting a count is not.
+        if (!tracking && (counts.Any(c => c.After is not null) || stockChanges.Any(c => c.Next is not null)))
+            throw new PlanLimitException(StockLedger.PlanNeeded);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        var (expected, next) = (r.ExpectedStockQty, r.StockQty);
-        var applied = await db.Products.Where(p => p.Id == product.Id && p.StockQty == expected)
-            .ExecuteUpdateAsync(s => s.SetProperty(p => p.StockQty, next), ct);
-        if (applied == 0)
+        // The tracked StockQty values of changed items are left untouched, so SaveChanges doesn't write those counts again.
+        await db.SaveChangesAsync(ct);
+        foreach (var (variantId, expected, next) in stockChanges)
         {
-            var current = await db.Products.AsNoTracking().Where(p => p.Id == product.Id).Select(p => p.StockQty).FirstAsync(ct);
-            throw new ConflictException(
-                $"The stock changed to {(current is { } n ? n.ToString() : "not tracked")} while you were editing, because orders came in. " +
-                "Reload the product to see the new count, then set the stock again.", "stock_changed");
+            var applied = variantId is { } vid
+                ? await db.ProductVariants.Where(x => x.Id == vid && x.StockQty == expected).ExecuteUpdateAsync(s => s.SetProperty(x => x.StockQty, next), ct)
+                : await db.Products.Where(p => p.Id == product.Id && p.StockQty == expected).ExecuteUpdateAsync(s => s.SetProperty(p => p.StockQty, next), ct);
+            if (applied == 0)
+            {
+                var current = variantId is { } v2
+                    ? await db.ProductVariants.AsNoTracking().Where(x => x.Id == v2).Select(x => x.StockQty).FirstOrDefaultAsync(ct)
+                    : await db.Products.AsNoTracking().Where(p => p.Id == product.Id).Select(p => p.StockQty).FirstAsync(ct);
+                throw new ConflictException(
+                    $"The stock changed to {(current is { } n ? n.ToString() : "not tracked")} while you were editing, because orders came in. " +
+                    "Reload the product to see the new count, then set the stock again.", "stock_changed");
+            }
+            counts.Add((variantId, expected, next));
         }
-        // The tracked product's StockQty is left untouched, so SaveChanges doesn't write the count again.
+        foreach (var (variantId, before, after) in counts.Where(c => c.After is not null))
+        {
+            var title = variantId is { } vid ? product.Variants.First(x => x.Id == vid).Title : null;
+            ledger.Log(store, product.Id, variantId, product.Name, title, after!.Value - (before ?? 0), after.Value, StockChangeKind.Count,
+                "Stock count set in the product form");
+            if (after > store.LowStockThreshold) await ledger.AfterChangeAsync(store, product.Id, variantId, product.Name, after.Value, ct);
+        }
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return await GetProductAsync(product.Id, ct);
@@ -285,5 +341,5 @@ public sealed class CatalogService(IAppDbContext db, StoreSettingsService stores
         p.InStock, p.StockQty, p.IsActive, p.Position,
         p.Images.OrderBy(i => i.Position).Select(i => new ImageDto(i.Id, i.Url, i.Position)).ToList(),
         p.Options.OrderBy(o => o.Position).Select(o => new OptionDto(o.Name, o.Values)).ToList(),
-        p.Variants.Select(v => new VariantDto(v.Id, v.OptionValues, v.Title, v.PriceMinor, v.InStock, v.Sku)).ToList());
+        p.Variants.Select(v => new VariantDto(v.Id, v.OptionValues, v.Title, v.PriceMinor, v.InStock, v.Sku, v.StockQty)).ToList());
 }
