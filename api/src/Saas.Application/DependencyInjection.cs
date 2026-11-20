@@ -44,6 +44,11 @@ public static class DependencyInjection
         services.AddScoped<StorefrontService>();
         services.AddScoped<CustomDomainService>();
         services.AddScoped<CustomDomainJobs>();
+        services.AddScoped<StockLedger>();
+        services.AddScoped<InventoryService>();
+        services.AddScoped<OrderPaymentService>();
+        services.AddSingleton<OrderJobs>();
+        services.AddScoped<IUsageProvider>(sp => new ProductTeamUsage(Products.WhatsAppOrders, sp.GetRequiredService<TeamUsage>()));
         services.AddSingleton<CustomDomainCache>();
 
         // Invoice Generator

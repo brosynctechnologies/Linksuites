@@ -19,7 +19,7 @@ public sealed class UpdateStoreRequestValidator : AbstractValidator<UpdateStoreR
     public UpdateStoreRequestValidator()
     {
         RuleFor(x => x.Name).NotEmpty().MaximumLength(80);
-        RuleFor(x => x.Slug).NotEmpty().Must(Slugs.IsWellFormed)
+        RuleFor(x => x.Slug).NotEmpty().Must(s => s is not null && Slugs.IsWellFormed(s))
             .WithMessage("Use 3-60 lowercase letters, numbers and dashes (some words are reserved).");
         RuleFor(x => x.Description).MaximumLength(500);
         RuleFor(x => x.WhatsappNumber).NotEmpty().MaximumLength(30);

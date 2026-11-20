@@ -18,7 +18,7 @@ public sealed record OrderDto(
     string Currency, OrderStatus Status, OrderPaymentStatus PaymentStatus, int ItemCount, DateTimeOffset CreatedAt,
     string? Address, string? Note, string? DeliveryZoneName, long SubtotalMinor, long DeliveryFeeMinor,
     long DiscountMinor, string? DiscountCode, IReadOnlyList<OrderItemDto> Items, IReadOnlyList<OrderHistoryDto> History,
-    string? WhatsappMessage, string CustomerWhatsappUrl);
+    string? WhatsappMessage, string CustomerWhatsappUrl, IReadOnlyList<OrderPaymentDto>? Payments = null);
 
 public sealed record UpdateOrderStatusRequest(OrderStatus Status, string? Note);
 public sealed record UpdateOrderPaymentRequest(OrderPaymentStatus PaymentStatus);
@@ -27,7 +27,8 @@ public sealed record DashboardDto(
     string Currency, int TodayOrders, long TodaySalesMinor, long MonthSalesMinor, int NewOrders, int ProductCount,
     IReadOnlyList<OrderSummaryDto> RecentOrders);
 
-public sealed class OrderAdminService(IAppDbContext db, ICurrentUser user, StoreSettingsService stores, TimeProvider clock)
+public sealed class OrderAdminService(
+    IAppDbContext db, ICurrentUser user, StoreSettingsService stores, TimeProvider clock, StockLedger ledger, OrderPaymentService payments)
 {
     /// <summary>
     /// <paramref name="paymentStatus"/> filters on whether the order is paid, which "Mark paid" sets. The dashboard's
@@ -63,7 +64,14 @@ public sealed class OrderAdminService(IAppDbContext db, ICurrentUser user, Store
             o.SubtotalMinor, o.DeliveryFeeMinor, o.DiscountMinor, o.DiscountCode,
             o.Items.Select(i => new OrderItemDto(i.ProductId, i.VariantId, i.NameSnapshot, i.VariantSnapshot, i.UnitPriceMinor, i.Quantity, i.LineTotalMinor)).ToList(),
             o.History.OrderBy(h => h.CreatedAt).Select(h => new OrderHistoryDto(h.Status, h.Note, h.CreatedAt)).ToList(),
-            o.WhatsappMessage, WhatsAppMessage.Link(o.Phone));
+            o.WhatsappMessage, WhatsAppMessage.Link(o.Phone), await payments.ListForOrderAsync(o.Id, ct));
+    }
+
+    /// <summary>"Check with Paystack" for one of the order's online checkouts.</summary>
+    public async Task<OrderDto> VerifyPaymentAsync(Guid id, string reference, CancellationToken ct)
+    {
+        await payments.VerifyForStaffAsync(id, reference, ct);
+        return await GetAsync(id, ct);
     }
 
     public async Task<OrderDto> UpdateStatusAsync(Guid id, UpdateOrderStatusRequest r, CancellationToken ct)
@@ -83,7 +91,7 @@ public sealed class OrderAdminService(IAppDbContext db, ICurrentUser user, Store
             var claimed = await db.Orders.Where(o => o.Id == id && o.Status != OrderStatus.Cancelled)
                 .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderStatus.Cancelled), ct);
             if (claimed == 0) return await GetAsync(id, ct);
-            await RestockAsync(order.Id, ct);
+            await RestockAsync(order, ct);
             // Ruling: the discount use stays consumed. Giving it back would let a "first order" or limited code be reused.
         }
 
@@ -101,17 +109,29 @@ public sealed class OrderAdminService(IAppDbContext db, ICurrentUser user, Store
         return await GetAsync(id, ct);
     }
 
-    /// <summary>Gives the order's quantities back to products that still track stock.</summary>
-    private async Task RestockAsync(Guid orderId, CancellationToken ct)
+    /// <summary>
+    /// Gives back the stock this order took (only the counts it lowered, recorded on each line), to products and variants that still
+    /// track stock, and logs each return.
+    /// </summary>
+    private async Task RestockAsync(Order order, CancellationToken ct)
     {
-        var items = await db.Orders.AsNoTracking().Where(o => o.Id == orderId).SelectMany(o => o.Items).Where(i => i.ProductId != null)
-            .GroupBy(i => i.ProductId!.Value).Select(g => new { ProductId = g.Key, Quantity = g.Sum(i => i.Quantity) }).ToListAsync(ct);
+        var store = await stores.CurrentStoreAsync(ct);
+        var items = await db.OrderItems.AsNoTracking()
+            .Where(i => i.OrderId == order.Id && i.ProductId != null && (i.ProductStockTaken || i.VariantStockTaken)).ToListAsync(ct);
         foreach (var item in items)
         {
-            var qty = item.Quantity;
-            await db.Products.Where(p => p.Id == item.ProductId && p.StockQty != null)
-                .ExecuteUpdateAsync(s => s.SetProperty(p => p.StockQty, p => p.StockQty + qty), ct);
+            if (item.ProductStockTaken) await GiveBackAsync(store, order, item, null, ct);
+            if (item.VariantStockTaken && item.VariantId is { } vid) await GiveBackAsync(store, order, item, vid, ct);
         }
+    }
+
+    private async Task GiveBackAsync(Store store, Order order, OrderItem item, Guid? variantId, CancellationToken ct)
+    {
+        if (await ledger.ChangeAsync(item.ProductId!.Value, variantId, item.Quantity, ct) is not { } after) return; // no longer tracked
+        var title = variantId is null ? null : item.VariantSnapshot;
+        ledger.Log(store, item.ProductId.Value, variantId, item.NameSnapshot, title, item.Quantity, after, StockChangeKind.Cancellation,
+            $"Order #{order.Number} cancelled", order);
+        await ledger.AfterChangeAsync(store, item.ProductId.Value, variantId, StockLedger.ItemName(item.NameSnapshot, title), after, ct);
     }
 
     public async Task<OrderDto> UpdatePaymentAsync(Guid id, UpdateOrderPaymentRequest r, CancellationToken ct)

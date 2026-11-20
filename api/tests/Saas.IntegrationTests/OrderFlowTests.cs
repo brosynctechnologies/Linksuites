@@ -136,6 +136,7 @@ public sealed class OrderFlowTests(ApiFixture api)
     public async Task Cart_quote_keeps_lines_over_stock_and_its_subtotal_matches_the_lines()
     {
         var (seller, auth) = await api.SignupAsync("Mama");
+        await api.MakeProAsync(TenantId(auth), Products.WhatsAppOrders); // stock tracking is a Pro feature (wave 4)
         var slug = auth.GetProperty("tenant").GetProperty("slug").GetString();
         var rice = await Json(await seller.PostAsJsonAsync("/api/products", new { name = "Jollof rice", priceMinor = 300_000, inStock = true, isActive = true }, Ct));
         var chapman = await Json(await seller.PostAsJsonAsync("/api/products", new { name = "Chapman", priceMinor = 150_000, inStock = true, isActive = true, stockQty = 5 }, Ct));
@@ -183,6 +184,7 @@ public sealed class OrderFlowTests(ApiFixture api)
     public async Task Quote_TwoVariantsOfTrackedProduct_ClampsToSharedStock()
     {
         var (seller, auth) = await api.SignupAsync("Sizes");
+        await api.MakeProAsync(TenantId(auth), Products.WhatsAppOrders); // stock tracking is a Pro feature (wave 4)
         var slug = Slug(auth);
         var (productId, small, medium) = await DressWithSizesAsync(seller, stock: 4);
 
@@ -204,6 +206,7 @@ public sealed class OrderFlowTests(ApiFixture api)
     public async Task PlaceOrder_TwoVariantsExceedingSharedStock_Returns409FromPricing()
     {
         var (seller, auth) = await api.SignupAsync("Sizes2");
+        await api.MakeProAsync(TenantId(auth), Products.WhatsAppOrders); // stock tracking is a Pro feature (wave 4)
         var slug = Slug(auth);
         var (productId, small, medium) = await DressWithSizesAsync(seller, stock: 4);
 
@@ -281,6 +284,7 @@ public sealed class OrderFlowTests(ApiFixture api)
     public async Task CancelOrder_RestoresTrackedStock()
     {
         var (seller, auth) = await api.SignupAsync("Canceller");
+        await api.MakeProAsync(TenantId(auth), Products.WhatsAppOrders); // stock tracking is a Pro feature (wave 4)
         var slug = Slug(auth);
         var tracked = await Json(await seller.PostAsJsonAsync("/api/products", new { name = "Chapman", priceMinor = 1_000, stockQty = 5 }, Ct));
         var untracked = await Json(await seller.PostAsJsonAsync("/api/products", new { name = "Water", priceMinor = 100 }, Ct));
@@ -334,6 +338,7 @@ public sealed class OrderFlowTests(ApiFixture api)
     public async Task SaveProduct_WithStaleStock_DoesNotOverwriteSales()
     {
         var (seller, auth) = await api.SignupAsync("Stale");
+        await api.MakeProAsync(TenantId(auth), Products.WhatsAppOrders); // stock tracking is a Pro feature (wave 4)
         var slug = Slug(auth);
         var product = await Json(await seller.PostAsJsonAsync("/api/products", new { name = "Bag", priceMinor = 1_000, stockQty = 10 }, Ct));
         var id = product.GetProperty("id").GetGuid();

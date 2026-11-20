@@ -159,6 +159,12 @@ public static class EmailTemplates
                 $"Hi {P("name")},\n\nYour account for {P("storeName")} is ready. Sign in any time to pick up where you left off.\n\n{appName}"),
             "order.new" => ($"New order #{P("number")} from {P("customer")} ({P("total")})",
                 $"{P("message")}\n\nOpen the order: {P("link")}"),
+            "order.low_stock" => (P("count") == "0" ? $"{P("item")} is sold out" : $"Only {P("count")} {P("item")} left",
+                (P("count") == "0"
+                    ? $"{P("item")} is sold out on {P("storeName")}. Customers can't order it until you add stock."
+                    : $"{P("item")} is down to {P("count")} on {P("storeName")}. Add stock before it sells out.") +
+                $"\n\nSee your low stock: {P("link")}"),
+            "order.payment" => (P("title"), $"{P("body")}\n\nOpen the order: {P("link")}"),
             "invoice.sent" => ($"Invoice {P("number")} from {P("business")}",
                 $"Hi {P("client")},\n\n{(P("message").Length > 0 ? P("message") + "\n\n" : "")}" +
                 $"{P("business")} has sent you invoice {P("number")} for {P("total")}, due {P("due")}.\n\n" +

@@ -39,6 +39,8 @@ public static class LimitKeys
     public const string Products = "products";
     public const string DeliveryZones = "delivery_zones";
     public const string DiscountCodes = "discount_codes";
+    /// <summary>OrderLink stock tracking, "Only N left" and low-stock alerts (also uses <see cref="OnlinePayments"/> and <see cref="TeamSeats"/>).</summary>
+    public const string Inventory = "inventory";
 
     // Invoice Generator
     public const string InvoicesPerMonth = "invoices_per_month";

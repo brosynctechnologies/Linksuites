@@ -10,7 +10,7 @@ import { API_URL, SITE_URL } from "@/lib/config";
 
 const OWN_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", hostOf(SITE_URL)].filter(Boolean));
 /** App pages that never belong on a store's domain: sent to OrderLink's own address. */
-const APP_PATHS = ["/dashboard", "/login", "/signup", "/forgot-password", "/reset-password", "/support"];
+const APP_PATHS = ["/dashboard", "/login", "/signup", "/forgot-password", "/reset-password", "/support", "/invite", "/app"];
 const HIT_MS = 60_000;
 const MISS_MS = 30_000;
 const MAX_ENTRIES = 2_000;

@@ -58,6 +58,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<OrderStatusHistory> OrderStatusHistory => Set<OrderStatusHistory>();
+    public DbSet<StockAdjustment> StockAdjustments => Set<StockAdjustment>();
+    public DbSet<OrderPayment> OrderPayments => Set<OrderPayment>();
 
     // Invoice Generator
     public DbSet<BusinessSettings> BusinessSettings => Set<BusinessSettings>();
@@ -382,6 +384,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options, ITenantContext
             e.Property(o => o.Code).HasMaxLength(12);
             e.HasMany(o => o.Items).WithOne().HasForeignKey(i => i.OrderId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(o => o.History).WithOne().HasForeignKey(h => h.OrderId).OnDelete(DeleteBehavior.Cascade);
+        });
+        b.Entity<StockAdjustment>(e =>
+        {
+            e.HasIndex(a => new { a.TenantId, a.CreatedAt });
+            e.HasIndex(a => new { a.TenantId, a.ProductId, a.CreatedAt });
+            e.Property(a => a.ProductName).HasMaxLength(200);
+            e.Property(a => a.VariantTitle).HasMaxLength(200);
+            e.Property(a => a.Reason).HasMaxLength(200);
+            e.Property(a => a.Kind).HasConversion<string>().HasMaxLength(20);
+        });
+        b.Entity<OrderPayment>(e =>
+        {
+            e.HasIndex(p => p.Reference).IsUnique();
+            e.HasIndex(p => new { p.TenantId, p.OrderId });
+            e.HasIndex(p => new { p.Status, p.CreatedAt });
+            e.Property(p => p.Reference).HasMaxLength(64);
+            e.Property(p => p.Currency).HasMaxLength(3);
+            e.Property(p => p.ChargedCurrency).HasMaxLength(3);
+            e.Property(p => p.Status).HasConversion<string>().HasMaxLength(20);
+            e.HasOne<Order>().WithMany().HasForeignKey(p => p.OrderId).OnDelete(DeleteBehavior.Cascade);
         });
 
         ConfigureInvoices(b);

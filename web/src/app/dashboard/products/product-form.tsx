@@ -7,7 +7,7 @@ import { api, ApiError, toApiError, upload } from "@/lib/api";
 import { toMajorInput, toMinor } from "@/lib/money";
 import { combinations } from "@/lib/products";
 import { useApi } from "@/lib/use-api";
-import type { CategoryDto, ProductDto, ProductImage, SaveProductRequest } from "@/lib/types";
+import type { CategoryDto, InventoryDto, ProductDto, ProductImage, SaveProductRequest, VariantDto } from "@/lib/types";
 import { ApiErrorView, Button, ErrorBox, FormSection, Input, Notice, Select, Spinner, Textarea, Toggle, inputClass } from "@/components/ui";
 import { ImageIcon, PlusIcon, TrashIcon } from "@/components/icons";
 
@@ -20,11 +20,32 @@ interface VariantOverride {
   price: string;
   inStock: boolean;
   sku: string;
+  /** Stock count as typed; empty = not tracked. */
+  stock: string;
+  /** The count this form loaded for an existing variant (sent back as expectedStockQty). */
+  loadedStock?: number | null;
 }
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const ACCEPT = "image/jpeg,image/png,image/webp";
 const variantKey = (values: string[]) => values.join(" / ");
+
+const toOverride = (v: VariantDto): VariantOverride => ({
+  id: v.id,
+  price: toMajorInput(v.priceMinor),
+  inStock: v.inStock,
+  sku: v.sku ?? "",
+  stock: v.stockQty != null ? String(v.stockQty) : "",
+  loadedStock: v.stockQty ?? null,
+});
+
+/** A typed stock count: null when empty, NaN when not a whole number. */
+function parseStock(text: string): number | null {
+  const t = text.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  return Number.isInteger(n) && n >= 0 ? n : NaN;
+}
 
 function splitValues(text: string) {
   return Array.from(new Set(text.split(",").map((v) => v.trim()).filter(Boolean)));
@@ -33,6 +54,9 @@ function splitValues(text: string) {
 export function ProductForm({ product, justCreated }: { product?: ProductDto; justCreated?: boolean }) {
   const router = useRouter();
   const { data: categories } = useApi<CategoryDto[]>("/api/categories");
+  // Stock tracking is a Pro feature: on other plans the stock fields stay disabled and saving leaves stock as it was.
+  const { data: inventory } = useApi<InventoryDto>("/api/inventory?filter=low");
+  const stockEnabled = inventory?.enabled !== false;
 
   const [name, setName] = useState(product?.name ?? "");
   const [description, setDescription] = useState(product?.description ?? "");
@@ -50,10 +74,7 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
   );
   const [overrides, setOverrides] = useState<Record<string, VariantOverride>>(() =>
     Object.fromEntries(
-      (product?.variants ?? []).map((v) => [
-        variantKey(v.optionValues),
-        { id: v.id, price: toMajorInput(v.priceMinor), inStock: v.inStock, sku: v.sku ?? "" },
-      ]),
+      (product?.variants ?? []).map((v) => [variantKey(v.optionValues), toOverride(v)]),
     ),
   );
   const [images, setImages] = useState<ProductImage[]>(product?.images ?? []);
@@ -61,6 +82,8 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [saved, setSaved] = useState(false);
+  const [reloadingStock, setReloadingStock] = useState(false);
+  const stockChanged = error?.status === 409 && error.code === "stock_changed";
   const [uploading, setUploading] = useState(0);
   const [imageError, setImageError] = useState<ApiError | string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -71,7 +94,7 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
   );
   const combos = useMemo(() => combinations(parsedOptions.map((o) => o.values)), [parsedOptions]);
 
-  const variantFor = (combo: string[]): VariantOverride => overrides[variantKey(combo)] ?? { price: "", inStock: true, sku: "" };
+  const variantFor = (combo: string[]): VariantOverride => overrides[variantKey(combo)] ?? { price: "", inStock: true, sku: "", stock: "" };
   const setVariant = (combo: string[], patch: Partial<VariantOverride>) =>
     setOverrides((o) => ({ ...o, [variantKey(combo)]: { ...variantFor(combo), ...patch } }));
 
@@ -86,8 +109,11 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
     if (!name.trim()) return setError(new ApiError(400, { detail: "Enter a product name." }));
     if (priceMinor === null || priceMinor < 0) return setError(new ApiError(400, { detail: "Enter a valid price." }));
     const compareMinor = toMinor(compareAt);
-    const qty = stockQty.trim() === "" ? null : Math.max(0, Math.floor(Number(stockQty)));
-    if (qty !== null && Number.isNaN(qty)) return setError(new ApiError(400, { detail: "Stock quantity must be a number." }));
+    // Without stock tracking on the plan, send back what was loaded so nothing about stock changes.
+    const qty = stockEnabled ? parseStock(stockQty) : loadedStock;
+    if (qty !== null && Number.isNaN(qty)) return setError(new ApiError(400, { detail: "Stock must be a whole number, 0 or more." }));
+    if (stockEnabled && combos.some((combo) => Number.isNaN(parseStock(variantFor(combo).stock))))
+      return setError(new ApiError(400, { detail: "Variant stock must be a whole number, 0 or more." }));
 
     const body: SaveProductRequest = {
       name: name.trim(),
@@ -109,6 +135,9 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
           priceMinor: toMinor(v.price),
           inStock: v.inStock,
           sku: v.sku.trim() || null,
+          stockQty: stockEnabled ? parseStock(v.stock) : (v.loadedStock ?? null),
+          // Existing variants: compare-and-set against the count this form loaded. New variants just set it.
+          ...(v.id ? { expectedStockQty: v.loadedStock ?? null } : {}),
         };
       }),
     };
@@ -121,14 +150,7 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
         // Show the live count (sales may have lowered it) and compare the next save against it.
         setLoadedStock(updated.stockQty);
         setStockQty(updated.stockQty != null ? String(updated.stockQty) : "");
-        setOverrides(
-          Object.fromEntries(
-            updated.variants.map((v) => [
-              variantKey(v.optionValues),
-              { id: v.id, price: toMajorInput(v.priceMinor), inStock: v.inStock, sku: v.sku ?? "" },
-            ]),
-          ),
-        );
+        setOverrides(Object.fromEntries(updated.variants.map((v) => [variantKey(v.optionValues), toOverride(v)])));
         setSaved(true);
         setSaving(false);
       } else {
@@ -138,6 +160,33 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
     } catch (err) {
       setError(toApiError(err));
       setSaving(false);
+    }
+  }
+
+  /** After a 409 stock_changed: load the live counts (orders moved them) and keep every other edit. */
+  async function reloadStock() {
+    if (!product) return;
+    setReloadingStock(true);
+    try {
+      const live = await api<ProductDto>(`/api/products/${product.id}`);
+      setLoadedStock(live.stockQty);
+      setStockQty(live.stockQty != null ? String(live.stockQty) : "");
+      setOverrides((o) => {
+        const next = { ...o };
+        for (const v of live.variants) {
+          const key = variantKey(v.optionValues);
+          const current = next[key];
+          next[key] = current
+            ? { ...current, id: v.id, stock: v.stockQty != null ? String(v.stockQty) : "", loadedStock: v.stockQty ?? null }
+            : toOverride(v);
+        }
+        return next;
+      });
+      setError(null);
+    } catch (err) {
+      setError(toApiError(err));
+    } finally {
+      setReloadingStock(false);
     }
   }
 
@@ -280,15 +329,33 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
         </div>
       </FormSection>
 
-      <FormSection title="Stock and visibility">
-        <Toggle label="In stock" description="Turn off to show “Out of stock”." checked={inStock} onChange={setInStock} />
+      <FormSection
+        title="Track stock"
+        description="Enter how many you have and each order takes them off. Leave empty to not track."
+      >
+        <Toggle label="In stock" description="Turn off to show “Sold out”." checked={inStock} onChange={setInStock} />
         <Input
-          label="Stock quantity (optional)"
+          label="Stock quantity"
           inputMode="numeric"
           value={stockQty}
+          disabled={!stockEnabled}
           onChange={(e) => setStockQty(e.target.value.replace(/[^\d]/g, ""))}
-          hint="Leave empty if you don't track stock."
+          hint={
+            !stockEnabled
+              ? undefined
+              : combos.length > 0
+                ? "With sizes or colours, set stock for each variant under Options."
+                : "Leave empty if you don't track stock."
+          }
         />
+        {!stockEnabled && (
+          <p className="text-sm text-ink-2">
+            Stock tracking is on the Pro plan.{" "}
+            <Link href="/dashboard/billing" className="-my-3 inline-flex min-h-11 items-center font-semibold text-ink underline underline-offset-2">
+              See plans
+            </Link>
+          </p>
+        )}
         <div className="border-t border-line pt-4">
           <Toggle label="Active" description="Hidden products don't appear in your store." checked={isActive} onChange={setIsActive} />
         </div>
@@ -335,11 +402,14 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
             <h3 className="text-sm font-semibold text-ink">
               Variants <span className="font-normal text-muted num">({combos.length})</span>
             </h3>
-            <p className="text-xs text-subtle">Leave price empty to use the product price.</p>
+            <p className="text-xs text-subtle">
+              Leave price empty to use the product price. Leave quantity empty to not track stock for that variant.
+            </p>
             <div className="mt-3 overflow-hidden rounded-control border border-line">
-              <div className="hidden grid-cols-[minmax(0,1fr)_8rem_7rem] gap-3 bg-paper px-3 py-2 text-xs font-medium text-subtle sm:grid" aria-hidden="true">
+              <div className="hidden grid-cols-[minmax(0,1fr)_7rem_6rem_7rem] gap-3 bg-paper px-3 py-2 text-xs font-medium text-subtle sm:grid" aria-hidden="true">
                 <span>Variant</span>
                 <span>Price</span>
+                <span>Quantity</span>
                 <span>Stock</span>
               </div>
               <ul className="divide-y divide-line">
@@ -347,8 +417,8 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
                   const v = variantFor(combo);
                   const key = variantKey(combo);
                   return (
-                    <li key={key} className="grid grid-cols-[minmax(0,1fr)_7rem] items-center gap-x-3 gap-y-1 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_8rem_7rem]">
-                      <span className="col-span-2 text-sm font-medium break-words text-ink sm:col-span-1">{key}</span>
+                    <li key={key} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem] items-center gap-x-3 gap-y-1 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_7rem_6rem_7rem]">
+                      <span className="col-span-3 text-sm font-medium break-words text-ink sm:col-span-1">{key}</span>
                       <label className="sr-only" htmlFor={`vp-${key}`}>
                         Price for {key}
                       </label>
@@ -358,6 +428,18 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
                         value={v.price}
                         onChange={(e) => setVariant(combo, { price: e.target.value })}
                         placeholder={price || "Price"}
+                        className={inputClass}
+                      />
+                      <label className="sr-only" htmlFor={`vq-${key}`}>
+                        Quantity for {key}
+                      </label>
+                      <input
+                        id={`vq-${key}`}
+                        inputMode="numeric"
+                        value={v.stock}
+                        disabled={!stockEnabled}
+                        onChange={(e) => setVariant(combo, { stock: e.target.value.replace(/[^\d]/g, "") })}
+                        placeholder="Qty"
                         className={inputClass}
                       />
                       <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-ink-2">
@@ -378,7 +460,18 @@ export function ProductForm({ product, justCreated }: { product?: ProductDto; ju
         )}
       </FormSection>
 
-      {error && <ApiErrorView error={error} />}
+      {error &&
+        (stockChanged ? (
+          <div role="alert" className="rounded-control bg-hibiscus-soft p-3.5 text-sm text-hibiscus-deep">
+            <p className="font-medium">{error.detail || "The stock changed while you were editing, most likely from new orders."}</p>
+            <p className="mt-1 text-ink-2">Load the current counts, check them, then save again. Your other changes stay.</p>
+            <Button variant="secondary" className="mt-3" loading={reloadingStock} onClick={reloadStock}>
+              Load current stock
+            </Button>
+          </div>
+        ) : (
+          <ApiErrorView error={error} />
+        ))}
       {saved && <Notice tone="success">Saved.</Notice>}
 
       <div className="sticky bottom-[calc(4rem+1px+env(safe-area-inset-bottom))] z-20 -mx-4 border-y border-line bg-surface/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:bottom-4 lg:mx-0 lg:rounded-panel lg:border lg:px-4 lg:shadow-lift">

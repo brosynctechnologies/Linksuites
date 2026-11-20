@@ -7343,6 +7343,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("product_id");
 
+                    b.Property<bool>("ProductStockTaken")
+                        .HasColumnType("boolean")
+                        .HasColumnName("product_stock_taken");
+
                     b.Property<int>("Quantity")
                         .HasColumnType("integer")
                         .HasColumnName("quantity");
@@ -7367,6 +7371,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("variant_snapshot");
 
+                    b.Property<bool>("VariantStockTaken")
+                        .HasColumnType("boolean")
+                        .HasColumnName("variant_stock_taken");
+
                     b.HasKey("Id")
                         .HasName("pk_order_items");
 
@@ -7377,6 +7385,86 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_order_items_tenant_id");
 
                     b.ToTable("order_items", (string)null);
+                });
+
+            modelBuilder.Entity("Saas.Domain.Orders.OrderPayment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<long>("AmountMinor")
+                        .HasColumnType("bigint")
+                        .HasColumnName("amount_minor");
+
+                    b.Property<long?>("ChargedAmountMinor")
+                        .HasColumnType("bigint")
+                        .HasColumnName("charged_amount_minor");
+
+                    b.Property<string>("ChargedCurrency")
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("charged_currency");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<DateTimeOffset?>("PaidAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paid_at");
+
+                    b.Property<DateTimeOffset?>("RecheckedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("rechecked_at");
+
+                    b.Property<string>("Reference")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("reference");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_order_payments");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("ix_order_payments_order_id");
+
+                    b.HasIndex("Reference")
+                        .IsUnique()
+                        .HasDatabaseName("ix_order_payments_reference");
+
+                    b.HasIndex("Status", "CreatedAt")
+                        .HasDatabaseName("ix_order_payments_status_created_at");
+
+                    b.HasIndex("TenantId", "OrderId")
+                        .HasDatabaseName("ix_order_payments_tenant_id_order_id");
+
+                    b.ToTable("order_payments", (string)null);
                 });
 
             modelBuilder.Entity("Saas.Domain.Orders.OrderStatusHistory", b =>
@@ -7456,6 +7544,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
+
+                    b.Property<bool>("LowStockAlerted")
+                        .HasColumnType("boolean")
+                        .HasColumnName("low_stock_alerted");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -7616,6 +7708,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("in_stock");
 
+                    b.Property<bool>("LowStockAlerted")
+                        .HasColumnType("boolean")
+                        .HasColumnName("low_stock_alerted");
+
                     b.PrimitiveCollection<List<string>>("OptionValues")
                         .IsRequired()
                         .HasColumnType("text[]")
@@ -7632,6 +7728,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.Property<string>("Sku")
                         .HasColumnType("text")
                         .HasColumnName("sku");
+
+                    b.Property<int?>("StockQty")
+                        .HasColumnType("integer")
+                        .HasColumnName("stock_qty");
 
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid")
@@ -7651,6 +7751,91 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_product_variants_tenant_id");
 
                     b.ToTable("product_variants", (string)null);
+                });
+
+            modelBuilder.Entity("Saas.Domain.Orders.StockAdjustment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("ChangedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("changed_by");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<int>("Delta")
+                        .HasColumnType("integer")
+                        .HasColumnName("delta");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid?>("OrderId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("order_id");
+
+                    b.Property<long?>("OrderNumber")
+                        .HasColumnType("bigint")
+                        .HasColumnName("order_number");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_id");
+
+                    b.Property<string>("ProductName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("product_name");
+
+                    b.Property<int>("QuantityAfter")
+                        .HasColumnType("integer")
+                        .HasColumnName("quantity_after");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("StoreId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("store_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("VariantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("variant_id");
+
+                    b.Property<string>("VariantTitle")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("variant_title");
+
+                    b.HasKey("Id")
+                        .HasName("pk_stock_adjustments");
+
+                    b.HasIndex("TenantId", "CreatedAt")
+                        .HasDatabaseName("ix_stock_adjustments_tenant_id_created_at");
+
+                    b.HasIndex("TenantId", "ProductId", "CreatedAt")
+                        .HasDatabaseName("ix_stock_adjustments_tenant_id_product_id_created_at");
+
+                    b.ToTable("stock_adjustments", (string)null);
                 });
 
             modelBuilder.Entity("Saas.Domain.Orders.Store", b =>
@@ -7689,6 +7874,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("logo_url");
 
+                    b.Property<int>("LowStockThreshold")
+                        .HasColumnType("integer")
+                        .HasColumnName("low_stock_threshold");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text")
@@ -7701,6 +7890,18 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.Property<string>("OpeningHours")
                         .HasColumnType("text")
                         .HasColumnName("opening_hours");
+
+                    b.Property<string>("PaystackPreviousKeyProtected")
+                        .HasColumnType("text")
+                        .HasColumnName("paystack_previous_key_protected");
+
+                    b.Property<string>("PaystackSecretKeyProtected")
+                        .HasColumnType("text")
+                        .HasColumnName("paystack_secret_key_protected");
+
+                    b.Property<DateTimeOffset?>("PreviousKeyUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("previous_key_until");
 
                     b.Property<string>("Slug")
                         .IsRequired()
@@ -14667,6 +14868,23 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_order_items_tenants_tenant_id");
                 });
 
+            modelBuilder.Entity("Saas.Domain.Orders.OrderPayment", b =>
+                {
+                    b.HasOne("Saas.Domain.Orders.Order", null)
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_order_payments_orders_order_id");
+
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_order_payments_tenants_tenant_id");
+                });
+
             modelBuilder.Entity("Saas.Domain.Orders.OrderStatusHistory", b =>
                 {
                     b.HasOne("Saas.Domain.Orders.Order", null)
@@ -14751,6 +14969,16 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_product_variants_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Saas.Domain.Orders.StockAdjustment", b =>
+                {
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_adjustments_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("Saas.Domain.Orders.Store", b =>

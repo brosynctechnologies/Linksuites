@@ -11,7 +11,11 @@ const nextConfig: NextConfig = {
   partialPrefetching: true,
   // Public pages show no prices. Any old pricing link lands on the plans section of the home page.
   redirects() {
-    return [{ source: "/pricing", destination: "/#plans", permanent: true }];
+    return [
+      { source: "/pricing", destination: "/#plans", permanent: true },
+      // Suite notifications and emails link to /app/...; OrderLink's dashboard lives at /dashboard/...
+      { source: "/app/:path*", destination: "/dashboard/:path*", permanent: false },
+    ];
   },
   turbopack: {
     rules: {

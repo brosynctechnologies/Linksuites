@@ -9,7 +9,9 @@ export function toSaveRequest(p: ProductDto, patch: Partial<SaveProductRequest> 
     priceMinor: p.priceMinor,
     compareAtPriceMinor: p.compareAtPriceMinor,
     inStock: p.inStock,
+    // Stock is sent back unchanged with the count it was read at, so a quick toggle never writes over sales made meanwhile.
     stockQty: p.stockQty,
+    expectedStockQty: p.stockQty,
     isActive: p.isActive,
     position: p.position,
     options: p.options,
@@ -19,6 +21,8 @@ export function toSaveRequest(p: ProductDto, patch: Partial<SaveProductRequest> 
       priceMinor: v.priceMinor,
       inStock: v.inStock,
       sku: v.sku,
+      stockQty: v.stockQty ?? null,
+      expectedStockQty: v.stockQty ?? null,
     })),
     ...patch,
   };

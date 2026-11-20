@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { logout } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { storeLink } from "@/lib/config";
-import { secondaryNav } from "@/components/dashboard-nav";
+import { navFor } from "@/components/dashboard-nav";
+import { toRole } from "@/lib/roles";
 import { PageHeader, buttonClass, listClass } from "@/components/ui";
 import { ChevronRightIcon, ExternalIcon, LogoutIcon } from "@/components/icons";
 import { BusinessSwitcher } from "@/components/business-switcher";
@@ -41,7 +42,7 @@ export default function MorePage() {
       )}
       <BusinessSwitcher />
       <ul className={listClass}>
-        {secondaryNav.map((item) => (
+        {navFor(auth ? toRole(auth.tenant.role) : null).map((item) => (
           <li key={item.href}>
             <Link href={item.href} className="flex min-h-14 items-center gap-3 px-4 text-ink hover:bg-paper focus-visible:-outline-offset-3">
               <item.icon className="text-muted" />

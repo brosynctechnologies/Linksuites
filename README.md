@@ -164,7 +164,13 @@ notifications page).
 - Invoices created before phase 2 were given an exchange rate of 1 by the migration (correct for same-currency invoices).
 - Several businesses per sign-in: an owner starts another one with "Add another store/business" (`POST /api/me/businesses`, same setup as that product's sign-up, its own free plan; at most 10 owned per product) and switches between them; another product is added through its sign-up with the same email and password.
 - OrderLink custom domains (Pro): the owner sets a domain in Store settings; the API checks its DNS (job + "Check again"), `deploy/custom-domains.sh` on the host issues the certificate and nginx site, and `web/src/proxy.ts` serves the store at `/` on that host. See `docs/API.md` (Custom domain) and `docs/deploy-vps-handoff.md` for the one-time server setup.
-- WhatsApp phase 2 (Cloud API inbox, online order payments, inventory, staff seats) is not built.
+- OrderLink wave 4 (Pro): **stock** per product and variant (taken atomically when an order is placed, given back on cancel, "Only N
+  left" and "Sold out" on the storefront, one low-stock email and in-app alert per dip, an adjustments log; Free keeps counts but
+  ignores them), **staff seats** through the shared team invites (Admin = everything but billing and the Paystack key, Staff = orders,
+  products and stock; Pro 3 seats including the owner), and **online order payments** into the store's own Paystack (Stock, Team and
+  Payments pages in the dashboard; pay button on `/o/{code}`; webhook `POST /api/webhooks/paystack/orders/{tenantId}`; a re-check job,
+  `Jobs:OrdersEnabled`, every 5 minutes). See `docs/API.md` (Stock, Roles, Online payments).
+- WhatsApp phase 2 still to build: reminders and the daily summary (4a item 4) and the Cloud API inbox (item 5).
 - Done for launch: privacy policy and terms (hub `/privacy`, `/terms`), an error log in the admin console, nightly database backups (`deploy/backup-db.sh`). Still to do: a lawyer's NDPA review of the legal pages, uptime monitoring, off-server copies of backups and a restore test.
 - The full list of what is left, in build order, is `docs/superpowers/roadmap-2026-11-17.md`.
 

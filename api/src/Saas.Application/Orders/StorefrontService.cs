@@ -13,7 +13,9 @@ public sealed class StorefrontService(
     PlanService plans,
     NotificationQueue notifications,
     AppUrls urls,
-    TimeProvider clock)
+    TimeProvider clock,
+    StockLedger ledger,
+    OrderPaymentService payments)
 {
     public async Task<PublicStoreDto> GetStoreAsync(string slug, CancellationToken ct)
     {
@@ -53,24 +55,25 @@ public sealed class StorefrontService(
 
     public async Task<IReadOnlyList<PublicProductDto>> GetProductsAsync(string slug, CancellationToken ct)
     {
-        await ResolveAsync(slug, ct);
+        var store = await ResolveAsync(slug, ct);
         var products = await ProductQuery().Where(p => p.IsActive)
             .OrderBy(p => p.Position).ThenByDescending(p => p.CreatedAt).ToListAsync(ct);
-        return products.Select(ToPublic).ToList();
+        var tracking = await ledger.TrackingAsync(ct);
+        return products.Select(p => ToPublic(p, tracking, store.LowStockThreshold)).ToList();
     }
 
     public async Task<PublicProductDto> GetProductAsync(string slug, string productSlug, CancellationToken ct)
     {
-        await ResolveAsync(slug, ct);
+        var store = await ResolveAsync(slug, ct);
         var product = await ProductQuery().FirstOrDefaultAsync(p => p.Slug == productSlug && p.IsActive, ct)
             ?? throw new NotFoundException("Product");
-        return ToPublic(product);
+        return ToPublic(product, await ledger.TrackingAsync(ct), store.LowStockThreshold);
     }
 
     public async Task<QuoteDto> QuoteAsync(string slug, QuoteRequest request, CancellationToken ct)
     {
         var store = await ResolveAsync(slug, ct);
-        var priced = await PriceAsync(store, request, strict: false, ct);
+        var priced = await PriceAsync(store, request, strict: false, await ledger.TrackingAsync(ct), ct);
         return priced.ToDto(store.Currency);
     }
 
@@ -83,19 +86,25 @@ public sealed class StorefrontService(
         var phone = PhoneNumbers.Normalize(request.Phone, country)
             ?? throw BadRequestException.Field("phone", "Enter a valid phone number.");
 
-        var priced = await PriceAsync(store, request, strict: true, ct);
+        var tracking = await ledger.TrackingAsync(ct);
+        var priced = await PriceAsync(store, request, strict: true, tracking, ct);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        foreach (var line in priced.Lines)
+        // Stock is taken when the order is placed (each count lowered by a conditional update, so two customers can't both buy the
+        // last one) and given back if the order is cancelled. Only on a plan with stock tracking.
+        var taken = new List<(int Line, bool Variant, int After)>();
+        for (var i = 0; i < priced.Lines.Count && tracking; i++)
         {
-            var tracked = priced.Products[line.ProductId].StockQty is not null;
-            if (!tracked) continue;
-            var qty = line.Quantity;
-            var updated = await db.Products
-                .Where(p => p.Id == line.ProductId && p.StockQty >= qty)
-                .ExecuteUpdateAsync(s => s.SetProperty(p => p.StockQty, p => p.StockQty - qty), ct);
-            if (updated == 0) throw new ConflictException($"Sorry, there is not enough {line.Name} left.", "out_of_stock");
+            var line = priced.Lines[i];
+            var product = priced.Products[line.ProductId];
+            var variant = line.VariantId is { } vid ? product.Variants.First(v => v.Id == vid) : null;
+            if (product.StockQty is not null)
+                taken.Add((i, false, await ledger.ChangeAsync(product.Id, null, -line.Quantity, ct)
+                    ?? throw new ConflictException($"Sorry, there is not enough {line.Name} left.", "out_of_stock")));
+            if (variant?.StockQty is not null)
+                taken.Add((i, true, await ledger.ChangeAsync(product.Id, variant.Id, -line.Quantity, ct)
+                    ?? throw new ConflictException($"Sorry, there is not enough {StockLedger.ItemName(line.Name, line.Variant)} left.", "out_of_stock")));
         }
 
         if (priced.DiscountEntity is { } discount)
@@ -135,7 +144,7 @@ public sealed class StorefrontService(
             DiscountCode = priced.Discount.AppliedCode,
             TotalMinor = priced.TotalMinor,
             Currency = store.Currency,
-            Items = priced.Lines.Select(l => new OrderItem
+            Items = priced.Lines.Select((l, i) => new OrderItem
             {
                 ProductId = l.ProductId,
                 VariantId = l.VariantId,
@@ -144,12 +153,27 @@ public sealed class StorefrontService(
                 UnitPriceMinor = l.UnitPriceMinor,
                 Quantity = l.Quantity,
                 LineTotalMinor = l.LineTotalMinor,
+                ProductStockTaken = taken.Any(t => t.Line == i && !t.Variant),
+                VariantStockTaken = taken.Any(t => t.Line == i && t.Variant),
             }).ToList(),
             History = [new OrderStatusHistory { Status = OrderStatus.New, Note = "Order placed" }],
         };
         var orderUrl = urls.OrderUrl(order.Code);
-        order.WhatsappMessage = WhatsAppMessage.Build(order, orderUrl);
+        // The pay link rides in the WhatsApp message when the store takes online payments (Pro and a Paystack key).
+        var payUrl = await payments.OnlineReadyAsync(store, ct) && !OrderPaymentService.DeliveryToBeAgreed(order) && order.TotalMinor > 0
+            ? OrderPaymentService.PayUrl(orderUrl) : null;
+        order.WhatsappMessage = WhatsAppMessage.Build(order, orderUrl, payUrl);
         db.Orders.Add(order);
+
+        foreach (var t in taken)
+        {
+            var line = priced.Lines[t.Line];
+            var variantId = t.Variant ? line.VariantId : null;
+            var variantTitle = t.Variant ? line.Variant : null;
+            ledger.Log(store, line.ProductId, variantId, line.Name, variantTitle, -line.Quantity, t.After, StockChangeKind.Sale,
+                $"Order #{order.Number}", order);
+            await ledger.AfterChangeAsync(store, line.ProductId, variantId, StockLedger.ItemName(line.Name, variantTitle), t.After, ct);
+        }
 
         var ownerEmails = await db.Memberships
             .Where(m => m.Role == MemberRole.Owner && m.Status == MembershipStatus.Active && m.User!.Email != null)
@@ -178,7 +202,7 @@ public sealed class StorefrontService(
         await tx.CommitAsync(ct);
 
         return new PlaceOrderResult(order.Code, order.Number, order.TotalMinor, order.Currency,
-            WhatsAppMessage.Link(store.WhatsappNumber, order.WhatsappMessage), orderUrl);
+            WhatsAppMessage.Link(store.WhatsappNumber, order.WhatsappMessage), orderUrl, payUrl);
     }
 
     public async Task<PublicOrderDto> GetOrderAsync(string code, CancellationToken ct)
@@ -195,7 +219,7 @@ public sealed class StorefrontService(
             order.Items.Select(i => new PublicOrderItemDto(i.NameSnapshot, i.VariantSnapshot, i.Quantity, i.LineTotalMinor)).ToList(),
             order.SubtotalMinor, order.DeliveryFeeMinor, order.DiscountMinor, order.TotalMinor, order.Currency,
             order.CreatedAt, WhatsAppMessage.Link(store.WhatsappNumber, order.WhatsappMessage), showBranding,
-            order.Fulfilment == Fulfilment.Delivery && order.DeliveryZoneId is null && order.DeliveryFeeMinor == 0);
+            OrderPaymentService.DeliveryToBeAgreed(order), await payments.CanPayAsync(order, store, ct));
     }
 
     /// <summary>Finds the store by slug and scopes the rest of the request to its tenant.</summary>
@@ -234,7 +258,7 @@ public sealed class StorefrontService(
     /// Prices the cart from the database. With <paramref name="strict"/> false (quotes), unavailable lines are
     /// dropped and a missing zone just means no fee yet; with it true (orders), any problem is an error.
     /// </summary>
-    private async Task<Priced> PriceAsync(Store store, QuoteRequest request, bool strict, CancellationToken ct)
+    private async Task<Priced> PriceAsync(Store store, QuoteRequest request, bool strict, bool tracking, CancellationToken ct)
     {
         var ids = request.Items.Select(i => i.ProductId).Distinct().ToList();
         var products = await db.Products.AsNoTracking().Include(p => p.Variants)
@@ -257,13 +281,16 @@ public sealed class StorefrontService(
                 if (strict) throw BadRequestException.Field("items", $"Choose an option for {product.Name}.");
                 continue;
             }
-            // What is still unclaimed for this line: the product's stock less what earlier lines of it took.
-            int? remaining = product.StockQty is { } stock ? Math.Max(0, stock - taken.GetValueOrDefault(product.Id)) : null;
-            var available = product.IsAvailable && (variant?.InStock ?? true)
-                && (remaining is null || remaining >= item.Quantity);
+            // What is still unclaimed for this line: the product's and the variant's stock less what earlier lines took (only on a
+            // plan with stock tracking; on Free, saved counts are ignored).
+            int? productLeft = tracking && product.StockQty is { } stock ? Math.Max(0, stock - taken.GetValueOrDefault(product.Id)) : null;
+            int? variantLeft = tracking && variant?.StockQty is { } vstock ? Math.Max(0, vstock - taken.GetValueOrDefault(variant.Id)) : null;
+            int? remaining = productLeft is null ? variantLeft : variantLeft is null ? productLeft : Math.Min(productLeft.Value, variantLeft.Value);
+            var sellable = product.IsActive && product.InStock && (variant?.InStock ?? true);
+            var available = sellable && (remaining is null || remaining >= item.Quantity);
             // A quote keeps a line asking for more than is left, priced at what can be sold, so the cart can lower it.
             var quantity = item.Quantity;
-            if (!available && !strict && product.IsAvailable && (variant?.InStock ?? true) && remaining is { } left)
+            if (!available && !strict && sellable && remaining is { } left)
             {
                 quantity = left;
                 available = true;
@@ -274,6 +301,7 @@ public sealed class StorefrontService(
                 continue;
             }
             taken[product.Id] = taken.GetValueOrDefault(product.Id) + quantity;
+            if (variant is not null) taken[variant.Id] = taken.GetValueOrDefault(variant.Id) + quantity;
             lines.Add(new PricedLine(product.Id, variant?.Id, product.Name, variant?.Title,
                 variant?.PriceMinor ?? product.PriceMinor, quantity, remaining));
         }
@@ -316,9 +344,29 @@ public sealed class StorefrontService(
         return Codes.Random(8);
     }
 
-    internal static PublicProductDto ToPublic(Product p) => new(
-        p.Id, p.Slug, p.Name, p.Description, p.PriceMinor, p.CompareAtPriceMinor, p.IsAvailable, p.CategoryId,
-        p.Images.OrderBy(i => i.Position).Select(i => new ImageUrlDto(i.Url)).ToList(),
-        p.Options.OrderBy(o => o.Position).Select(o => new OptionDto(o.Name, o.Values)).ToList(),
-        p.Variants.Select(v => new PublicVariantDto(v.Id, v.OptionValues, v.Title, v.PriceMinor ?? p.PriceMinor, v.InStock)).ToList());
+    /// <summary>
+    /// The public view of a product. With <paramref name="tracking"/> (a plan with stock tracking), a count of 0 means sold out and a
+    /// count at or under <paramref name="threshold"/> is shown as "Only N left"; a variant's count is capped by the product's own.
+    /// </summary>
+    internal static PublicProductDto ToPublic(Product p, bool tracking, int threshold)
+    {
+        int? productLeft = tracking ? p.StockQty : null;
+        static int? Min(int? a, int? b) => a is null ? b : b is null ? a : Math.Min(a.Value, b.Value);
+        int? Left(int? count) => count is { } n && n > 0 && n <= threshold ? n : null;
+
+        var variants = p.Variants.Select(v =>
+        {
+            var left = Min(productLeft, tracking ? v.StockQty : null);
+            return new PublicVariantDto(v.Id, v.OptionValues, v.Title, v.PriceMinor ?? p.PriceMinor, v.InStock && left is null or > 0, Left(left));
+        }).ToList();
+        int? effective = productLeft;
+        if (tracking && p.Variants.Count > 0 && p.Variants.All(v => v.StockQty is not null))
+            effective = Min(effective, p.Variants.Where(v => v.InStock).Sum(v => Math.Max(0, Min(productLeft, v.StockQty) ?? 0)));
+        var inStock = p.IsActive && p.InStock && effective is null or > 0 && (variants.Count == 0 || variants.Any(v => v.InStock));
+        return new PublicProductDto(
+            p.Id, p.Slug, p.Name, p.Description, p.PriceMinor, p.CompareAtPriceMinor, inStock, p.CategoryId,
+            p.Images.OrderBy(i => i.Position).Select(i => new ImageUrlDto(i.Url)).ToList(),
+            p.Options.OrderBy(o => o.Position).Select(o => new OptionDto(o.Name, o.Values)).ToList(),
+            variants, inStock ? Left(effective) : null);
+    }
 }

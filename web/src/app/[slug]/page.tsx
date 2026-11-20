@@ -72,10 +72,15 @@ function ProductCard({ p, slug, currency }: { p: PublicProductDto; slug: string;
             </div>
           )}
           {!p.inStock && (
-            <span className="absolute top-2 left-2 rounded-full bg-surface px-2.5 py-0.5 text-xs font-semibold text-hibiscus-deep">Out of stock</span>
+            <span className="absolute top-2 left-2 rounded-full bg-surface px-2.5 py-0.5 text-xs font-semibold text-hibiscus-deep">Sold out</span>
           )}
           {p.inStock && onSale && (
             <span className="absolute top-2 left-2 rounded-full bg-accent px-2.5 py-0.5 text-xs font-semibold text-accent-ink">Sale</span>
+          )}
+          {p.inStock && p.stockLeft != null && p.stockLeft > 0 && (
+            <span className="absolute bottom-2 left-2 rounded-full bg-surface px-2.5 py-0.5 text-xs font-semibold text-marigold-deep">
+              Only {p.stockLeft} left
+            </span>
           )}
         </div>
         <p className="mt-2 line-clamp-2 text-sm font-medium text-ink group-hover:underline group-hover:underline-offset-2">{p.name}</p>

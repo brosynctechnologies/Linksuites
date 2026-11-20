@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, type CSSProperties } from "react";
 import { APP_NAME } from "@/lib/config";
 import { formatMoney } from "@/lib/money";
-import { getPublicOrder } from "@/lib/storefront";
+import { accentOf, getPublicOrder, getStore, readableOn } from "@/lib/storefront";
+import { PayOnline } from "@/components/store/pay-online";
 import type { OrderStatus, PublicOrderDto } from "@/lib/types";
 import { StoreSkeleton } from "@/components/store/store-shell";
 import { PaymentBadge, StatusBadge } from "@/components/badges";
@@ -45,6 +46,10 @@ async function Order({ params }: Props) {
   const { code } = await params;
   const order = await getPublicOrder(code);
   if (!order) notFound();
+  // The pay button wears the store's own colour (green stays for WhatsApp).
+  const store = order.canPayOnline ? await getStore(order.storeSlug).catch(() => null) : null;
+  // A store without its own colour gets indigo ink here, not the storefront's default green.
+  const accent = store?.themeColor && accentOf(store.themeColor) !== accentOf(null) ? accentOf(store.themeColor) : "#1b1f3b";
   const c = order.currency;
   const cancelled = order.status === "Cancelled";
   const placed = new Date(order.createdAt);
@@ -60,7 +65,7 @@ async function Order({ params }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-paper">
+    <div className="min-h-screen bg-paper" style={{ "--accent": accent, "--accent-ink": readableOn(accent) } as CSSProperties}>
       <main id="main" tabIndex={-1} className="mx-auto max-w-[560px] space-y-6 px-4 pt-4 pb-10 outline-none">
         <Link
           href={`/${order.storeSlug}`}
@@ -109,6 +114,8 @@ async function Order({ params }: Props) {
             </p>
           }
         />
+
+        <PayOnline order={order} />
 
         <div>
           <a

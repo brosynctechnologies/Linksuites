@@ -124,6 +124,7 @@ public static class DataSeeder
                 {
                     [LimitKeys.Products] = 20, [LimitKeys.DeliveryZones] = 1, [LimitKeys.DiscountCodes] = 0,
                     [LimitKeys.RemoveBranding] = 0, [LimitKeys.CustomDomain] = 0,
+                    [LimitKeys.Inventory] = 0, [LimitKeys.OnlinePayments] = 0, [LimitKeys.TeamSeats] = 1,
                 },
                 Features = ["Up to 20 products", "1 delivery zone", "Unlimited orders", "QR code and store link"],
             },
@@ -135,8 +136,10 @@ public static class DataSeeder
                 {
                     [LimitKeys.Products] = -1, [LimitKeys.DeliveryZones] = -1, [LimitKeys.DiscountCodes] = -1,
                     [LimitKeys.RemoveBranding] = 1, [LimitKeys.CustomDomain] = 1,
+                    [LimitKeys.Inventory] = 1, [LimitKeys.OnlinePayments] = 1, [LimitKeys.TeamSeats] = 3,
                 },
-                Features = ["Unlimited products", "Unlimited delivery zones", "Discount codes", "Remove branding", "Custom domain"],
+                Features = ["Unlimited products", "Unlimited delivery zones", "Discount codes", "Remove branding", "Custom domain",
+                    Saas.Application.Orders.OrderPlanFeatures.Stock, Saas.Application.Orders.OrderPlanFeatures.Payments, Saas.Application.Orders.OrderPlanFeatures.Team],
             },
             new Plan
             {

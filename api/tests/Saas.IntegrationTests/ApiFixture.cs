@@ -103,6 +103,7 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("CustomDomains:HostSecret", CustomDomainsHostSecret);
         builder.UseSetting("CustomDomains:Forbidden:0", CustomDomainsForbidden);
         builder.UseSetting("Jobs:CustomDomainsEnabled", "false"); // tests run CustomDomainJobs by hand
+        builder.UseSetting("Jobs:OrdersEnabled", "false"); // tests run OrderJobs by hand
         builder.UseSetting("Platform:AdminEmails:0", AdminEmail);
         builder.UseSetting("Platform:AdminEmails:1", UnclaimedAdminEmail);
         builder.ConfigureTestServices(services =>
