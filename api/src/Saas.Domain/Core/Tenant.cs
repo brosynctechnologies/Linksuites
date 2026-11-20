@@ -18,6 +18,13 @@ public class Tenant : Entity
     public DateTimeOffset? CustomDomainLiveAt { get; set; }
     /// <summary>The host script's last certificate failure; the domain isn't handed out for another try until an hour after it.</summary>
     public DateTimeOffset? CustomDomainCertFailedAt { get; set; }
+    /// <summary>
+    /// The random proof-of-ownership code made when the domain is set: the owner publishes it as the TXT record
+    /// <c>_linksuite-verify.&lt;domain&gt;</c>. Kept plain, since it is public in DNS anyway and the settings page shows it.
+    /// </summary>
+    public string? CustomDomainToken { get; set; }
+    /// <summary>Since when the claim has been waiting (PendingDns or Failed) without being verified; the job releases it 7 days on.</summary>
+    public DateTimeOffset? CustomDomainPendingSince { get; set; }
     public string? LogoUrl { get; set; }
     public string? BrandColor { get; set; }
     public string Country { get; set; } = "NG";

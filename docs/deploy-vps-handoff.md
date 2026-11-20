@@ -70,14 +70,26 @@ To add a secret: edit `/opt/linksuite/.env`, then `cd /opt/linksuite && docker c
 
 ### Custom domains for OrderLink stores (Wave 3) — one-time setup
 
-How it works: an OrderLink Pro owner sets a domain in Store settings and adds a DNS record (subdomain: `CNAME shop →
-stores.linksuite.brosync.ng`; apex: `A @ → <VPS IPv4>`). The API checks the DNS and keeps the list. `deploy/custom-domains.sh`, run by
-root's cron every 5 minutes, asks the API (`http://127.0.0.1:5080/api/internal/custom-domains`, shared secret) which domains to serve,
-gets a Let's Encrypt certificate per domain (`certbot certonly --webroot -w /var/www/certbot`), writes
-`/etc/nginx/sites-available/linksuite-custom/<domain>.conf` (HTTP → HTTPS, proxy to the orders container on `127.0.0.1:3700` with the
-orders block's headers), runs `nginx -t` (a failing new site is taken out again and reported failed), reloads nginx, reports back, and
-deletes sites for domains no longer listed (removed, plan lapsed, business suspended). It changes nothing when the API doesn't answer
-or `nginx -t` already fails. The `orders` web app serves the store at `/` for a live domain (`web/src/proxy.ts`).
+How it works: an OrderLink Pro owner sets a domain in Store settings and adds two DNS records: one pointing it here (subdomain:
+`CNAME shop → stores.linksuite.brosync.ng`; apex: `A @ → <VPS IPv4>`) and one proving it is theirs (`TXT _linksuite-verify.shop →
+<the store's random code>`, shown in Store settings; `_linksuite-verify` for an apex). The API verifies a domain only when BOTH are in
+place: pointing here alone proves nothing, since every site this nginx already serves (Health Tutor, LinkSuite's own hosts) points
+here too. A claim that isn't verified within 7 days (pending or failed) is released by the API's job and the owner is emailed, so
+nobody can sit on someone else's domain. `deploy/custom-domains.sh`, run by root's cron every 5 minutes, asks the API
+(`http://127.0.0.1:5080/api/internal/custom-domains`, shared secret sent from a 600 temp file via `curl --config`, never on the
+command line) which domains to serve, and for each:
+- refuses it ("already served by this server", reported as failed) when any nginx config outside its own folder already has that
+  `server_name` (exact or wildcard; read from `nginx -T`);
+- gets a Let's Encrypt certificate under its own lineage `linksuite-<domain>` (`certbot certonly --webroot -w /var/www/certbot
+  --cert-name linksuite-<domain>`), and only ever points `ssl_certificate` at `/etc/letsencrypt/live/linksuite-<domain>/`, never at a
+  lineage it didn't create;
+- writes `/etc/nginx/sites-available/linksuite-custom/<domain>.conf` (HTTP → HTTPS, proxy to the orders container on `127.0.0.1:3700`
+  with the orders block's headers) and runs `nginx -t`: any error or any `conflicting server name` warning takes the new site out
+  again and reports it failed.
+
+It then reloads nginx, reports back, and deletes its own sites (only `*.conf` in its folder) for domains no longer listed (removed,
+plan lapsed, business suspended, released). It changes nothing when the API doesn't answer or `nginx -t` already fails or warns. The
+`orders` web app serves the store at `/` for a live domain (`web/src/proxy.ts`).
 
 Apply once, as root on the VPS, after deploying the code that contains `deploy/custom-domains.sh` (rebuild `api` and `orders`):
 
@@ -88,7 +100,12 @@ Apply once, as root on the VPS, after deploying the code that contains `deploy/c
    CUSTOM_DOMAINS_TARGET=stores.linksuite.brosync.ng
    CUSTOM_DOMAINS_APEX_IP=<the VPS public IPv4>
    CUSTOM_DOMAINS_EMAIL=brosynctechnologies@gmail.com
+   # Every host the OTHER sites on this nginx serve, comma-separated (Health Tutor's, and any non-LinkSuite site added later).
+   # brosync.ng and all its subdomains are already refused (CustomDomains:Reserved), as are LinkSuite's own hosts; list them
+   # anyway for clarity. A store can't claim these, anything under them, or a parent of them.
+   CUSTOM_DOMAINS_FORBIDDEN=healthtutor.api.brosync.ng,healthtutor.brosync.ng
    ```
+   (check the real list with `nginx -T 2>/dev/null | grep -E '^\s*server_name'`).
    and the secret (`openssl rand -hex 32`): `ssh -t healthtutor-vps bash /opt/linksuite/deploy/set-secret.sh CUSTOM_DOMAINS_HOST_SECRET`.
    Then `cd /opt/linksuite && docker compose -f docker-compose.vps.yml up -d api`.
 3. Webroot and site folder: `mkdir -p /var/www/certbot/.well-known/acme-challenge /etc/nginx/sites-available/linksuite-custom`.
@@ -102,21 +119,31 @@ Apply once, as root on the VPS, after deploying the code that contains `deploy/c
    /etc/nginx/conf.d/linksuite-custom.conf` (Ubuntu's `nginx.conf` includes `conf.d/*.conf` in `http`).
 6. `nginx -t && systemctl reload nginx`. Check the webroot: `echo ok > /var/www/certbot/.well-known/acme-challenge/ping && curl -s
    http://stores.linksuite.brosync.ng/.well-known/acme-challenge/ping` prints `ok`; then `rm /var/www/certbot/.well-known/acme-challenge/ping`.
-7. Check the API side: `curl -s -H "X-Host-Secret: <secret>" "http://127.0.0.1:5080/api/internal/custom-domains?format=text"` prints
-   `# end` (plus any verified domains).
+7. Check the API side (the secret goes through stdin, not the command line):
+   `grep '^CUSTOM_DOMAINS_HOST_SECRET=' /opt/linksuite/.env | cut -d= -f2- | sed 's/.*/header = "X-Host-Secret: &"/' | curl -s
+   --config - "http://127.0.0.1:5080/api/internal/custom-domains?format=text"` prints `# end` (plus any verified domains).
 8. Run the script once by hand: `chmod +x /opt/linksuite/deploy/custom-domains.sh && /opt/linksuite/deploy/custom-domains.sh`
    (no domains yet: it prints nothing and exits 0).
 9. Cron (`crontab -e` as root):
    ```
    */5 * * * * /opt/linksuite/deploy/custom-domains.sh >> /var/log/linksuite-custom-domains.log 2>&1
    ```
-10. Renewals: `certbot.timer` renews these certificates like the main one; each was issued with `--deploy-hook "systemctl reload nginx"`,
-    which certbot keeps for renewals.
+10. Renewals: `certbot.timer` renews these certificates like the main one; each `linksuite-<domain>` lineage was issued with
+    `--deploy-hook "systemctl reload nginx"`, which certbot keeps for renewals (check: `grep renew_hook
+    /etc/letsencrypt/renewal/linksuite-*.conf` shows `systemctl reload nginx`). Also safe to add once, for every lineage:
+    `printf '#!/bin/sh\nsystemctl reload nginx\n' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx && chmod +x
+    /etc/letsencrypt/renewal-hooks/deploy/reload-nginx`.
+
+Upgrading from the first Wave 3 version (before the TXT proof): the migration `CustomDomainOwnership` puts every existing claim back
+to "Waiting for DNS" with a new code and 7 days to add the TXT record, so the next script run removes their sites until they verify
+again. Certificates the old script issued under `/etc/letsencrypt/live/<domain>` are no longer used; delete each with `certbot delete
+--cert-name <domain>` only after checking (`certbot certificates`) that it is not another site's (Health Tutor's or LinkSuite's own).
 
 Troubleshooting: a store's status and error are in Store settings → Custom domain (and in `tenants.custom_domain_*`). A certificate
-failure is retried no sooner than an hour later (Let's Encrypt allows 5 failed validations per name per hour). To take a domain off
-by hand, clear it in the database (`UPDATE tenants SET custom_domain = NULL, custom_domain_status = NULL WHERE custom_domain = '…'`);
-the next run deletes its site. Log: `/var/log/linksuite-custom-domains.log`.
+failure (or "already served by this server") is retried no sooner than an hour later (Let's Encrypt allows 5 failed validations per
+name per hour). To take a domain off by hand, clear it in the database (`UPDATE tenants SET custom_domain = NULL, custom_domain_status
+= NULL, custom_domain_token = NULL, custom_domain_pending_since = NULL WHERE custom_domain = '…'`); the next run deletes its site.
+Log: `/var/log/linksuite-custom-domains.log`.
 
 ---
 

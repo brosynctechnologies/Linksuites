@@ -9,9 +9,45 @@ using Saas.Infrastructure.Persistence;
 
 namespace Saas.Infrastructure.Platform;
 
-/// <summary>DNS through the operating system's resolver, with a 5-second limit. A name with no records answers no addresses.</summary>
+/// <summary>
+/// Addresses through the operating system's resolver; TXT records through DnsClient (the OS resolver can't ask for TXT), against the
+/// system's name servers without a cache, so a just-added record is seen. 5-second limit each. A name with no records answers nothing.
+/// </summary>
 public sealed class SystemDomainResolver : IDomainResolver
 {
+    private static readonly DnsClient.LookupClient Txt = new(new DnsClient.LookupClientOptions
+    {
+        Timeout = TimeSpan.FromSeconds(5),
+        Retries = 1,
+        UseCache = false,
+        ThrowDnsErrors = false,
+        ContinueOnDnsError = true,
+    });
+
+    public async Task<IReadOnlyList<string>> ResolveTxtAsync(string name, CancellationToken ct)
+    {
+        DnsClient.IDnsQueryResponse response;
+        try
+        {
+            response = await Txt.QueryAsync(name, DnsClient.QueryType.TXT, DnsClient.QueryClass.IN, ct);
+        }
+        catch (DnsClient.DnsResponseException ex)
+        {
+            throw new DomainLookupException($"TXT lookup of {name} failed: {ex.Code}", ex);
+        }
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            throw new DomainLookupException($"TXT lookup of {name} timed out", ex);
+        }
+        if (response.HasError)
+        {
+            if (response.Header.ResponseCode == DnsClient.DnsHeaderResponseCode.NotExistentDomain) return [];
+            throw new DomainLookupException($"TXT lookup of {name} failed: {response.ErrorMessage}");
+        }
+        // A long value comes as several character-strings of one record: joined, as the owner typed it.
+        return response.Answers.TxtRecords().Select(r => string.Concat(r.Text)).ToList();
+    }
+
     public async Task<IReadOnlyList<IPAddress>> ResolveAsync(string host, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);

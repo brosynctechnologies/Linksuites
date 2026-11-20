@@ -101,6 +101,7 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("CustomDomains:Target", CustomDomainsTarget);
         builder.UseSetting("CustomDomains:ApexIp", CustomDomainsIp);
         builder.UseSetting("CustomDomains:HostSecret", CustomDomainsHostSecret);
+        builder.UseSetting("CustomDomains:Forbidden:0", CustomDomainsForbidden);
         builder.UseSetting("Jobs:CustomDomainsEnabled", "false"); // tests run CustomDomainJobs by hand
         builder.UseSetting("Platform:AdminEmails:0", AdminEmail);
         builder.UseSetting("Platform:AdminEmails:1", UnclaimedAdminEmail);
@@ -136,6 +137,8 @@ public sealed class ApiFixture : WebApplicationFactory<Program>, IAsyncLifetime
     public const string CustomDomainsTarget = "stores.linksuite.test";
     public const string CustomDomainsIp = "203.0.113.10";
     public const string CustomDomainsHostSecret = "host-secret-for-integration-tests";
+    /// <summary>Another site on the same server (CustomDomains:Forbidden), like Health Tutor on the VPS.</summary>
+    public const string CustomDomainsForbidden = "tutor.othersite.test";
 
     /// <summary>Stands in for DNS: custom domain checks resolve names here, shared by every host of this fixture.</summary>
     public FakeDomainResolver Dns { get; } = new();
@@ -355,15 +358,26 @@ public sealed class FakeDomainResolver : Saas.Application.Orders.IDomainResolver
         [ApiFixture.CustomDomainsTarget] = [System.Net.IPAddress.Parse(ApiFixture.CustomDomainsIp)],
     };
 
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string[]> texts = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Lookups of these names fail (a DNS server error, not "no such name").</summary>
     public System.Collections.Concurrent.ConcurrentBag<string> Broken { get; } = [];
 
     public void Point(string host, params string[] addresses) => records[host] = addresses.Select(System.Net.IPAddress.Parse).ToArray();
 
+    /// <summary>Sets the TXT records on <paramref name="name"/> (none: removes them).</summary>
+    public void Txt(string name, params string[] values) => texts[name] = values;
+
     public Task<IReadOnlyList<System.Net.IPAddress>> ResolveAsync(string host, CancellationToken ct)
     {
         if (Broken.Contains(host, StringComparer.OrdinalIgnoreCase)) throw new Saas.Application.Orders.DomainLookupException($"Lookup of {host} failed.");
         return Task.FromResult<IReadOnlyList<System.Net.IPAddress>>(records.TryGetValue(host, out var a) ? a : []);
+    }
+
+    public Task<IReadOnlyList<string>> ResolveTxtAsync(string name, CancellationToken ct)
+    {
+        if (Broken.Contains(name, StringComparer.OrdinalIgnoreCase)) throw new Saas.Application.Orders.DomainLookupException($"Lookup of {name} failed.");
+        return Task.FromResult<IReadOnlyList<string>>(texts.TryGetValue(name, out var t) ? t : []);
     }
 }
 
