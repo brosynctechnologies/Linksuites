@@ -39,6 +39,8 @@ public class SchoolProfile : TenantEntity
     public bool LessonPlansNeedReview { get; set; } = true;
     /// <summary>When false, every student Play route is hidden. New and existing schools start on.</summary>
     public bool PlayEnabled { get; set; } = true;
+    /// <summary>When true, subject teachers take a register for each lesson on the timetable. New and existing schools start off.</summary>
+    public bool SubjectAttendanceEnabled { get; set; }
 }
 
 /// <summary>A member of the school's team as the school sees them: job title, staff number and phone. One per membership.</summary>
@@ -708,6 +710,36 @@ public class AssignmentSubmission : TenantEntity
     public AssignmentSubmissionStatus Status { get; set; }
     /// <summary>True after the teacher reopens a marked submission, until the student sends it again.</summary>
     public bool Reopened { get; set; }
+    /// <summary>True when the last work sent came from a parent's account (a child of a level without student logins).</summary>
+    public bool SentByParent { get; set; }
+}
+
+/// <summary>
+/// The register of one lesson: a class subject at a period on a date, taken by its subject teacher when the school has subject
+/// attendance on. Unique per class subject, date and period. <see cref="TermId"/> is the current term when it was first saved;
+/// <see cref="Start"/> and <see cref="End"/> are copied from the timetable, so a later timetable change leaves the register as taken.
+/// Daily (class) registers are separate and unchanged.
+/// </summary>
+public class SubjectRegister : TenantEntity
+{
+    public Guid ClassId { get; set; }
+    public Guid ClassSubjectId { get; set; }
+    public Guid TermId { get; set; }
+    public DateOnly Date { get; set; }
+    /// <summary>1 to 12.</summary>
+    public int Period { get; set; }
+    public TimeOnly Start { get; set; }
+    public TimeOnly End { get; set; }
+    public Guid? TakenByStaffId { get; set; }
+    public string? ClientId { get; set; }
+}
+
+/// <summary>One student's mark on a lesson register: Present, Absent or Late (Excused is for the daily register only).</summary>
+public class SubjectAttendanceMark : TenantEntity
+{
+    public Guid RegisterId { get; set; }
+    public Guid EnrolmentId { get; set; }
+    public AttendanceStatus Status { get; set; }
 }
 
 /// <summary>Where a lesson plan is in review. A draft is visible only to the person who wrote it.</summary>

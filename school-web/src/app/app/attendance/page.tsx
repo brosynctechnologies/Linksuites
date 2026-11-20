@@ -9,6 +9,7 @@ import { qs, useApi } from "@/lib/use-api";
 import type { ClassAttendanceDto } from "@/lib/types/academic";
 import { ApiErrorView, Badge, Button, EmptyState, Input, Notice, PageHeader, PageLoader, RuledSheet, linkClass, ruledRowClass } from "@/components/ui";
 import { AcademicNoAccess, useAcademicClasses, useLeadership } from "../scores/academic-shared";
+import { AttendanceNav } from "./attendance-nav";
 
 export default function AttendancePage() {
   const role = useRole();
@@ -17,6 +18,7 @@ export default function AttendancePage() {
   return (
     <div className="space-y-4">
       <PageHeader title="Attendance" subtitle="Take the register for a class. It saves on this phone when there is no connection." />
+      <AttendanceNav />
       <Queued />
       <div className="w-48">
         <Input label="Date" type="date" required max={lagosToday()} value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />

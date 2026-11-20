@@ -165,6 +165,8 @@ public interface IAppDbContext
     DbSet<MessageThread> MessageThreads { get; }
     DbSet<Message> Messages { get; }
     DbSet<TimetableSlot> TimetableSlots { get; }
+    DbSet<SubjectRegister> SubjectRegisters { get; }
+    DbSet<SubjectAttendanceMark> SubjectAttendanceMarks { get; }
 
     // Property Listing Website
     DbSet<Location> Locations { get; }

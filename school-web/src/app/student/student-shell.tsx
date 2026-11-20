@@ -11,7 +11,7 @@ import { logout } from "@/lib/api";
 import { firstName, lastSchoolSlug, useAuth } from "@/lib/auth";
 import { useApi } from "@/lib/use-api";
 import type { StudentMe } from "@/lib/types";
-import { ExamsIcon, HomeworkIcon, PlayIcon, PortalBlocked, ResultsIcon, TestsIcon, TimetableIcon } from "../parent/_shared";
+import { AttendanceIcon, ExamsIcon, HomeworkIcon, PlayIcon, PortalBlocked, ResultsIcon, TestsIcon, TimetableIcon } from "../parent/_shared";
 
 interface NavItem {
   href: string;
@@ -24,6 +24,7 @@ const NAV: NavItem[] = [
   { href: "/student", label: "Home", icon: HomeIcon, exact: true },
   { href: "/student/results", label: "Results", icon: ResultsIcon },
   { href: "/student/timetable", label: "Timetable", icon: TimetableIcon },
+  { href: "/student/attendance", label: "Attendance", icon: AttendanceIcon },
   { href: "/student/exams", label: "Exams", icon: ExamsIcon },
   { href: "/student/assignments", label: "Homework", icon: HomeworkIcon },
   { href: "/student/cbt", label: "Tests", icon: TestsIcon },

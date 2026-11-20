@@ -175,11 +175,11 @@ public sealed class SchoolAssignmentTests(ApiFixture api)
         Assert.Equal("Practice fractions", item.GetProperty("title").GetString());
         Assert.True(item.GetProperty("submitted").GetBoolean());
         Assert.Equal(8m, item.GetProperty("mark").GetDecimal());
-        Assert.False(item.TryGetProperty("feedback", out _));
-        Assert.False(item.TryGetProperty("instructions", out _));
-        Assert.False(item.TryGetProperty("fileUrl", out _));
-        Assert.DoesNotContain("Show the working", parentView.GetRawText());
-        Assert.DoesNotContain("Show one more step", parentView.GetRawText());
+        // Wave 4 (4b item 2): parents see the mark and the teacher's comment for their own child. A JSS child sends it themselves.
+        Assert.Equal("Show one more step.", item.GetProperty("feedback").GetString());
+        Assert.Equal("Show the working.", item.GetProperty("instructions").GetString());
+        Assert.False(item.GetProperty("canSubmit").GetBoolean());
+        Assert.False(item.GetProperty("sentByParent").GetBoolean());
     }
 
     [Fact]

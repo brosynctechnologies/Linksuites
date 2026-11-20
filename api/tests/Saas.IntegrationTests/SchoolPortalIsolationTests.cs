@@ -56,6 +56,7 @@ public sealed class SchoolPortalIsolationTests(ApiFixture api)
         $"/api/parent/children/{studentId}/report-card/{termId}.pdf",
         $"/api/parent/children/{studentId}/report-card/{termId}.pdf?classId={classId}",
         $"/api/parent/children/{studentId}/attendance",
+        $"/api/parent/children/{studentId}/subject-attendance",
         $"/api/parent/children/{studentId}/invoices",
         $"/api/parent/children/{studentId}/timetable",
         $"/api/parent/children/{studentId}/announcements",
@@ -124,7 +125,7 @@ public sealed class SchoolPortalIsolationTests(ApiFixture api)
                      (bola, w.Bola, w.B.TermId, w.A.TermId, new[] { "Ada", "Xena" }),
                  })
         {
-            foreach (var url in new[] { "/api/student/me", "/api/student/overview", $"/api/student/results/{ownTerm}", "/api/student/timetable", "/api/student/announcements", "/api/student/assignments", "/api/student/cbt/papers", "/api/student/play/word-search", "/api/student/play/teasers" })
+            foreach (var url in new[] { "/api/student/me", "/api/student/overview", $"/api/student/results/{ownTerm}", "/api/student/timetable", "/api/student/subject-attendance", "/api/student/announcements", "/api/student/assignments", "/api/student/cbt/papers", "/api/student/play/word-search", "/api/student/play/teasers" })
             {
                 var body = await (await client.GetAsync(url, Ct)).Content.ReadAsStringAsync(Ct);
                 foreach (var name in others) Assert.DoesNotContain(name, body);

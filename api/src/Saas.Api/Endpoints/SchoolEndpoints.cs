@@ -143,6 +143,18 @@ public static class SchoolEndpoints
         school.MapPut("/attendance/{classId:guid}/{date}", (Guid classId, DateOnly date, SaveRegisterRequest r, AttendanceService s, CancellationToken ct) => s.SaveAsync(classId, date, r, ct));
         school.MapGet("/students/{id:guid}/attendance", (Guid id, Guid? termId, AttendanceService s, CancellationToken ct) => s.StudentAsync(id, termId, ct));
 
+        // Attendance per subject (when the school turns it on): a register for each lesson on the timetable, taken by the subject teacher of
+        // that class subject or leadership. The bursar is refused before anything is looked up. The daily register above is unchanged.
+        school.MapGet("/subject-attendance/lessons", (DateOnly? date, Guid? classId, SubjectAttendanceService s, CancellationToken ct) => s.LessonsAsync(date, classId, ct));
+        school.MapGet("/subject-attendance/report", (Guid classSubjectId, Guid? termId, SubjectAttendanceService s, CancellationToken ct) => s.ReportAsync(classSubjectId, termId, ct));
+        school.MapGet("/subject-attendance/{classSubjectId:guid}/{date}/{period:int}", (Guid classSubjectId, DateOnly date, int period, SubjectAttendanceService s, CancellationToken ct) =>
+            s.GetAsync(classSubjectId, date, period, ct));
+        school.MapPut("/subject-attendance/{classSubjectId:guid}/{date}/{period:int}", (Guid classSubjectId, DateOnly date, int period, SaveSubjectRegisterRequest r, SubjectAttendanceService s, CancellationToken ct) =>
+            s.SaveAsync(classSubjectId, date, period, r, ct));
+        school.MapGet("/students/{id:guid}/subject-attendance", (Guid id, Guid? termId, SubjectAttendanceService s, CancellationToken ct) => s.StudentAsync(id, termId, ct));
+        school.MapGet("/settings/subject-attendance", (SubjectAttendanceService s, CancellationToken ct) => s.GetSettingsAsync(ct)).RequireAuthorization(admin);
+        school.MapPut("/settings/subject-attendance", (SubjectAttendanceSettingsRequest r, SubjectAttendanceService s, CancellationToken ct) => s.SetSettingsAsync(r, ct)).RequireAuthorization(admin);
+
         // Trait ratings: the class teacher of the child's class, or leadership. The bursar is refused before the student is looked up.
         school.MapGet("/students/{id:guid}/traits", (Guid id, Guid? termId, TraitKind? kind, TraitService s, CancellationToken ct) => s.GetRatingsAsync(id, termId, kind, ct));
         school.MapPut("/students/{id:guid}/traits", (Guid id, Guid? termId, TraitKind? kind, SaveTraitRatingsRequest r, TraitService s, CancellationToken ct) => s.SaveRatingsAsync(id, termId, kind, r, ct));
@@ -155,6 +167,7 @@ public static class SchoolEndpoints
         // The file is private and is read through a signed link.
         school.MapGet("/assignments", (Guid classSubjectId, Guid termId, AssignmentService s, CancellationToken ct) => s.ListAsync(classSubjectId, termId, ct));
         school.MapPost("/assignments", (CreateAssignmentRequest r, AssignmentService s, CancellationToken ct) => s.CreateAsync(r, ct));
+        school.MapGet("/assignments/{id:guid}", (Guid id, AssignmentService s, CancellationToken ct) => s.GetAsync(id, ct));
         school.MapPut("/assignments/{id:guid}/submissions/{enrolmentId:guid}", (Guid id, Guid enrolmentId, MarkAssignmentRequest r, AssignmentService s, CancellationToken ct) => s.MarkAsync(id, enrolmentId, r, ct));
 
         // Lesson plans: the subject teacher writes a draft, and leadership may write one too. A draft is visible only to its author.

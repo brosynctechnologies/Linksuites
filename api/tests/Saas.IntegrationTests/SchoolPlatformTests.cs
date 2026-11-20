@@ -737,10 +737,19 @@ public sealed partial class SchoolPlatformTests(ApiFixture api)
         ["PUT /api/school/students/{id:guid}/traits"] = "YYNY",
         ["GET /api/school/students/{id:guid}/developmental"] = "YYNY", // class teacher or leadership; the bursar is refused before the student is looked up
         ["PUT /api/school/students/{id:guid}/developmental"] = "YYNY",
+        // Attendance per subject (wave 4): the subject teacher of the class subject or leadership; the bursar is refused before anything is looked up.
+        ["GET /api/school/subject-attendance/lessons"] = "YYNY", // a teacher's own lessons of the day (none is an empty list)
+        ["GET /api/school/subject-attendance/{classSubjectId:guid}/{date}/{period:int}"] = "YYNS",
+        ["PUT /api/school/subject-attendance/{classSubjectId:guid}/{date}/{period:int}"] = "YYNS",
+        ["GET /api/school/subject-attendance/report"] = "YYNS", // the subject teacher, the class teacher or leadership
+        ["GET /api/school/students/{id:guid}/subject-attendance"] = "YYNS", // leadership and the teachers of the student's class
+        ["GET /api/school/settings/subject-attendance"] = Admin,
+        ["PUT /api/school/settings/subject-attendance"] = Admin,
 
 
         ["GET /api/school/assignments"] = "YYNS", // subject teacher or leadership; the bursar is refused before the class subject is looked up
         ["POST /api/school/assignments"] = "YYNS",
+        ["GET /api/school/assignments/{id:guid}"] = "YYNS", // one assignment with who has and hasn't sent it; a teacher of another subject gets 404
         ["PUT /api/school/assignments/{id:guid}/submissions/{enrolmentId:guid}"] = "YYNS",
         ["GET /api/school/lesson-plans"] = "YYNY", // subject teacher or leadership; a teacher who does not teach it gets 404; the bursar is refused before lookup
         ["POST /api/school/lesson-plans"] = "YYNY",
@@ -973,6 +982,7 @@ public sealed partial class SchoolPlatformTests(ApiFixture api)
             ["GET /api/school/cbt/papers"] = $"?classSubjectId={classSubjectId}&termId={termId}",
             ["GET /api/school/results/{classId:guid}/{termId:guid}/suggestions"] = $"?enrolmentId={enrolmentId}&classSubjectId={classSubjectId}",
             ["GET /api/school/results/students/{studentId:guid}"] = $"?termId={termId}",
+            ["GET /api/school/subject-attendance/report"] = $"?classSubjectId={classSubjectId}&termId={termId}",
         };
         var bodies = new Dictionary<string, object>
         {

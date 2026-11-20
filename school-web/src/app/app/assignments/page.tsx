@@ -188,6 +188,21 @@ function AssignmentHead({ assignment, components }: { assignment: AssignmentDto;
         Due <span className="tnum">{formatStamp(assignment.dueAt)}</span>
       </p>
       <p className="mt-2 text-sm break-words whitespace-pre-line text-slate-800">{assignment.instructions}</p>
+      <p className="tnum mt-2 text-sm text-slate-700" aria-live="polite">
+        <span className="font-semibold text-ink">{assignment.submittedCount}</span> submitted,{" "}
+        <span className="font-semibold text-ink">{assignment.missingCount}</span> not yet,{" "}
+        <span className="font-semibold text-ink">{assignment.lateCount}</span> late,{" "}
+        <span className="font-semibold text-ink">{assignment.markedCount}</span> marked
+      </p>
+      {assignment.missingCount > 0 && assignment.missingCount < assignment.submissions.length && (
+        <p className="mt-1 text-xs break-words text-muted">
+          Not submitted yet:{" "}
+          {assignment.submissions
+            .filter((s) => !s.submitted)
+            .map((s) => s.name)
+            .join(", ")}
+        </p>
+      )}
     </div>
   );
 }
@@ -330,6 +345,7 @@ function SubmissionRow({
           {statusLabel(row.status, developmental)}
         </Badge>
         {row.late && <Badge tone="crest">Late</Badge>}
+        {row.sentByParent && <Badge>Sent by a parent</Badge>}
         {row.mark !== null && <Badge>Mark {score(row.mark)}</Badge>}
       </div>
       {row.submittedAt && <p className="text-xs text-muted">Sent {formatStamp(row.submittedAt)}</p>}
@@ -375,7 +391,7 @@ function SubmissionRow({
               </Button>
             )}
             {row.mark !== null && (
-              <p className="w-full text-xs text-muted">Reopen lets the student send the work again. The mark stays until you save a new one.</p>
+              <p className="w-full text-xs text-muted">Reopen lets the student (or parent) send the work again. The mark stays until you save a new one.</p>
             )}
           </div>
         </div>
@@ -489,7 +505,9 @@ function CreateDialog({
             ))}
           </Select>
         )}
-        <p className="text-xs text-muted">Students may attach one file. {FILE_HINT}</p>
+        <p className="text-xs text-muted">
+          Students may attach one file. For classes without student logins, parents send the work from the parent app. {FILE_HINT}
+        </p>
       </form>
     </Modal>
   );
