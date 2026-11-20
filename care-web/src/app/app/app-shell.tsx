@@ -16,7 +16,9 @@ import {
   CalendarIcon,
   CheckIcon,
   HomeIcon,
+  LabIcon,
   LogoutIcon,
+  PharmacyIcon,
   MoreIcon,
   NoteIcon,
   PatientsIcon,
@@ -63,6 +65,8 @@ export const NAV: NavItem[] = [
   { href: "/app/reports", label: "Reports", icon: ReportIcon, needs: "cashier" },
   { href: "/app/unsigned-notes", label: "Unsigned notes", icon: NoteIcon, needs: "director" },
   { href: "/app/results-to-review", label: "Results to review", icon: CheckIcon, needs: "doctor" },
+  { href: "/app/lab", label: "Lab", icon: LabIcon, needs: "lab" },
+  { href: "/app/pharmacy", label: "Pharmacy", icon: PharmacyIcon, needs: "pharmacy" },
   { href: "/app/price-list", label: "Price list", icon: PriceIcon, needs: "money" },
   { href: "/app/wards", label: "Wards and beds", icon: SetupIcon, needs: "leadership" },
   { href: "/app/staff", label: "Staff", icon: StaffIcon, needs: "leadership" },
@@ -72,7 +76,7 @@ export const NAV: NavItem[] = [
 ];
 
 /** On phones the tab bar holds the first four of these the member has; the rest live under More. */
-const BOTTOM = ["/app", "/app/queue", "/app/patients", "/app/bills", "/app/beds", "/app/appointments", "/app/price-list", "/app/staff"];
+const BOTTOM = ["/app", "/app/queue", "/app/lab", "/app/pharmacy", "/app/patients", "/app/bills", "/app/beds", "/app/appointments", "/app/price-list", "/app/staff"];
 
 export function navFor(access: CareAccess): NavItem[] {
   return NAV.filter((n) => meets(access, n.needs));

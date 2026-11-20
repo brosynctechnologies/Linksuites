@@ -187,6 +187,20 @@ export const BillIcon = (p: P) => (
     <path d="M9 8h6M9 12h6M9 16h3" />
   </Svg>
 );
+/** Wave 4, the lab: a test tube. */
+export const LabIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M9 3h6M10 3v13a2 2 0 0 0 4 0V3" />
+    <path d="M10 11h4" />
+  </Svg>
+);
+/** Wave 4, the pharmacy: a capsule. */
+export const PharmacyIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="3" y="8.5" width="18" height="7" rx="3.5" transform="rotate(-35 12 12)" />
+    <path d="m9.1 7.9 4 5.8" />
+  </Svg>
+);
 /** Reports: three bars on a baseline. */
 export const ReportIcon = (p: P) => (
   <Svg {...p}>

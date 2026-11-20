@@ -99,6 +99,9 @@ public sealed partial class CareAccessTests(ApiFixture api)
         ("file", $"/api/care/tests/{testId}/file"),
         // Wave 2: the file of a corrected (superseded) result.
         ("file", $"/api/care/tests/{testId}/superseded/{amendmentId}/file"),
+        // Wave 4: department reads. The lab opening a lab order, the pharmacy a prescription to dispense it (the doctor is both).
+        ("lab", $"/api/care/lab/orders/{testId}"),
+        ("dispensing", $"/api/care/pharmacy/prescriptions/{prescriptionId}"),
     ];
 
     /// <summary>
@@ -549,6 +552,9 @@ public sealed partial class CareAccessTests(ApiFixture api)
     {
         ["dispensesDrugs"] = "a clinic setting (prescribed drugs with a price item go on the bill): one yes/no about the clinic, never a patient's drug",
         ["consultationPriceItemId"] = "a clinic setting on GET /setup: the price-list item charged at check-in for a consultation, the same for every patient; never a note",
+        // Wave 4: the lab catalogue's reference ranges carry critical limits, the same for every patient; never a patient's value.
+        ["criticalLow"] = "a lab catalogue test's critical low limit (GET /lab/tests): catalogue data, never a patient's result",
+        ["criticalHigh"] = "a lab catalogue test's critical high limit (GET /lab/tests): catalogue data, never a patient's result",
     };
 
     /// <summary>
@@ -628,6 +634,23 @@ public sealed partial class CareAccessTests(ApiFixture api)
         ["GET /api/care/imports/{kind}/template.csv"] = _ => "/api/care/imports/care-patients/template.csv",
         // Task 16: the director's list of unsigned drafts (patient number, doctor, dates and age; never note text).
         ["GET /api/care/reports/unsigned-drafts"] = _ => "/api/care/reports/unsigned-drafts",
+        // Wave 4, lab: the catalogue (every member; catalogue data only), the turnaround report (the lab and leadership: counts and
+        // minutes per catalogue test); the worklist, an order and its label are the lab's (403 for non-clinical staff).
+        ["GET /api/care/lab/tests"] = _ => "/api/care/lab/tests",
+        ["GET /api/care/lab/turnaround"] = _ => "/api/care/lab/turnaround",
+        ["GET /api/care/lab/worklist"] = _ => "/api/care/lab/worklist",
+        ["GET /api/care/lab/orders/{id:guid}"] = w => $"/api/care/lab/orders/{w.Ids["test"]}",
+        ["GET /api/care/lab/orders/{id:guid}/label.pdf"] = w => $"/api/care/lab/orders/{w.Ids["test"]}/label.pdf",
+        // Wave 4, pharmacy: stock reads for leadership (stock, never a patient); the queue and a prescription to dispense are the dispensers'.
+        ["GET /api/care/pharmacy/items"] = _ => "/api/care/pharmacy/items",
+        ["GET /api/care/pharmacy/items/{id:guid}"] = w => $"/api/care/pharmacy/items/{w.Ids["stockItem"]}",
+        ["GET /api/care/pharmacy/items/{id:guid}/batches"] = w => $"/api/care/pharmacy/items/{w.Ids["stockItem"]}/batches",
+        ["GET /api/care/pharmacy/receipts"] = _ => "/api/care/pharmacy/receipts",
+        ["GET /api/care/pharmacy/movements"] = _ => "/api/care/pharmacy/movements",
+        ["GET /api/care/pharmacy/expiring"] = _ => "/api/care/pharmacy/expiring",
+        ["GET /api/care/pharmacy/alerts"] = _ => "/api/care/pharmacy/alerts",
+        ["GET /api/care/pharmacy/queue"] = _ => "/api/care/pharmacy/queue",
+        ["GET /api/care/pharmacy/prescriptions/{id:guid}"] = w => $"/api/care/pharmacy/prescriptions/{w.Ids["prescription"]}",
     };
 
     /// <summary>
@@ -768,6 +791,26 @@ public sealed partial class CareAccessTests(ApiFixture api)
             .EnsureSuccessStatusCode();
         var correctedTest = ids["correctedTest"];
         ids["amendment"] = await api.WithDbAsync(db => db.TestResultAmendments.IgnoreQueryFilters().Where(a => a.TestRequestId == correctedTest).Select(a => a.Id).SingleAsync(Ct));
+
+        // Wave 4: a lab catalogue test (with critical limits) and a stock item with a received batch, part of it dispensed to the walk's
+        // prescription, so the catalogue, stock reports and movements have rows to scan.
+        var labPrice = await kit.PriceItemAsync(clinic, "Walk FBC panel", "Test", 300_000);
+        (await clinic.Owner.PostAsJsonAsync("/api/care/lab/tests", new
+        {
+            name = "Walk FBC", sampleType = "Blood", priceItemId = labPrice, turnaroundHours = 4,
+            analytes = new[] { new { name = "Haemoglobin", unit = "g/dL", ranges = new[] { new { low = 12m, high = 16m, criticalLow = 7m, criticalHigh = 20m } } } },
+        }, Ct)).EnsureSuccessStatusCode();
+        var stockPrice = await kit.PriceItemAsync(clinic, "Walkstock syrup", "Drug", 1_500);
+        var stock = await clinic.Owner.PostAsJsonAsync("/api/care/pharmacy/items", new { name = "Walkstock syrup 100 ml", unit = "bottle", priceItemId = stockPrice, reorderLevel = 2 }, Ct);
+        stock.EnsureSuccessStatusCode();
+        ids["stockItem"] = (await stock.Content.ReadFromJsonAsync<JsonElement>(ApiFixture.Json, Ct)).GetProperty("id").GetGuid();
+        (await clinic.Owner.PostAsJsonAsync("/api/care/pharmacy/receipts", new
+        {
+            supplier = "Walk depot", lines = new[] { new { itemId = ids["stockItem"], batchNumber = "WALK-1", expiresOn = CareCalendar.Today(DateTimeOffset.UtcNow).AddDays(60), quantity = 20, unitCostMinor = 1_000L } },
+        }, Ct)).EnsureSuccessStatusCode();
+        var rxItem = await api.WithDbAsync(db => db.PrescriptionItems.IgnoreQueryFilters().Where(i => i.PrescriptionId == ids["prescription"]).Select(i => i.Id).FirstAsync(Ct));
+        (await clinic.Owner.PostAsJsonAsync($"/api/care/pharmacy/prescriptions/{ids["prescription"]}/dispense",
+            new { lines = new[] { new { prescriptionItemId = rxItem, itemId = ids["stockItem"], quantity = 2 } } }, Ct)).EnsureSuccessStatusCode();
 
         // Task 8: the visit's doctor admits the patient (clinical reason and diagnosis); the director assigns a bed with a deposit; a
         // second patient waits for a bed (the bed board's waiting list).

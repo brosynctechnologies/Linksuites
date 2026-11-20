@@ -59,7 +59,7 @@ export interface PublicInviteDto {
 }
 
 // ---- Team (shared) ----
-export type ClinicalRole = "None" | "Doctor" | "Nurse" | "FrontDesk";
+export type ClinicalRole = "None" | "Doctor" | "Nurse" | "FrontDesk" | "LabScientist" | "Pharmacist";
 export interface MemberDto {
   /** The membership id: PATCH and DELETE /api/team/members/{id} take it. */
   id: string;
@@ -144,6 +144,14 @@ export interface CareMeDto {
   isCashier: boolean;
   /** Wave 1: a signature image is on file (printed on what they sign). */
   hasSignature: boolean;
+  /** Wave 4: works the lab (clinical staff and lab scientists). */
+  canWorkLab: boolean;
+  /** Wave 4: edits the lab catalogue (leadership and lab scientists). */
+  canEditLabCatalogue: boolean;
+  /** Wave 4: dispenses prescriptions (clinical staff and pharmacists). */
+  canDispense: boolean;
+  /** Wave 4: manages pharmacy stock (leadership and pharmacists). */
+  canManageStock: boolean;
 }
 
 // ---- Care: setup and settings ----

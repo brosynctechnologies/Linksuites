@@ -48,8 +48,13 @@ suite.
 | Nurse | Staff | Nurse |
 | Front desk | Staff | FrontDesk |
 | Cashier | Accountant | none, ever |
+| Lab scientist | Staff | LabScientist (wave 4) |
+| Pharmacist | Staff | Pharmacist (wave 4) |
 
 "Clinical" means the director, or a clinical role of Doctor or Nurse. Support's view-as never has clinical access and never writes.
+Wave 4: a lab scientist and a pharmacist have no clinical access. They reach clinical data only through their department's own orders: a
+lab order (the lab) or a prescription being dispensed (the pharmacy). Elsewhere they are staff like the front desk (they search patients
+and check them in).
 
 The **Who** column below uses these codes (from the role table):
 
@@ -70,6 +75,12 @@ The **Who** column below uses these codes (from the role table):
 | Inviters | front desk and leadership (not the support view) |
 | Director | the medical director only |
 | Director reads | the medical director; the support view reads |
+| Lab | clinical staff and lab scientists; never the support view (wave 4) |
+| Lab catalogue | leadership and lab scientists (wave 4) |
+| Lab reports | the lab and leadership; the support view reads (wave 4) |
+| Stock | leadership and pharmacists; the support view reads (wave 4) |
+| Stock writes | leadership and pharmacists (wave 4) |
+| Dispensers | clinical staff and pharmacists; never the support view (wave 4) |
 
 A patient portal token gets 403 on every `/api/care` route. Staff tokens get 403 on every `/api/care-portal` route that needs an account.
 
@@ -149,8 +160,8 @@ A patient portal token gets 403 on every `/api/care` route. Staff tokens get 403
 |---|---|---|---|
 | POST | `/api/care/prescriptions` | Doctors | `CreatePrescriptionRequest` (items with drug, strength, dose, frequency, duration, quantity, route). 409 on an allergy match until `allergyAcknowledged`. Adds bill lines. Wave 2: the allergy classes also cover cephalosporins, heparins and statins, with PCN and ASA as class names (whole words only); a name inside an unrelated drug (Statin in Nystatin) no longer matches. |
 | GET | `/api/care/prescriptions/{id}/pdf` | Clinical | Logged open (area pdf). |
-| POST | `/api/care/tests` | Doctors | `{ patientId, consultationId?, admissionId?, kind, description, priceItemId? }`. |
-| POST | `/api/care/tests/{id}/result` | Clinical | JSON `{ text }` or multipart `text` and `file`. Post-build: the result then waits for a doctor's review; nobody is told yet. |
+| POST | `/api/care/tests` | Doctors | `{ patientId, consultationId?, admissionId?, kind, description, priceItemId?, labTestId? }`. Wave 4: with `labTestId` (an active lab catalogue test; 400 `labTestId` otherwise) the kind defaults to Lab (400 `kind` for another), the description to the test's name and the price item to the test's own. |
+| POST | `/api/care/tests/{id}/result` | Clinical, and lab scientists for lab tests | JSON `{ text }` or multipart `text` and `file`. Post-build: the result then waits for a doctor's review; nobody is told yet. Wave 4: a lab scientist may record a lab test's result (403 for imaging or other). |
 | POST | `/api/care/tests/{id}/amend` | Clinical | Wave 1. Corrects a result entered in error: JSON `{ text?, reason, keepFile? }` or multipart `text`, `reason`, `keepFile`, `file`. 400 `reason` without one; 400 `text` when the correction has no text and no file (a kept file counts); 404; 409 `test_not_resulted`. The recorded result is kept unchanged (text, file, who recorded and reviewed it) with who replaced it, when and the reason (encrypted); the record's `results[]` shows it under `superseded` (newest first) and sets `amendedAt`. The correction is recorded by the caller now and waits for a doctor's review again before the portal shows it (the portal then marks it `corrected` and never shows the earlier one). Audited `care.result_amended` (ids only). |
 | POST | `/api/care/prescriptions` and `/api/care/tests` (late orders) | Doctors | Wave 1: an order charged to a visit that is already Done sends the patient's portal users the bill-due notice again (bill number and balance only). |
 | POST | `/api/care/tests/{id}/review` | Doctors | Post-build (user decision). A doctor (an admin with the doctor role included) or the medical director reviews a recorded result → `{ id, reviewedBy, reviewedByName, reviewedAt }`. This releases it to the patient's portal and notifies the patient's portal users ("A new result for {First} is ready…"). 403 "Only doctors and nurses can see clinical notes." without clinical access; 403 "Only doctors can review results." for a nurse; 404 unknown or another clinic's; 409 `test_not_resulted` "This test has no result to review yet.". Idempotent: a reviewed result answers with its first review and writes or sends nothing. Audited (`care.result_reviewed`, ids only). |
@@ -158,6 +169,55 @@ A patient portal token gets 403 on every `/api/care` route. Staff tokens get 403
 | GET | `/api/care/tests/{id}/file` | Clinical | Logged open (area file) → a 2-minute signed link. |
 | GET | `/api/care/tests/{id}/superseded/{amendmentId}/file` | Clinical | Wave 2. The file of a result entered in error (an amendment of this test, from `superseded[]`): a logged open (area file) → `{ url, expiresAt, contentType }`, a 2-minute signed link to `/api/care/superseded-result-files/{amendmentId}/{expires}/{signature}`. 404 for an unknown test, an amendment of another test, or one without a file. |
 | GET | `/api/care/result-files/{id}/{expires}/{signature}` | Anyone holding the link | The signed link itself (outside the signed-in group). 404 when forged or expired. |
+
+### Lab (wave 4)
+
+Built on tests and results: a catalogue order is a `TestRequest` with `labTestId`; its structured result becomes the test's result text
+(one line per value: "Haemoglobin: 9.1 g/dL (low; ref 12-16)", then the comment), so the record, the doctor's review (which still releases
+it to the portal) and amendments work as for any result. Ranges are picked by the patient's sex and age (whole years) on the collection
+day: a range for the patient's sex beats one for both; ages run from `minAgeYears` (inclusive) to `maxAgeYears` (exclusive). Flags:
+`CriticalLow`/`CriticalHigh` at or beyond a critical limit, `Low`/`High` outside the reference limits, `Normal`, or `None` (no numeric
+range). Opening an order or printing its label is a **department read**: no care relationship or reason is needed (the order sends the
+patient to the lab, and the read covers that order only); it is logged like any open (area `lab`, or `pdf` for the label) with the
+caller's role ("Lab scientist").
+
+| Method | Route | Who | Notes |
+|---|---|---|---|
+| GET | `/api/care/lab/tests?active=` | Everyone | The catalogue by name: `{ id, name, sampleType, priceItemId, priceItemName, priceMinor, turnaroundHours, active, analytes: [{ id, name, unit, ranges: [{ sex, minAgeYears, maxAgeYears, low, high, criticalLow, criticalHigh }] }] }[]`. Catalogue data, no patient. |
+| POST | `/api/care/lab/tests` | Lab catalogue | `{ name, sampleType, priceItemId?, turnaroundHours? (1-720, default 24), active?, analytes: [{ name, unit?, ranges? }] }` (1-40 analytes, 0-12 ranges each). 400 per field (`analytes[i].ranges[j].high`: high below low; `.criticalLow` above low; `.criticalHigh` below high; `.maxAgeYears` not after the minimum; `.low` with no limit at all). 409 `lab_test_exists`. Audited. |
+| PUT | `/api/care/lab/tests/{id}` | Lab catalogue | As POST. Analytes sent with their `id` are kept, new ones added, the rest removed (recorded results copied their name, unit and range, so they never change). |
+| GET | `/api/care/lab/worklist?stage=` | Lab | Lab orders (catalogue or kind Lab) not yet reviewed, oldest first (at most 300); `stage=AwaitingSample|AwaitingResult|AwaitingReview|Done` (Done: reviewed in the last 7 days). `{ id, patientId, patientNumber, patientName, sex, ageYears, labTestId, testName, sampleType, sampleNumber, stage, requestedByName, orderedAt, collectedAt, reportedAt, dueBy, overdue }[]`. No description or result: no access-log row. |
+| GET | `/api/care/lab/orders/{id}` | Lab | Department read (area `lab`). `LabOrderDto`: patient demographics, the description, the catalogue test, stage, sample, `analytes[]` with the patient's range (`low, high, criticalLow, criticalHigh, rangeText`), `values[]` (current first, then `superseded` ones), the result text and review time. 404 for an unknown, another clinic's or a non-lab test. |
+| POST | `/api/care/lab/orders/{id}/collect` | Lab | No body. Numbers the sample `S{yyyy}-{00000}` (per clinic), records who and when → `{ id, sampleNumber, collectedAt, collectedByName }`. 409 `not_lab`, `sample_collected`, `test_resulted`. |
+| GET | `/api/care/lab/orders/{id}/label.pdf` | Lab | The sample label (70 × 35 mm PDF: sample number, patient name, number, sex and age, test and sample type, collection time). Department read (area `pdf`). 409 `sample_not_collected`. |
+| POST | `/api/care/lab/orders/{id}/results` | Lab | `{ values: [{ analyteId, value }], comment? }`: every analyte of the test once. A value is a number (invariant culture) when the analyte has ranges, else text (encrypted). → `{ id, status, values[], resultText, anyCritical, resultedAt }`. 400 `values`, `values[i].analyteId`, `values[i].value`; 404; 409 `not_catalogue` (record free-text tests through `/tests/{id}/result`), `test_resulted`, `sample_not_collected`. A critical value tells the ordering doctor (`care.critical_result`) unless they entered it. |
+| POST | `/api/care/lab/orders/{id}/amend` | Lab | `{ values, comment?, reason }`. 400 `reason`; 409 `not_catalogue`, `test_not_resulted`. The recorded result is kept as an amendment (as `/tests/{id}/amend`), its values marked superseded; the correction waits for review again. Audited `care.result_amended`. A text correction through `/tests/{id}/amend` also supersedes the structured values. |
+| GET | `/api/care/lab/turnaround?from=&to=` | Lab reports | Lagos days (default the last 30, at most 366). Per catalogue test (then "Other lab tests", target 24 h): `{ labTestId, name, targetHours, ordered, collected, reported, reviewed, avgOrderToCollectMinutes, avgCollectToReportMinutes, avgReportToReviewMinutes, avgOrderToReportMinutes, withinTarget, late }`, and a `total` row. Times use the first result and first review, so a correction doesn't move them. |
+
+### Pharmacy stock (wave 4)
+
+Stock items are linked to a Drug price-list item (one item per price item), so a prescription item with that price item is dispensed from
+it. Stock lives in batches (batch number, expiry date: the last day it may be used). Usable stock is the batches that haven't expired.
+Every change takes the item's advisory lock (items in id order) inside one transaction, and a check constraint keeps each batch at 0 or
+more, so concurrent dispensing never oversells. Stock reports never name a patient.
+
+| Method | Route | Who | Notes |
+|---|---|---|---|
+| GET | `/api/care/pharmacy/items?active=` | Stock | Stock on hand: `{ id, name, form, unit, priceItemId, priceItemName, reorderLevel, active, onHand, expiredOnHand, nextExpiry, low, valueMinor }[]`. |
+| POST / PUT | `/api/care/pharmacy/items`, `/api/care/pharmacy/items/{id}` | Stock writes | `{ name, form?, unit?, priceItemId?, reorderLevel?, active? }`. 400 `priceItemId` unless an active Drug price item; 409 `stock_item_exists`, `price_item_taken`. Audited. |
+| GET | `/api/care/pharmacy/items/{id}`, `/api/care/pharmacy/items/{id}/batches?all=` | Stock | One item; its batches holding stock (all with `all=true`), first expiry first: `{ id, itemId, itemName, unit, batchNumber, expiresOn, received, onHand, unitCostMinor, expired, daysToExpiry, receivedAt }[]`. |
+| POST | `/api/care/pharmacy/receipts` | Stock writes | `{ supplier?, reference?, receivedOn?, lines: [{ itemId, batchNumber, expiresOn, quantity, unitCostMinor? }] }` (1-50 lines). Each line is a new batch with a receipt movement. 400 per line (an expired batch is refused). A receipt that lifts an item above its reorder level re-arms the low-stock notice. |
+| GET | `/api/care/pharmacy/receipts` | Stock | The last 100 receipts with their batches. |
+| POST | `/api/care/pharmacy/counts` | Stock writes | `{ reason, lines: [{ batchId, counted }] }`. Each difference becomes an `Adjustment` movement with the reason → `{ adjusted, movements[] }`. 400 `reason`, `lines[i].batchId` (unknown, another clinic's or repeated), `lines[i].counted`. Audited `care.stock_counted` (ids and quantities). |
+| GET | `/api/care/pharmacy/movements?from=&to=&itemId=` | Stock | Newest first, at most 500: `{ id, itemId, itemName, batchId, batchNumber, kind (Receipt, Dispense, Adjustment), quantity (signed), balanceAfter, reason, byName, at, receiptId, dispensingId }[]`. |
+| GET | `/api/care/pharmacy/expiring?days=` | Stock | Batches holding stock that expire within `days` (default 90, 0-730), expired ones included. |
+| GET | `/api/care/pharmacy/alerts` | Stock | `{ days: 90, lowStock: StockItem[], nearExpiry: Batch[], expired: Batch[] }`. |
+| GET | `/api/care/pharmacy/queue` | Dispensers | Prescriptions of the last 30 days with a drug still to dispense, oldest first: `{ prescriptionId, patientId, patientNumber, patientName, doctorName, writtenAt, items, itemsDone, inpatient }[]`. No drug names: no access-log row. |
+| GET | `/api/care/pharmacy/prescriptions/{id}` | Dispensers | Department read (area `dispensing`). The drugs with `quantity, dispensed, remaining`, the stock item sold under the drug's price item with its usable stock, and past dispensings with the batches used. |
+| POST | `/api/care/pharmacy/prescriptions/{id}/dispense` | Dispensers | `{ lines: [{ prescriptionItemId, itemId?, quantity? }] }`. The stock item defaults to the one sold under the drug's price item; the quantity to what is left of the prescribed quantity (required when none was written). Takes stock first-expiry-first-out from unexpired batches, under the prescription's lock and each item's lock → `{ id, dispensedByName, at, lines: [{ prescriptionItemId, itemId, itemName, batchId, batchNumber, expiresOn, quantity }] }`. 400 per line; 404; 409 `over_dispense` (beyond the prescribed quantity, or already dispensed in full) and `insufficient_stock` (nothing is taken). Audited `care.dispensed` (ids only). Dispensing doesn't bill: drugs are charged when prescribed. |
+
+The care job (every minute) flags batches holding stock that expire within 90 days once (`care.near_expiry`) and re-checks low stock as
+batches expire.
 
 ### Bills, payments and the clinic's Paystack key
 
@@ -316,12 +376,22 @@ There is no portal reschedule route: the portal cancels and books again (spec ga
 
 Nothing goes to a deceased patient's portal accounts. Notices go in-app and by email.
 
+Wave 4 staff notices (in-app only):
+
+| Kind | To | Text |
+|---|---|---|
+| `care.critical_result` | the doctor who ordered a lab test with a critical value (not when they entered it) | "A lab test you ordered has a critical result." → `/app/results-to-review` |
+| `care.low_stock` | pharmacists and the medical director, once per fall to the reorder level | "{item} is low: {n} {unit} left (reorder at {level})." → `/app/pharmacy/items/{id}` |
+| `care.near_expiry` | pharmacists and the medical director, once per batch | "{n} batches expire within 90 days." → `/app/pharmacy/alerts` |
+
 ## care-web
 
 | Path | For | Notes |
 |---|---|---|
 | `/login`, `/signup`, `/invite/{token}` | staff | Staff sign in (password or code), clinic signup, staff invite. |
 | `/app/...` | staff | Guarded by `RequireSession`: a clinic session only. A portal session sees "This is the staff app". |
+| `/app/lab`, `/app/lab/orders/{id}`, `/app/lab/catalogue`, `/app/lab/turnaround` | lab, leadership | Wave 4: the worklist, one order (collect, label, results with ranges and flags, corrections), the catalogue and turnaround. |
+| `/app/pharmacy`, `/app/pharmacy/items/{id}`, `/app/pharmacy/dispense`, `/app/pharmacy/dispense/{id}`, `/app/pharmacy/receive`, `/app/pharmacy/counts`, `/app/pharmacy/alerts`, `/app/pharmacy/reports` | pharmacy, leadership | Wave 4: stock, dispensing, receipts, counts, alerts and reports. |
 | `/portal/sign-in` | patients | Code (default) or password sign in, and new accounts. |
 | `/portal/invite/{token}` | patients | Public preview, then sign in and choose the relationship to accept. |
 | `/portal`, `/portal/record`, `/portal/results`, `/portal/access-log`, `/portal/bills`, `/portal/pay/return`, `/portal/appointments`, `/portal/contact`, `/portal/notifications` | patients | Guarded by `RequirePortalSession`: a customer session only. A staff or support session sees "You're signed in as staff". The chosen patient travels as `?patient={id}`. |

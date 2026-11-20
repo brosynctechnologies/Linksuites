@@ -207,6 +207,28 @@ public sealed class CareNotificationTests(ApiFixture api)
         // Post-build (user decision): the patient's "result ready" notice is sent when a doctor reviews the result.
         await Json(await doctor.PostAsync($"/api/care/tests/{testId}/review", null, Ct));
 
+        // Wave 4: a catalogue lab test with a critical value entered by the nurse (the ordering doctor hears of a critical result), and
+        // pharmacy stock that falls to its reorder level on dispensing (low stock) with a batch near expiry (the job's notice).
+        var labTest = Id(await Json(await owner.PostAsJsonAsync("/api/care/lab/tests", new
+        {
+            name = $"{TestName} count", sampleType = "Blood",
+            analytes = new[] { new { name = "Level", unit = "g/dL", ranges = new[] { new { low = 12m, high = 16m, criticalLow = 7m } } } },
+        }, Ct)));
+        var labOrder = Id(await Json(await doctor.PostAsJsonAsync("/api/care/tests", new { patientId, consultationId, labTestId = labTest }, Ct)));
+        await Json(await nurse.PostAsync($"/api/care/lab/orders/{labOrder}/collect", null, Ct));
+        var analyte = await api.WithDbAsync(db => db.LabAnalytes.IgnoreQueryFilters().Where(a => a.LabTestId == labTest).Select(a => a.Id).FirstAsync(Ct));
+        await Json(await nurse.PostAsJsonAsync($"/api/care/lab/orders/{labOrder}/results", new { values = new[] { new { analyteId = analyte, value = "5.5" } } }, Ct));
+        var stockItem = Id(await Json(await owner.PostAsJsonAsync("/api/care/pharmacy/items", new { name = "Notice stock tablets", unit = "tablet", reorderLevel = 5 }, Ct)));
+        await Json(await owner.PostAsJsonAsync("/api/care/pharmacy/receipts", new
+        {
+            lines = new[] { new { itemId = stockItem, batchNumber = "N-1", expiresOn = Today.AddDays(30), quantity = 8 } },
+        }, Ct));
+        var rx = await api.WithDbAsync(db => db.PrescriptionItems.IgnoreQueryFilters().Where(i => i.TenantId == tenantId)
+            .Select(i => new { i.PrescriptionId, i.Id }).FirstAsync(Ct));
+        await Json(await owner.PostAsJsonAsync($"/api/care/pharmacy/prescriptions/{rx.PrescriptionId}/dispense",
+            new { lines = new[] { new { prescriptionItemId = rx.Id, itemId = stockItem, quantity = 4 } } }, Ct));
+        Assert.Equal(1, await AsClinicAsync(host, tenantId, sp => sp.GetRequiredService<PharmacyService>().CheckStockAsync(DateTimeOffset.UtcNow, Ct)));
+
         await Json(await desk.PostAsJsonAsync($"/api/care/visits/{visitId}/stage", new { stage = "WaitingPayment" }, Ct));
         var visitBill = await api.WithDbAsync(db => db.PatientBills.IgnoreQueryFilters().Where(b => b.VisitId == visitId).Select(b => b.Id).FirstAsync(Ct));
         await Json(await cashier.PostAsJsonAsync($"/api/care/bills/{visitBill}/payments", new { amountMinor = 100_000, method = "Cash" }, Ct));

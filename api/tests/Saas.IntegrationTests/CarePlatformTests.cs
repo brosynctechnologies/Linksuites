@@ -192,24 +192,34 @@ public sealed partial class CarePlatformTests(ApiFixture api)
     /// sentence than the role's). Never 401, 3xx, 405, 415, 429 or 5xx.
     /// </summary>
     private const string
-        Everyone = "YYYYYYYNY",          // every member reads; the support view reads
-        EveryoneWrites = "YYYYYYYNN",    // every member (the cashier too); the support view never writes
-        Leaders = "YYYNNNNNY",           // leadership reads
-        LeadersWrite = "YYYNNNNNN",
-        DeskReads = "YYYYYYNNY",         // front desk and above (clinical staff and leadership); not the cashier
-        DeskWrites = "YYYYYYNNN",
-        Clinical = "YNYYYNNNN",          // doctors, nurses, the director (an Admin only with a clinical role); never the support view
-        Doctors = "YNYYNNNNN",           // doctors and the director
-        DoctorsS = "YNSSNNNNN",          // doctors and the director; the service checks this admission's or note's doctor
-        ClinicalS = "YNSSSNNNN",         // clinical staff; the service checks the care relationship
-        Money = "YYYNNNYNN",             // the cashier and leadership write money
-        MoneyReads = "YYYNNNYNY",        // the cashier and leadership read reports
-        Inviters = "YYYNNYNNN",          // front desk and leadership manage portal invites and links
-        InviterReads = "YYYNNYNNN",      // ruling (Task 16): not the support view (portal accounts' contact details)
-        OwnerWrites = "YNNNNNNNN",
-        OwnerReads = "YNNNNNNNY";
+        Everyone = "YYYYYYYNYYY",          // every member reads; the support view reads
+        EveryoneWrites = "YYYYYYYNNYY",    // every member (the cashier too); the support view never writes
+        Leaders = "YYYNNNNNYNN",           // leadership reads
+        LeadersWrite = "YYYNNNNNNNN",
+        DeskReads = "YYYYYYNNYYY",         // front desk and above (clinical staff and leadership); not the cashier
+        DeskWrites = "YYYYYYNNNYY",
+        Clinical = "YNYYYNNNNNN",          // doctors, nurses, the director (an Admin only with a clinical role); never the support view
+        Doctors = "YNYYNNNNNNN",           // doctors and the director
+        DoctorsS = "YNSSNNNNNNN",          // doctors and the director; the service checks this admission's or note's doctor
+        ClinicalS = "YNSSSNNNNNN",         // clinical staff; the service checks the care relationship
+        Money = "YYYNNNYNNNN",             // the cashier and leadership write money
+        MoneyReads = "YYYNNNYNYNN",        // the cashier and leadership read reports
+        Inviters = "YYYNNYNNNNN",          // front desk and leadership manage portal invites and links
+        InviterReads = "YYYNNYNNNNN",      // ruling (Task 16): not the support view (portal accounts' contact details)
+        OwnerWrites = "YNNNNNNNNNN",
+        OwnerReads = "YNNNNNNNYNN",
+        // Wave 4 (lab and pharmacy). The last two columns are the lab scientist and the pharmacist: staff without clinical access, so
+        // they read and write as the front desk does everywhere else.
+        ClinicalOrLab = "YNYYYNNNNYN",   // recording a result: clinical staff, and a lab scientist for lab tests
+        LabCatalogue = "YYYNNNNNNYN",     // leadership and lab scientists edit the lab catalogue
+        LabWork = "YNYYYNNNNYN",          // the lab: clinical staff and lab scientists; never the support view
+        LabReport = "YYYYYNNNYYN",        // turnaround: the lab and leadership (the support view reads)
+        StockReads = "YYYNNNNNYNY",       // pharmacy stock: leadership and pharmacists (the support view reads)
+        StockWrites = "YYYNNNNNNNY",
+        Dispensers = "YNYYYNNNNNY";       // dispensing: clinical staff and pharmacists; never the support view
 
-    private static readonly string[] RoleNames = ["Owner", "Admin", "Admin+Doctor", "Doctor", "Nurse", "FrontDesk", "Cashier", "portal token", "support view"];
+    private static readonly string[] RoleNames =
+        ["Owner", "Admin", "Admin+Doctor", "Doctor", "Nurse", "FrontDesk", "Cashier", "portal token", "support view", "LabScientist", "Pharmacist"];
 
     /// <summary>"METHOD pattern" → expected outcome per column (see <see cref="Everyone"/>). Built from the spec's role table and the ledger rulings.</summary>
     private static readonly Dictionary<string, string> Table = new()
@@ -275,13 +285,40 @@ public sealed partial class CarePlatformTests(ApiFixture api)
         ["POST /api/care/prescriptions"] = Doctors,
         ["GET /api/care/prescriptions/{id:guid}/pdf"] = Clinical,
         ["POST /api/care/tests"] = Doctors,
-        ["POST /api/care/tests/{id:guid}/result"] = Clinical,
+        ["POST /api/care/tests/{id:guid}/result"] = ClinicalOrLab, // wave 4: a lab scientist records a lab test's result
         ["POST /api/care/tests/{id:guid}/amend"] = Clinical, // Wave 1: as recording
         ["GET /api/care/tests/{id:guid}/file"] = Clinical,
         ["GET /api/care/tests/{id:guid}/superseded/{amendmentId:guid}/file"] = Clinical, // Wave 2: the file of a corrected result
         // Post-build (user decision): doctors and the director review a result before the portal shows it, and list those waiting.
         ["POST /api/care/tests/{id:guid}/review"] = Doctors,
         ["GET /api/care/tests/awaiting-review"] = Doctors,
+        // Wave 4, lab: every member reads the catalogue; leadership and lab scientists edit it; the lab works orders; turnaround for the lab
+        // and leadership.
+        ["GET /api/care/lab/tests"] = Everyone,
+        ["POST /api/care/lab/tests"] = LabCatalogue,
+        ["PUT /api/care/lab/tests/{id:guid}"] = LabCatalogue,
+        ["GET /api/care/lab/worklist"] = LabWork,
+        ["GET /api/care/lab/orders/{id:guid}"] = LabWork,
+        ["POST /api/care/lab/orders/{id:guid}/collect"] = LabWork,
+        ["GET /api/care/lab/orders/{id:guid}/label.pdf"] = LabWork,
+        ["POST /api/care/lab/orders/{id:guid}/results"] = LabWork,
+        ["POST /api/care/lab/orders/{id:guid}/amend"] = LabWork,
+        ["GET /api/care/lab/turnaround"] = LabReport,
+        // Wave 4, pharmacy: stock for leadership and pharmacists; dispensing for clinical staff and pharmacists.
+        ["GET /api/care/pharmacy/items"] = StockReads,
+        ["POST /api/care/pharmacy/items"] = StockWrites,
+        ["GET /api/care/pharmacy/items/{id:guid}"] = StockReads,
+        ["PUT /api/care/pharmacy/items/{id:guid}"] = StockWrites,
+        ["GET /api/care/pharmacy/items/{id:guid}/batches"] = StockReads,
+        ["GET /api/care/pharmacy/receipts"] = StockReads,
+        ["POST /api/care/pharmacy/receipts"] = StockWrites,
+        ["POST /api/care/pharmacy/counts"] = StockWrites,
+        ["GET /api/care/pharmacy/movements"] = StockReads,
+        ["GET /api/care/pharmacy/expiring"] = StockReads,
+        ["GET /api/care/pharmacy/alerts"] = StockReads,
+        ["GET /api/care/pharmacy/queue"] = Dispensers,
+        ["GET /api/care/pharmacy/prescriptions/{id:guid}"] = Dispensers,
+        ["POST /api/care/pharmacy/prescriptions/{id:guid}/dispense"] = Dispensers,
         // Bills (Tasks 2 and 11): everyone reads (no clinical references for non-clinical callers); the cashier or leadership changes lines.
         ["GET /api/care/bills"] = Everyone,
         ["GET /api/care/bills/{id:guid}"] = Everyone,
@@ -426,6 +463,8 @@ public sealed partial class CarePlatformTests(ApiFixture api)
             ("Cashier", (await kit.StaffAsync(clinic, "Cashier")).Client),
             ("portal token", await PortalAsync(clinic, world.Ids["patient"])),
             ("support view", await SupportViewAsync(clinic)),
+            ("LabScientist", (await kit.StaffAsync(clinic, "LabScientist")).Client),
+            ("Pharmacist", (await kit.StaffAsync(clinic, "Pharmacist")).Client),
         };
 
         // Reads get the walk's real records (so a role refusal is a real 403, not a 404); writes keep made-up ids and empty bodies, so

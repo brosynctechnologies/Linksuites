@@ -543,7 +543,7 @@ public sealed class PharmacyService(
             var done = dispensed.GetValueOrDefault(item.Id);
             var left = item.Quantity is { } q ? q - done : (int?)null;
             var quantity = line.Quantity ?? left ?? throw BadRequestException.Field($"lines[{i}].quantity", "Enter how many to dispense.");
-            if (left is { } l && quantity > l)
+            if (left is { } l && (l <= 0 || quantity > l))
                 throw new ConflictException(l <= 0 ? "This drug has already been dispensed in full." : $"{OverDispense} {l} left to dispense.", "over_dispense");
             plan.Add((item, stock, quantity));
         }

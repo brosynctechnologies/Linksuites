@@ -11,6 +11,7 @@ import { age, formatDay, formatStamp } from "@/lib/format";
 import { useAction } from "@/lib/mutate";
 import { qs, useApi } from "@/lib/use-api";
 import type { PatientDto, PriceItemDto } from "@/lib/types";
+import type { LabTestDto } from "@/lib/types/lab-pharmacy";
 import type {
   AddendumDto,
   CreatePrescriptionRequest,
@@ -447,6 +448,9 @@ export function TestRequestForm({
   onCancel: () => void;
 }) {
   const tests = useApi<PriceItemDto[]>(`/api/care/price-list${qs({ active: true, category: "Test" })}`);
+  // Wave 4: the lab catalogue. A catalogue test fills in the kind, name and charge, and gets ranges and flags in the lab.
+  const catalogue = useApi<LabTestDto[]>("/api/care/lab/tests?active=true");
+  const [labTestId, setLabTestId] = useState("");
   const [kind, setKind] = useState<TestKind>("Lab");
   const [description, setDescription] = useState("");
   const [priceItemId, setPriceItemId] = useState("");
@@ -454,13 +458,26 @@ export function TestRequestForm({
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const body: CreateTestRequest = { patientId, consultationId, admissionId: admissionId ?? null, kind, description: description.trim(), priceItemId: priceItemId || null };
+    const body: CreateTestRequest = labTestId
+      ? { patientId, consultationId, admissionId: admissionId ?? null, kind: "Lab", description: null, priceItemId: null, labTestId }
+      : { patientId, consultationId, admissionId: admissionId ?? null, kind, description: description.trim(), priceItemId: priceItemId || null };
     const res = await run(() => api<TestRequestDto>("/api/care/tests", { method: "POST", body }));
     if (res.ok) onCreated(res.data);
   }
 
   return (
     <form onSubmit={submit} className="@container space-y-3 rounded-control border border-scrub-line bg-scrub-wash/40 p-3">
+      {catalogue.data && catalogue.data.length > 0 && (
+        <Select label="From the lab catalogue" value={labTestId} onChange={(e) => setLabTestId(e.target.value)} error={error?.field("labTestId")}>
+          <option value="">Another test (write it below)</option>
+          {catalogue.data.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name} ({t.sampleType})
+            </option>
+          ))}
+        </Select>
+      )}
+      {!labTestId && (
       <div className="grid gap-3 @md:grid-cols-[10rem_minmax(0,1fr)]">
         <Select label="Kind" value={kind} onChange={(e) => setKind(e.target.value as TestKind)} error={error?.field("kind")}>
           {TEST_KINDS.map((k) => (
@@ -471,7 +488,8 @@ export function TestRequestForm({
         </Select>
         <Input label="Test" value={description} maxLength={300} placeholder="Full blood count" onChange={(e) => setDescription(e.target.value)} error={error?.field("description")} />
       </div>
-      {tests.data && tests.data.length > 0 && (
+      )}
+      {!labTestId && tests.data && tests.data.length > 0 && (
         <Select label="Charge as" value={priceItemId} onChange={(e) => setPriceItemId(e.target.value)} error={error?.field("priceItemId")}>
           <option value="">Not charged</option>
           {tests.data.map((t) => (
@@ -483,7 +501,7 @@ export function TestRequestForm({
       )}
       <ErrorBox error={error && !["kind", "description", "priceItemId"].some((f) => error.field(f)) ? error : null} />
       <div className="flex gap-2">
-        <Button type="submit" loading={busy} disabled={!description.trim()}>
+        <Button type="submit" loading={busy} disabled={!labTestId && !description.trim()}>
           Request test
         </Button>
         <Button variant="ghost" onClick={onCancel}>

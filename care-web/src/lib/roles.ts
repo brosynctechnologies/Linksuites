@@ -8,6 +8,8 @@
 //   Nurse            = Staff + Nurse
 //   Front desk       = Staff + FrontDesk
 //   Cashier          = Accountant (never a clinical role)
+//   Lab scientist    = Staff + LabScientist (wave 4: the lab's orders only, no clinical access)
+//   Pharmacist       = Staff + Pharmacist (wave 4: stock and dispensing only, no clinical access)
 // "Clinical access" = Owner, or a clinical role of Doctor or Nurse (never the cashier, never a support view).
 
 import type { CareMeDto, ClinicalRole, Role } from "./types";
@@ -16,6 +18,8 @@ export const CLINICAL_ROLES: { value: ClinicalRole; label: string }[] = [
   { value: "Doctor", label: "Doctor" },
   { value: "Nurse", label: "Nurse" },
   { value: "FrontDesk", label: "Front desk" },
+  { value: "LabScientist", label: "Lab scientist" },
+  { value: "Pharmacist", label: "Pharmacist" },
   { value: "None", label: "None" },
 ];
 
@@ -36,6 +40,8 @@ export function careRoleLabel(memberRole: Role | string | null | undefined, clin
       if (clinicalRole === "Doctor") return "Doctor";
       if (clinicalRole === "Nurse") return "Nurse";
       if (clinicalRole === "FrontDesk") return "Front desk";
+      if (clinicalRole === "LabScientist") return "Lab scientist";
+      if (clinicalRole === "Pharmacist") return "Pharmacist";
       return clinicalRole ? "Staff, no clinic role" : "Staff";
     default:
       return "Staff";
@@ -43,11 +49,13 @@ export function careRoleLabel(memberRole: Role | string | null | undefined, clin
 }
 
 /** The clinic roles someone can be invited as or moved to, and the platform role plus clinical role each one stores. */
-export type ClinicRoleKey = "Admin" | "Doctor" | "Nurse" | "FrontDesk" | "Cashier";
+export type ClinicRoleKey = "Admin" | "Doctor" | "Nurse" | "FrontDesk" | "LabScientist" | "Pharmacist" | "Cashier";
 export const CLINIC_ROLES: { key: ClinicRoleKey; label: string; memberRole: Role; clinicalRole: ClinicalRole; text: string }[] = [
   { key: "Doctor", label: "Doctor", memberRole: "Staff", clinicalRole: "Doctor", text: "Consultations, diagnoses, prescriptions, tests, admissions and ward rounds." },
   { key: "Nurse", label: "Nurse", memberRole: "Staff", clinicalRole: "Nurse", text: "Vitals and triage, nursing notes, the fluid chart and doses." },
   { key: "FrontDesk", label: "Front desk", memberRole: "Staff", clinicalRole: "FrontDesk", text: "Registration, appointments, check-in, the queue and beds. No clinical notes." },
+  { key: "LabScientist", label: "Lab scientist", memberRole: "Staff", clinicalRole: "LabScientist", text: "The lab worklist, samples, labels and lab results. No clinical notes." },
+  { key: "Pharmacist", label: "Pharmacist", memberRole: "Staff", clinicalRole: "Pharmacist", text: "Pharmacy stock, receipts, counts and dispensing. No clinical notes." },
   { key: "Cashier", label: "Cashier", memberRole: "Accountant", clinicalRole: "None", text: "Bills, deposits, payments, receipts and reports. No clinical notes." },
   { key: "Admin", label: "Admin", memberRole: "Admin", clinicalRole: "None", text: "Staff, settings, wards, prices and reports. Clinical notes only with a clinical role." },
 ];
@@ -60,6 +68,8 @@ export function clinicRoleKey(memberRole: Role, clinicalRole: ClinicalRole): Cli
     if (clinicalRole === "Doctor") return "Doctor";
     if (clinicalRole === "Nurse") return "Nurse";
     if (clinicalRole === "FrontDesk") return "FrontDesk";
+    if (clinicalRole === "LabScientist") return "LabScientist";
+    if (clinicalRole === "Pharmacist") return "Pharmacist";
   }
   return null;
 }
@@ -85,6 +95,14 @@ export interface CareAccess {
   canEditPrices: boolean;
   /** A platform admin's read-only support view: no writes at all. */
   readOnly: boolean;
+  /** Wave 4: the lab worklist, samples and results (clinical staff and lab scientists). */
+  canWorkLab: boolean;
+  /** Wave 4: edits the lab catalogue (leadership and lab scientists). */
+  canEditLabCatalogue: boolean;
+  /** Wave 4: dispenses prescriptions (clinical staff and pharmacists). */
+  canDispense: boolean;
+  /** Wave 4: pharmacy stock, receipts, counts, alerts and reports (leadership and pharmacists; read-only in a support view). */
+  canManageStock: boolean;
 }
 
 export function careAccess(me: CareMeDto, support: boolean): CareAccess {
@@ -107,6 +125,10 @@ export function careAccess(me: CareMeDto, support: boolean): CareAccess {
     canSeeMoney: !isClinicalOnly,
     canEditPrices: (isLeadership || isCashier) && !support,
     readOnly: support,
+    canWorkLab: !!me.canWorkLab && !support,
+    canEditLabCatalogue: !!me.canEditLabCatalogue && !support,
+    canDispense: !!me.canDispense && !support,
+    canManageStock: !!me.canManageStock,
   };
 }
 
@@ -114,7 +136,7 @@ export function careAccess(me: CareMeDto, support: boolean): CareAccess {
  * Navigation needs: an item is shown only when the member's access has this flag. "director" is the medical director (Owner), a support
  * view of the director included where the API allows it (the unsigned-notes list is readable in support view, Task 16 ruling).
  */
-export type NavNeed = "leadership" | "clinical" | "money" | "desk" | "director" | "cashier" | "doctor";
+export type NavNeed = "leadership" | "clinical" | "money" | "desk" | "director" | "cashier" | "doctor" | "lab" | "pharmacy";
 
 /** Bills, payments and reports (Task 19): the cashier and leadership only. Front desk and clinical-only staff never get these screens. */
 export function canTakeMoney(a: CareAccess): boolean {
@@ -152,5 +174,9 @@ export function meets(a: CareAccess, need: NavNeed | undefined): boolean {
       return canTakeMoney(a);
     case "doctor":
       return a.isClinical && (a.isDirector || a.clinicalRole === "Doctor");
+    case "lab":
+      return a.canWorkLab || a.canEditLabCatalogue || a.isLeadership;
+    case "pharmacy":
+      return a.canDispense || a.canManageStock;
   }
 }
