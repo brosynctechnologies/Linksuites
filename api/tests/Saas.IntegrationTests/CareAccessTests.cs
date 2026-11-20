@@ -224,7 +224,7 @@ public sealed partial class CareAccessTests(ApiFixture api)
         // Only the medical director reads the log: not a doctor, the front desk, or an admin with or without a clinical role.
         var entries = (await Json(await clinic.Owner.GetAsync($"/api/care/patients/{patientId}/access-log", Ct))).EnumerateArray().ToList();
         Assert.Equal(expected, entries.Count);
-        Assert.Equal("file", entries[0].GetProperty("area").GetString()); // newest first: the last read in ClinicalReads
+        Assert.Equal("dispensing", entries[0].GetProperty("area").GetString()); // newest first: the last read in ClinicalReads (wave 4)
         Assert.Equal("record", entries[^1].GetProperty("area").GetString());
         Assert.Equal("Doctor", entries[0].GetProperty("role").GetString());
         Assert.Equal("Doctor Staff", entries[0].GetProperty("staffName").GetString());
