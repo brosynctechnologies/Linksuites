@@ -171,18 +171,23 @@ public sealed class RecordGuard(
     }
 
     /// <summary>
-    /// Wave 4 (ruling): a department open. The lab opening one lab order, or the pharmacy one prescription to dispense, needs no care
-    /// relationship and no reason: the order itself sends the patient to that department, and the read covers that one order only, never
-    /// the record. The caller's service has already checked the department role (<see cref="CareCaller.CanWorkLab"/> for
-    /// <see cref="Areas.Lab"/>, <see cref="CareCaller.CanDispense"/> for <see cref="Areas.Dispensing"/>; a printed label logs
-    /// <see cref="Areas.Pdf"/>). Logged like any open (never emergency), so the director's access log shows it. 404 for a patient that isn't
-    /// this clinic's. Saves immediately.
+    /// Wave 4 (ruling): a department open. The lab scientist opening one lab order, or the pharmacist one prescription to dispense, needs
+    /// no care relationship and no reason: the order itself sends the patient to that department, and the read covers that one order only,
+    /// never the record. The medical director opens it as any record. Wave 4 review: a doctor or nurse also works the lab and dispenses,
+    /// but is clinical staff, so their open goes through <see cref="OpenAsync(Guid, string, string?, CancellationToken)"/> with
+    /// <paramref name="reason"/>: a care relationship, or an emergency reason with the director's notice. The caller's service has already
+    /// checked the department role (<see cref="CareCaller.CanWorkLab"/> for <see cref="Areas.Lab"/>, <see cref="CareCaller.CanDispense"/> for
+    /// <see cref="Areas.Dispensing"/>; a printed label logs <see cref="Areas.Pdf"/>). A department open is logged like any open (never
+    /// emergency), so the director's access log shows it. 404 for a patient that isn't this clinic's. Saves immediately.
     /// </summary>
-    public async Task<CareCaller> OpenOrderAsync(Guid patientId, string area, CancellationToken ct)
+    public async Task<CareCaller> OpenOrderAsync(Guid patientId, string area, string? reason, CancellationToken ct)
     {
         if (area is not (Areas.Lab or Areas.Dispensing or Areas.Pdf)) throw new ArgumentOutOfRangeException(nameof(area), area, "Not a department area.");
         var caller = await access.CallerAsync(ct);
-        if (area == Areas.Dispensing ? !caller.CanDispense : !caller.CanWorkLab) throw new ForbiddenException();
+        var dispensing = area == Areas.Dispensing;
+        if (dispensing ? !caller.CanDispense : !caller.CanWorkLab) throw new ForbiddenException();
+        var department = caller.MemberRole == MemberRole.Owner || (dispensing ? caller.IsPharmacist : caller.IsLabScientist);
+        if (!department) return await OpenAsync(patientId, area, reason, ct);
         if (!await db.Patients.AnyAsync(p => p.Id == patientId, ct)) throw new NotFoundException("Patient");
         db.RecordAccesses.Add(new RecordAccess
         {

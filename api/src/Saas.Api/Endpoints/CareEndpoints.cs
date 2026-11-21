@@ -209,11 +209,15 @@ public static class CareEndpoints
         care.MapPost("/lab/tests", (SaveLabTestRequest r, LabService s, CancellationToken ct) => s.CreateTestAsync(r, ct));
         care.MapPut("/lab/tests/{id:guid}", (Guid id, SaveLabTestRequest r, LabService s, CancellationToken ct) => s.UpdateTestAsync(id, r, ct));
         care.MapGet("/lab/worklist", (LabStage? stage, LabService s, CancellationToken ct) => s.WorklistAsync(stage, ct));
-        care.MapGet("/lab/orders/{id:guid}", (Guid id, LabService s, CancellationToken ct) => s.GetOrderAsync(id, ct));
+        // Wave 4 review: a doctor or nurse opening an order (or its label) needs a care relationship or the emergency reason header, as for
+        // any clinical read; the lab scientist and the director don't.
+        care.MapGet("/lab/orders/{id:guid}", (Guid id, [FromHeader(Name = RecordGuard.ReasonHeader)] string? reason, LabService s, CancellationToken ct) =>
+            s.GetOrderAsync(id, reason, ct));
         care.MapPost("/lab/orders/{id:guid}/collect", (Guid id, LabService s, CancellationToken ct) => s.CollectAsync(id, ct));
-        care.MapGet("/lab/orders/{id:guid}/label.pdf", async (Guid id, LabService s, HttpContext http, CancellationToken ct) =>
+        care.MapGet("/lab/orders/{id:guid}/label.pdf", async (Guid id, [FromHeader(Name = RecordGuard.ReasonHeader)] string? reason, LabService s,
+            HttpContext http, CancellationToken ct) =>
         {
-            var (pdf, name) = await s.LabelAsync(id, ct);
+            var (pdf, name) = await s.LabelAsync(id, reason, ct);
             http.Response.Headers.CacheControl = "private, no-store";
             return Results.File(pdf, "application/pdf", name);
         });
@@ -237,7 +241,8 @@ public static class CareEndpoints
         care.MapGet("/pharmacy/expiring", (int? days, PharmacyService s, CancellationToken ct) => s.ExpiringAsync(days, ct));
         care.MapGet("/pharmacy/alerts", (PharmacyService s, CancellationToken ct) => s.AlertsAsync(ct));
         care.MapGet("/pharmacy/queue", (PharmacyService s, CancellationToken ct) => s.QueueAsync(ct));
-        care.MapGet("/pharmacy/prescriptions/{id:guid}", (Guid id, PharmacyService s, CancellationToken ct) => s.PrescriptionAsync(id, ct));
+        care.MapGet("/pharmacy/prescriptions/{id:guid}", (Guid id, [FromHeader(Name = RecordGuard.ReasonHeader)] string? reason, PharmacyService s,
+            CancellationToken ct) => s.PrescriptionAsync(id, reason, ct)); // a doctor or nurse: a care relationship or the reason header
         care.MapPost("/pharmacy/prescriptions/{id:guid}/dispense", (Guid id, DispenseRequest r, PharmacyService s, CancellationToken ct) =>
             s.DispenseAsync(id, r, ct));
 

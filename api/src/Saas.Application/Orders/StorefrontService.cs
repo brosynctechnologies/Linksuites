@@ -92,19 +92,25 @@ public sealed class StorefrontService(
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
         // Stock is taken when the order is placed (each count lowered by a conditional update, so two customers can't both buy the
-        // last one) and given back if the order is cancelled. Only on a plan with stock tracking.
-        var taken = new List<(int Line, bool Variant, int After)>();
+        // last one) and given back if the order is cancelled. Only on a plan with stock tracking. Wave 4 review: the rows are changed in
+        // one fixed order (product id, then variant id, the product's own count first), never the cart's, so two carts holding the same
+        // items in opposite orders can't deadlock. Each change keeps its line, so the per-line taken flags stay right.
+        var changes = new List<(int Line, Guid ProductId, Guid? VariantId)>();
         for (var i = 0; i < priced.Lines.Count && tracking; i++)
         {
             var line = priced.Lines[i];
             var product = priced.Products[line.ProductId];
             var variant = line.VariantId is { } vid ? product.Variants.First(v => v.Id == vid) : null;
-            if (product.StockQty is not null)
-                taken.Add((i, false, await ledger.ChangeAsync(product.Id, null, -line.Quantity, ct)
-                    ?? throw new ConflictException($"Sorry, there is not enough {line.Name} left.", "out_of_stock")));
-            if (variant?.StockQty is not null)
-                taken.Add((i, true, await ledger.ChangeAsync(product.Id, variant.Id, -line.Quantity, ct)
-                    ?? throw new ConflictException($"Sorry, there is not enough {StockLedger.ItemName(line.Name, line.Variant)} left.", "out_of_stock")));
+            if (product.StockQty is not null) changes.Add((i, product.Id, null));
+            if (variant?.StockQty is not null) changes.Add((i, product.Id, variant.Id));
+        }
+        var taken = new List<(int Line, bool Variant, int After)>();
+        foreach (var (i, productId, variantId) in StockLedger.InLockOrder(changes, c => c.ProductId, c => c.VariantId))
+        {
+            var line = priced.Lines[i];
+            var name = variantId is null ? line.Name : StockLedger.ItemName(line.Name, line.Variant);
+            taken.Add((i, variantId is not null, await ledger.ChangeAsync(productId, variantId, -line.Quantity, ct)
+                ?? throw new ConflictException($"Sorry, there is not enough {name} left.", "out_of_stock")));
         }
 
         if (priced.DiscountEntity is { } discount)

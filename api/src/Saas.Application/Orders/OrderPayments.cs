@@ -310,9 +310,12 @@ public sealed class OrderPaymentService(
 
         var first = await db.Orders.Where(o => o.Id == order.Id && o.PaymentStatus == OrderPaymentStatus.Unpaid)
             .ExecuteUpdateAsync(s => s.SetProperty(o => o.PaymentStatus, OrderPaymentStatus.Paid).SetProperty(o => o.UpdatedAt, now), ct) == 1;
-        var tracked = await db.Orders.FirstAsync(o => o.Id == order.Id, ct);
+        // Wave 4 review: a conditional update, never a save of a loaded order, so a cancel committed meanwhile is never undone.
+        if (first)
+            await db.Orders.Where(o => o.Id == order.Id && (o.Status == OrderStatus.New || o.Status == OrderStatus.Confirmed))
+                .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderStatus.Paid), ct);
+        var tracked = await db.Orders.AsNoTracking().Where(o => o.Id == order.Id).Select(o => new { o.Status }).FirstAsync(ct);
         var amount = Money.Format(row.AmountMinor, row.Currency);
-        if (first && tracked.Status is OrderStatus.New or OrderStatus.Confirmed) tracked.Status = OrderStatus.Paid;
         db.OrderStatusHistory.Add(new OrderStatusHistory { OrderId = order.Id, Status = tracked.Status, Note = $"Paid online, {amount} (Paystack {charge.Reference})" });
 
         if (!first)

@@ -56,7 +56,11 @@ public sealed record DispensePrescriptionDto(
     Guid PrescriptionId, Guid PatientId, string PatientNumber, string PatientName, string DoctorName, DateTimeOffset WrittenAt,
     IReadOnlyList<DispenseItemDto> Items, IReadOnlyList<DispensingDto> Dispensings);
 
-public sealed record DispenseLineInput(Guid? PrescriptionItemId, Guid? ItemId, int? Quantity);
+/// <summary>
+/// One line to dispense. <see cref="SubstitutionReason"/> is required (up to 300 characters) when <see cref="ItemId"/> names a stock item
+/// that isn't the prescribed drug (another price item); it is kept on the stock movement and the substitution is audited.
+/// </summary>
+public sealed record DispenseLineInput(Guid? PrescriptionItemId, Guid? ItemId, int? Quantity, string? SubstitutionReason = null);
 public sealed record DispenseRequest(IReadOnlyList<DispenseLineInput>? Lines);
 
 /// <summary>
@@ -460,12 +464,12 @@ public sealed class PharmacyService(
     /// prescription, then the department open (area dispensing, logged). Each drug with what is dispensed and left, and the stock item that
     /// sells under its price item (with the usable stock).
     /// </summary>
-    public async Task<DispensePrescriptionDto> PrescriptionAsync(Guid id, CancellationToken ct)
+    public async Task<DispensePrescriptionDto> PrescriptionAsync(Guid id, string? reason, CancellationToken ct)
     {
         access.EnsureDispenser(await access.CallerAsync(ct));
         var patientId = await db.Prescriptions.AsNoTracking().Where(p => p.Id == id).Select(p => (Guid?)p.PatientId).FirstOrDefaultAsync(ct)
             ?? throw new NotFoundException("Prescription");
-        await guard.OpenOrderAsync(patientId, RecordGuard.Areas.Dispensing, ct);
+        await guard.OpenOrderAsync(patientId, RecordGuard.Areas.Dispensing, reason, ct);
 
         var prescription = await db.Prescriptions.AsNoTracking().Include(p => p.Items).FirstAsync(p => p.Id == id, ct);
         var patient = await db.Patients.AsNoTracking().FirstAsync(p => p.Id == patientId, ct);
@@ -495,10 +499,17 @@ public sealed class PharmacyService(
     }
 
     public const string OverDispense = "That's more than was prescribed.";
+    public const string DispensedInFull = "This drug has already been dispensed in full.";
+    public const string SubstitutionReasonNeeded = "This stock item isn't the prescribed drug. Say why you are dispensing it instead.";
+    public const string SubstitutionPrefix = "Substituted for the prescribed drug: ";
+    /// <summary>The reason is kept on the stock movement after <see cref="SubstitutionPrefix"/> (the movement's reason holds 300).</summary>
+    public const int SubstitutionReasonMax = 250;
 
     /// <summary>
     /// Dispenses (part of) a prescription: dispensers only. Each line names a prescription item, the stock item (default: the one selling
-    /// under the drug's price item) and the quantity (default: what is left of the prescribed quantity). Stock is taken first-expiry-first-out
+    /// under the drug's price item; another stock item is a substitution and needs <see cref="DispenseLineInput.SubstitutionReason"/>, kept
+    /// on the movement and audited as <c>care.dispense_substituted</c>) and the quantity (default: what is left of the prescribed quantity;
+    /// a drug written without a quantity needs one and is dispensed once). Stock is taken first-expiry-first-out
     /// from batches that haven't expired, under the prescription's lock and then each item's lock (in id order), in one transaction: two
     /// dispensers never take the same units and stock never goes below zero. In order: 403; 400 <c>lines</c> / <c>lines[i].…</c>; 404 for
     /// an unknown or another clinic's prescription; 409 <c>over_dispense</c> beyond the prescribed quantity, <c>insufficient_stock</c> when
@@ -530,7 +541,7 @@ public sealed class PharmacyService(
         var stockItems = await db.DrugItems.AsNoTracking()
             .Where(d => d.Active && (requestedItems.Contains(d.Id) || (d.PriceItemId != null && priceIds.Contains(d.PriceItemId.Value)))).ToListAsync(ct);
         var dispensed = await DispensedAsync(prescription.Items.Select(i => i.Id).ToList(), ct);
-        var plan = new List<(PrescriptionItem Item, DrugItem Stock, int Quantity)>();
+        var plan = new List<(PrescriptionItem Item, DrugItem Stock, int Quantity, string? Substitution)>();
         for (var i = 0; i < r.Lines.Count; i++)
         {
             var line = r.Lines[i];
@@ -540,12 +551,27 @@ public sealed class PharmacyService(
                 ? stockItems.FirstOrDefault(s => s.Id == sid) ?? throw BadRequestException.Field($"lines[{i}].itemId", "Choose an active stock item.")
                 : stockItems.FirstOrDefault(s => s.PriceItemId is { } p && p == item.PriceItemId)
                   ?? throw BadRequestException.Field($"lines[{i}].itemId", "Choose the stock item to dispense this drug from.");
+            // Wave 4 review: a stock item that doesn't sell under the prescribed drug's price item is a substitution: it needs a reason.
+            string? substitution = null;
+            if (stock.PriceItemId is null || stock.PriceItemId != item.PriceItemId)
+                substitution = CareOrders.Optional($"lines[{i}].substitutionReason", line.SubstitutionReason, SubstitutionReasonMax)
+                    ?? throw BadRequestException.Field($"lines[{i}].substitutionReason", SubstitutionReasonNeeded);
             var done = dispensed.GetValueOrDefault(item.Id);
-            var left = item.Quantity is { } q ? q - done : (int?)null;
-            var quantity = line.Quantity ?? left ?? throw BadRequestException.Field($"lines[{i}].quantity", "Enter how many to dispense.");
-            if (left is { } l && (l <= 0 || quantity > l))
-                throw new ConflictException(l <= 0 ? "This drug has already been dispensed in full." : $"{OverDispense} {l} left to dispense.", "over_dispense");
-            plan.Add((item, stock, quantity));
+            int quantity;
+            if (item.Quantity is { } q)
+            {
+                var left = q - done;
+                quantity = line.Quantity ?? left;
+                if (left <= 0 || quantity > left)
+                    throw new ConflictException(left <= 0 ? DispensedInFull : $"{OverDispense} {left} left to dispense.", "over_dispense");
+            }
+            else
+            {
+                // Wave 4 review: written without a quantity, the drug is dispensed once, in the quantity the counter enters.
+                quantity = line.Quantity ?? throw BadRequestException.Field($"lines[{i}].quantity", "Enter how many to dispense.");
+                if (done > 0) throw new ConflictException(DispensedInFull, "over_dispense");
+            }
+            plan.Add((item, stock, quantity, substitution));
         }
 
         await LockItemsAsync(plan.Select(p => p.Stock.Id), ct);
@@ -554,8 +580,19 @@ public sealed class PharmacyService(
         var stockIds = plan.Select(p => p.Stock.Id).Distinct().ToList();
         var batches = await db.DrugBatches.Where(b => stockIds.Contains(b.DrugItemId) && b.QuantityOnHand > 0 && b.ExpiresOn >= today)
             .OrderBy(b => b.ExpiresOn).ThenBy(b => b.CreatedAt).ThenBy(b => b.Id).ToListAsync(ct);
-        foreach (var (item, stock, quantity) in plan)
+        foreach (var (item, stock, quantity, substitution) in plan)
         {
+            if (substitution is not null)
+                db.AuditLogs.Add(new AuditLog
+                {
+                    TenantId = TenantId, ActorId = caller.UserId, Action = "care.dispense_substituted", EntityType = nameof(Prescription),
+                    EntityId = prescription.Id.ToString(), Ip = user.IpAddress, CreatedAt = now,
+                    AfterJson = JsonSerializer.Serialize(new
+                    {
+                        prescriptionId = prescription.Id, prescriptionItemId = item.Id, prescribedPriceItemId = item.PriceItemId, drugItemId = stock.Id,
+                        dispensingId = dispensing.Id, quantity,
+                    }),
+                });
             var available = batches.Where(b => b.DrugItemId == stock.Id).ToList();
             var total = available.Sum(b => b.QuantityOnHand);
             if (total < quantity)
@@ -572,6 +609,7 @@ public sealed class PharmacyService(
                 {
                     TenantId = TenantId, DrugItemId = stock.Id, DrugBatchId = batch.Id, Kind = StockMovementKind.Dispense, Quantity = -take,
                     BalanceAfter = batch.QuantityOnHand, ByUserId = caller.UserId, At = now, DispensingId = dispensing.Id, PrescriptionItemId = item.Id,
+                    Reason = substitution is null ? null : SubstitutionPrefix + substitution,
                 });
             }
         }
