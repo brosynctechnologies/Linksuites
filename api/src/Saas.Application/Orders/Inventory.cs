@@ -53,6 +53,13 @@ public sealed class StockLedger(
     public const string PlanNeeded = "Stock tracking is on the Pro plan. Upgrade to track stock and get low-stock alerts.";
     public const string LowStockKind = "order.low_stock";
 
+    /// <summary>
+    /// Wave 4 review: the one order every multi-row stock change takes its rows in (product id, then variant id, a product's own count
+    /// before its variants'), so two transactions touching the same rows always lock them in the same order and can't deadlock.
+    /// </summary>
+    public static IEnumerable<T> InLockOrder<T>(IEnumerable<T> changes, Func<T, Guid> productId, Func<T, Guid?> variantId) =>
+        changes.OrderBy(productId).ThenBy(c => variantId(c) is null ? 0 : 1).ThenBy(c => variantId(c) ?? Guid.Empty);
+
     /// <summary>Stock counts apply only on a plan with stock tracking. On Free, saved counts are kept but ignored.</summary>
     public Task<bool> TrackingAsync(CancellationToken ct) => plans.HasFeatureAsync(LimitKeys.Inventory, ct);
 

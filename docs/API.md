@@ -172,7 +172,8 @@ an existing variant's count changes only when `expectedStockQty` is sent. Settin
 `kind`: `Sale` (an order took it), `Cancellation` (a cancelled order gave it back), `Adjustment` (by hand), `Count` (set in the product form).
 Rules: stock is tracked only on a plan with `inventory` (Pro). On Free, saved counts are kept but ignored (nothing is taken, nothing
 shows). A placed order takes stock from the product's count and the variant's count (each tracked one) with a conditional update, so
-concurrent orders never oversell; a cancelled order gives back exactly what it took. When a count reaches the store's
+concurrent orders never oversell; a cancelled order gives back exactly what it took. Rows are always changed in one fixed order (product
+id, then variant id), whatever the cart's order, so carts holding the same items in opposite orders can't deadlock. When a count reaches the store's
 `lowStockThreshold` (default 5) or lower, the owners get one email (`order.low_stock`) and one in-app notification (link
 `/app/inventory?filter=low`); the next alert for that item comes only after its count has gone back above the threshold.
 
@@ -191,12 +192,14 @@ Discount `type` is `"Percent"` (value 1–100) or `"Fixed"` (value in minor unit
 |---|---|---|---|
 | GET | `/api/orders?status=&q=&page=1&pageSize=20` | — | `Paged<OrderSummaryDto>` |
 | GET | `/api/orders/{id}` | — | `OrderDto` |
-| PATCH | `/api/orders/{id}/status` | `{ status, note }` | `OrderDto` |
-| PATCH | `/api/orders/{id}/payment` | `{ paymentStatus }` (`"Unpaid"`/`"Paid"`) | `OrderDto` |
+| PATCH | `/api/orders/{id}/status` | `{ status, note }` | `OrderDto`; 409 `order_cancelled` (a cancelled order is final, also when it was cancelled while you were changing it), 409 `order_changed` (someone else moved it on meanwhile: reload) |
+| PATCH | `/api/orders/{id}/payment` | `{ paymentStatus }` (`"Unpaid"`/`"Paid"`) | `OrderDto`; 409 `order_changed` as above |
 | POST | `/api/orders/{id}/payments/{reference}/verify` | — | `OrderDto` after asking Paystack about one of the order's online checkouts |
 | GET | `/api/dashboard` | — | `DashboardDto` |
 
 Order `status`: `New`, `Confirmed`, `Paid`, `Delivered`, `Cancelled`. `fulfilment`: `Delivery`, `Pickup`.
+Every status and payment change (and an online payment marking the order Paid) is a conditional update on the status the order was read
+with, never a save of a stale copy, so nothing can bring a cancelled order (whose stock was already returned) back to life.
 `Paged<T> = { items: T[], page, pageSize, total }`
 `OrderSummaryDto = { id, number, code, customerName, phone, fulfilment, totalMinor, currency, status, paymentStatus, itemCount, createdAt }`
 `OrderDto = OrderSummaryDto & { address, note, deliveryZoneName, subtotalMinor, deliveryFeeMinor, discountMinor, discountCode, items: [{ productId, variantId, name, variant, unitPriceMinor, quantity, lineTotalMinor }], history: [{ status, note, createdAt }], whatsappMessage, customerWhatsappUrl, payments: [{ reference, amountMinor, currency, status, createdAt, paidAt }] }`

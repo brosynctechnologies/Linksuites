@@ -101,6 +101,79 @@ public sealed class OrderWave4Tests(ApiFixture api)
         Assert.Equal(5, sales);
     }
 
+    /// <summary>
+    /// Wave 4 review: carts holding the same two items in opposite orders, placed at once, never deadlock: stock rows are always taken in
+    /// one fixed order (product, then variant), whatever the cart's order. Every order goes through and the counts add up.
+    /// </summary>
+    [Fact]
+    public async Task Carts_in_opposite_orders_never_deadlock()
+    {
+        var s = await SellerAsync("Deadlock");
+        var a = await ProductAsync(s, "Akara", 500, stock: 200);
+        var b = await ProductAsync(s, "Bread", 800, stock: 200);
+        object Cart(Guid first, Guid second) => new
+        {
+            items = new[] { new { productId = first, variantId = (Guid?)null, quantity = 1 }, new { productId = second, variantId = (Guid?)null, quantity = 1 } },
+            fulfilment = "Pickup", customerName = "Bola", phone = "0803 000 0000",
+        };
+
+        var attempts = await Task.WhenAll(Enumerable.Range(0, 40).Select(i =>
+            api.CreateClient().PostAsJsonAsync($"/api/public/stores/{s.Slug}/orders", i % 2 == 0 ? Cart(a, b) : Cart(b, a), Ct)));
+
+        var failures = new List<string>();
+        foreach (var r in attempts.Where(r => r.StatusCode != HttpStatusCode.OK))
+            failures.Add($"{(int)r.StatusCode} {await r.Content.ReadAsStringAsync(Ct)}");
+        Assert.Empty(failures);
+        Assert.Equal((160, 160), (await StockAsync(a), await StockAsync(b)));
+        var lines = await api.WithDbAsync(db => db.OrderItems.IgnoreQueryFilters().Where(i => i.ProductId == a || i.ProductId == b).ToListAsync(Ct));
+        Assert.Equal(80, lines.Count);
+        Assert.All(lines, l => Assert.True(l.ProductStockTaken)); // each line keeps its own flag, whatever order its stock was taken in
+    }
+
+    /// <summary>
+    /// Wave 4 review: a status change that loaded the order before another request cancelled it must not bring the order back to life
+    /// (the stock was already returned; a later cancel would return it twice). The stale save is a 409 and the stock stays right.
+    /// </summary>
+    [Fact]
+    public async Task A_status_change_racing_a_cancel_is_refused_and_stock_is_returned_once()
+    {
+        var s = await SellerAsync("CancelRace");
+        var id = await ProductAsync(s, "Puff puff", 1_000, stock: 5);
+        var orderId = await OrderIdAsync(s, await PlaceAsync(s.Slug, id, 2));
+        Assert.Equal(3, await StockAsync(id));
+
+        // A second request has loaded the order (status New) and is about to move it to Confirmed...
+        using var scope = api.Services.CreateScope();
+        scope.ServiceProvider.GetRequiredService<Saas.Application.Common.ITenantContext>().SetTenant(s.TenantId);
+        var db = scope.ServiceProvider.GetRequiredService<Saas.Application.Common.IAppDbContext>();
+        Assert.Equal(OrderStatus.New, (await db.Orders.FirstAsync(o => o.Id == orderId, Ct)).Status);
+        // ...when the owner's cancel commits: the stock comes back.
+        (await s.Client.PatchAsJsonAsync($"/api/orders/{orderId}/status", new { status = "Cancelled" }, Ct)).EnsureSuccessStatusCode();
+        Assert.Equal(5, await StockAsync(id));
+
+        var service = scope.ServiceProvider.GetRequiredService<OrderAdminService>();
+        var refused = await Assert.ThrowsAsync<Saas.Application.Common.ConflictException>(() =>
+            service.UpdateStatusAsync(orderId, new UpdateOrderStatusRequest(OrderStatus.Confirmed, null), Ct));
+        Assert.Equal("order_cancelled", refused.Code);
+        Assert.Equal(OrderStatus.Cancelled, await api.WithDbAsync(db2 => db2.Orders.IgnoreQueryFilters().Where(o => o.Id == orderId).Select(o => o.Status).SingleAsync(Ct)));
+
+        // Cancelling again gives nothing back twice.
+        (await s.Client.PatchAsJsonAsync($"/api/orders/{orderId}/status", new { status = "Cancelled" }, Ct)).EnsureSuccessStatusCode();
+        Assert.Equal(5, await StockAsync(id));
+        Assert.Equal(1, await api.WithDbAsync(db2 => db2.StockAdjustments.IgnoreQueryFilters().CountAsync(a => a.ProductId == id && a.Kind == StockChangeKind.Cancellation, Ct)));
+
+        // A stale change against an order someone else moved on (not cancelled) is a 409 too, and leaves it as they set it.
+        var other = await OrderIdAsync(s, await PlaceAsync(s.Slug, id, 1));
+        using var scope2 = api.Services.CreateScope();
+        scope2.ServiceProvider.GetRequiredService<Saas.Application.Common.ITenantContext>().SetTenant(s.TenantId);
+        await scope2.ServiceProvider.GetRequiredService<Saas.Application.Common.IAppDbContext>().Orders.FirstAsync(o => o.Id == other, Ct);
+        (await s.Client.PatchAsJsonAsync($"/api/orders/{other}/status", new { status = "Delivered" }, Ct)).EnsureSuccessStatusCode();
+        var stale = await Assert.ThrowsAsync<Saas.Application.Common.ConflictException>(() => scope2.ServiceProvider.GetRequiredService<OrderAdminService>()
+            .UpdateStatusAsync(other, new UpdateOrderStatusRequest(OrderStatus.Confirmed, null), Ct));
+        Assert.Equal("order_changed", stale.Code);
+        Assert.Equal(OrderStatus.Delivered, await api.WithDbAsync(db2 => db2.Orders.IgnoreQueryFilters().Where(o => o.Id == other).Select(o => o.Status).SingleAsync(Ct)));
+    }
+
     [Fact]
     public async Task Low_stock_alert_goes_to_the_owner_once_per_crossing()
     {

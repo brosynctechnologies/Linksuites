@@ -74,29 +74,55 @@ public sealed class OrderAdminService(
         return await GetAsync(id, ct);
     }
 
+    public const string CancelledMessage = "A cancelled order can't be reopened. Ask the customer to place a new order.";
+    public const string ChangedMessage = "Someone else changed this order while you were working on it. Reload it and try again.";
+
+    /// <summary>
+    /// Moves the order to <paramref name="r"/>'s status. Every transition is a conditional update on the status the order was read with
+    /// (Wave 4 review), never a save of the loaded entity: a request that read the order before another one cancelled it can't bring it
+    /// back to life (its stock was already returned, and a later cancel would return it twice). 409 <c>order_cancelled</c> for a cancelled
+    /// order (also when it was cancelled meanwhile), 409 <c>order_changed</c> when someone else moved it on meanwhile.
+    /// </summary>
     public async Task<OrderDto> UpdateStatusAsync(Guid id, UpdateOrderStatusRequest r, CancellationToken ct)
     {
         var order = await db.Orders.FirstOrDefaultAsync(o => o.Id == id, ct) ?? throw new NotFoundException("Order");
         if (order.Status == r.Status) return await GetAsync(id, ct);
         // Cancelling puts the stock back on sale, so a cancelled order is final: the customer orders again instead.
-        if (order.Status == OrderStatus.Cancelled)
-            throw new ConflictException("A cancelled order can't be reopened. Ask the customer to place a new order.", "order_cancelled");
+        if (order.Status == OrderStatus.Cancelled) throw new ConflictException(CancelledMessage, "order_cancelled");
         if (order.Status == OrderStatus.Delivered && r.Status == OrderStatus.New)
             throw new ConflictException("A finished order cannot go back to New.");
 
+        var now = clock.GetUtcNow();
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         if (r.Status == OrderStatus.Cancelled)
         {
             // Claim the cancellation in the database first, so two cancels at once give the stock back only once.
             var claimed = await db.Orders.Where(o => o.Id == id && o.Status != OrderStatus.Cancelled)
-                .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderStatus.Cancelled), ct);
+                .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderStatus.Cancelled).SetProperty(o => o.UpdatedAt, now), ct);
             if (claimed == 0) return await GetAsync(id, ct);
             await RestockAsync(order, ct);
             // Ruling: the discount use stays consumed. Giving it back would let a "first order" or limited code be reused.
         }
+        else
+        {
+            var expected = order.Status;
+            var paid = r.Status == OrderStatus.Paid;
+            var moved = await db.Orders.Where(o => o.Id == id && o.Status == expected)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(o => o.Status, r.Status)
+                    .SetProperty(o => o.PaymentStatus, o => paid ? OrderPaymentStatus.Paid : o.PaymentStatus)
+                    .SetProperty(o => o.UpdatedAt, now), ct);
+            if (moved == 0)
+            {
+                var current = await db.Orders.AsNoTracking().Where(o => o.Id == id).Select(o => (OrderStatus?)o.Status).FirstOrDefaultAsync(ct);
+                throw current == OrderStatus.Cancelled
+                    ? new ConflictException(CancelledMessage, "order_cancelled")
+                    : new ConflictException(ChangedMessage, "order_changed");
+            }
+        }
 
-        order.Status = r.Status;
-        if (r.Status == OrderStatus.Paid) order.PaymentStatus = OrderPaymentStatus.Paid;
+        // The row was written above; the loaded entity must never be saved over it.
+        db.Entry(order).State = EntityState.Detached;
         db.OrderStatusHistory.Add(new OrderStatusHistory
         {
             OrderId = order.Id,
@@ -118,11 +144,11 @@ public sealed class OrderAdminService(
         var store = await stores.CurrentStoreAsync(ct);
         var items = await db.OrderItems.AsNoTracking()
             .Where(i => i.OrderId == order.Id && i.ProductId != null && (i.ProductStockTaken || i.VariantStockTaken)).ToListAsync(ct);
-        foreach (var item in items)
-        {
-            if (item.ProductStockTaken) await GiveBackAsync(store, order, item, null, ct);
-            if (item.VariantStockTaken && item.VariantId is { } vid) await GiveBackAsync(store, order, item, vid, ct);
-        }
+        // In the ledger's fixed lock order, as an order placement takes them, so a cancel and a new order can't deadlock.
+        var returns = items.Where(i => i.ProductStockTaken).Select(i => (Item: i, VariantId: (Guid?)null))
+            .Concat(items.Where(i => i.VariantStockTaken && i.VariantId is not null).Select(i => (Item: i, i.VariantId)));
+        foreach (var (item, variantId) in StockLedger.InLockOrder(returns, r => r.Item.ProductId!.Value, r => r.VariantId))
+            await GiveBackAsync(store, order, item, variantId, ct);
     }
 
     private async Task GiveBackAsync(Store store, Order order, OrderItem item, Guid? variantId, CancellationToken ct)
@@ -134,22 +160,35 @@ public sealed class OrderAdminService(
         await ledger.AfterChangeAsync(store, item.ProductId.Value, variantId, StockLedger.ItemName(item.NameSnapshot, title), after, ct);
     }
 
+    /// <summary>
+    /// Marks the order paid or unpaid. As for <see cref="UpdateStatusAsync"/>, a conditional update on the status and payment status the
+    /// order was read with: 409 <c>order_changed</c> when someone else changed it meanwhile (a stale "unpaid" can't move a cancelled order).
+    /// </summary>
     public async Task<OrderDto> UpdatePaymentAsync(Guid id, UpdateOrderPaymentRequest r, CancellationToken ct)
     {
-        var order = await db.Orders.FirstOrDefaultAsync(o => o.Id == id, ct) ?? throw new NotFoundException("Order");
+        var order = await db.Orders.AsNoTracking().FirstOrDefaultAsync(o => o.Id == id, ct) ?? throw new NotFoundException("Order");
         if (order.PaymentStatus != r.PaymentStatus)
         {
-            order.PaymentStatus = r.PaymentStatus;
+            var (expectedStatus, expectedPayment) = (order.Status, order.PaymentStatus);
             // The Paid stage means "paid", so an unpaid order can't stay in it: step back to Confirmed.
-            if (r.PaymentStatus == OrderPaymentStatus.Unpaid && order.Status == OrderStatus.Paid) order.Status = OrderStatus.Confirmed;
+            var status = r.PaymentStatus == OrderPaymentStatus.Unpaid && expectedStatus == OrderStatus.Paid ? OrderStatus.Confirmed : expectedStatus;
+            var now = clock.GetUtcNow();
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            var changed = await db.Orders.Where(o => o.Id == id && o.Status == expectedStatus && o.PaymentStatus == expectedPayment)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(o => o.PaymentStatus, r.PaymentStatus)
+                    .SetProperty(o => o.Status, status)
+                    .SetProperty(o => o.UpdatedAt, now), ct);
+            if (changed == 0) throw new ConflictException(ChangedMessage, "order_changed");
             db.OrderStatusHistory.Add(new OrderStatusHistory
             {
                 OrderId = order.Id,
-                Status = order.Status,
+                Status = status,
                 Note = r.PaymentStatus == OrderPaymentStatus.Paid ? "Marked as paid" : "Marked as unpaid",
                 ChangedBy = user.UserId,
             });
             await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
         }
         return await GetAsync(id, ct);
     }
