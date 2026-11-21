@@ -306,6 +306,29 @@ public sealed class CarePdf : ICarePdf
         }));
     }
 
+    public Task<byte[]> LabLabelAsync(LabLabelData data, CancellationToken ct) => Task.FromResult(LabLabelDocument(data).GeneratePdf());
+
+    /// <summary>Wave 4: a sample label, 70 × 35 mm (a common label-printer size): the sample number large, then the patient and the test.</summary>
+    public static IDocument LabLabelDocument(LabLabelData d) => Document.Create(doc => doc.Page(page =>
+    {
+        page.Size(70, 35, Unit.Millimetre);
+        page.Margin(2.5f, Unit.Millimetre);
+        page.DefaultTextStyle(t => t.FontSize(7).FontColor(Colors.Black));
+        page.Content().Column(col =>
+        {
+            col.Spacing(0.6f, Unit.Millimetre);
+            col.Item().Row(row =>
+            {
+                row.RelativeItem().Text(d.SampleNumber).FontSize(13).Bold();
+                row.AutoItem().AlignBottom().Text(d.ClinicName).FontSize(6).FontColor(Colors.Grey.Darken2);
+            });
+            col.Item().Text(d.PatientName).FontSize(9).SemiBold().ClampLines(1);
+            col.Item().Text($"{d.PatientNumber} · {d.Sex}, {d.AgeYears} y");
+            col.Item().Text(string.IsNullOrWhiteSpace(d.SampleType) ? d.TestName : $"{d.TestName} · {d.SampleType}").ClampLines(2);
+            col.Item().Text($"Collected {d.CollectedAt}").FontSize(6).FontColor(Colors.Grey.Darken2);
+        });
+    }));
+
     /// <summary>The logo re-encoded as PNG (keeping transparency), or null when the bytes are not a readable image.</summary>
     private static byte[]? Usable(byte[]? image)
     {

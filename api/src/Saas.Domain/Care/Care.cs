@@ -4,9 +4,10 @@ namespace Saas.Domain.Care;
 
 /// <summary>
 /// A clinic member's clinical role, on top of their platform <c>MemberRole</c>. Doctor and Nurse have clinical access;
-/// FrontDesk and None do not (the Owner always has it).
+/// FrontDesk and None do not (the Owner always has it). Wave 4: a LabScientist works the lab (the worklist, samples and results of lab
+/// orders only) and a Pharmacist the pharmacy (stock and dispensing); neither has clinical access to the rest of the record.
 /// </summary>
-public enum ClinicalRole { None, Doctor, Nurse, FrontDesk }
+public enum ClinicalRole { None, Doctor, Nurse, FrontDesk, LabScientist, Pharmacist }
 
 /// <summary>The clinic behind the tenant: name, contact details, numbering and billing defaults. One per tenant.</summary>
 // Not audited: the audit log would otherwise copy the encrypted Paystack key.
@@ -23,6 +24,8 @@ public class ClinicProfile : TenantEntity
     public long NextPatientNumber { get; set; } = 1;
     public long NextBillNumber { get; set; } = 1;
     public long NextReceiptNumber { get; set; } = 1;
+    /// <summary>Wave 4: the lab's sample numbers (S{yyyy}-{00000}), per clinic.</summary>
+    public long NextSampleNumber { get; set; } = 1;
     /// <summary>The clinic's own Paystack secret key, encrypted with <c>ISecretProtector</c>.</summary>
     public string? PaystackSecretKeyProtected { get; set; }
     /// <summary>The key replaced last (encrypted), still accepted until <see cref="PreviousKeyUntil"/> so checkouts started under it confirm.</summary>
@@ -504,6 +507,15 @@ public class TestRequest : TenantEntity
     /// kept as <see cref="TestResultAmendment"/> rows; the portal notes that the result was corrected.
     /// </summary>
     public DateTimeOffset? AmendedAt { get; set; }
+    /// <summary>Wave 4: the lab catalogue test this order is for (null: a free-text test).</summary>
+    public Guid? LabTestId { get; set; }
+    /// <summary>Wave 4: the sample's number on its label (S{yyyy}-{00000}), who collected it and when. Null until collected.</summary>
+    public string? SampleNumber { get; set; }
+    public Guid? CollectedBy { get; set; }
+    public DateTimeOffset? CollectedAt { get; set; }
+    /// <summary>Wave 4: the first result's and the first review's times, kept through amendments for the turnaround report.</summary>
+    public DateTimeOffset? FirstResultedAt { get; set; }
+    public DateTimeOffset? FirstReviewedAt { get; set; }
 }
 
 /// <summary>

@@ -1775,6 +1775,10 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("next_receipt_number");
 
+                    b.Property<long>("NextSampleNumber")
+                        .HasColumnType("bigint")
+                        .HasColumnName("next_sample_number");
+
                     b.Property<string>("PatientPrefix")
                         .IsRequired()
                         .HasMaxLength(6)
@@ -2059,6 +2063,55 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.ToTable("discharge_summaries", (string)null);
                 });
 
+            modelBuilder.Entity("Saas.Domain.Care.Dispensing", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("at");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("DispensedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("dispensed_by");
+
+                    b.Property<Guid>("PatientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("patient_id");
+
+                    b.Property<Guid>("PrescriptionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("prescription_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_dispensings");
+
+                    b.HasIndex("PatientId")
+                        .HasDatabaseName("ix_dispensings_patient_id");
+
+                    b.HasIndex("PrescriptionId")
+                        .HasDatabaseName("ix_dispensings_prescription_id");
+
+                    b.HasIndex("TenantId", "PrescriptionId")
+                        .HasDatabaseName("ix_dispensings_tenant_id_prescription_id");
+
+                    b.ToTable("dispensings", (string)null);
+                });
+
             modelBuilder.Entity("Saas.Domain.Care.DoctorSchedule", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2106,6 +2159,145 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_doctor_schedules_tenant_id_doctor_user_id_weekday");
 
                     b.ToTable("doctor_schedules", (string)null);
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.DrugBatch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BatchNumber")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("batch_number");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("DrugItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("drug_item_id");
+
+                    b.Property<DateOnly>("ExpiresOn")
+                        .HasColumnType("date")
+                        .HasColumnName("expires_on");
+
+                    b.Property<DateTimeOffset?>("ExpiryNotifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expiry_notified_at");
+
+                    b.Property<int>("QuantityOnHand")
+                        .HasColumnType("integer")
+                        .HasColumnName("quantity_on_hand");
+
+                    b.Property<int>("QuantityReceived")
+                        .HasColumnType("integer")
+                        .HasColumnName("quantity_received");
+
+                    b.Property<Guid?>("ReceiptId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("receipt_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<long>("UnitCostMinor")
+                        .HasColumnType("bigint")
+                        .HasColumnName("unit_cost_minor");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_drug_batches");
+
+                    b.HasIndex("DrugItemId")
+                        .HasDatabaseName("ix_drug_batches_drug_item_id");
+
+                    b.HasIndex("ReceiptId")
+                        .HasDatabaseName("ix_drug_batches_receipt_id");
+
+                    b.HasIndex("TenantId", "DrugItemId", "ExpiresOn")
+                        .HasDatabaseName("ix_drug_batches_tenant_id_drug_item_id_expires_on");
+
+                    b.ToTable("drug_batches", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_drug_batches_on_hand", "quantity_on_hand >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.DrugItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean")
+                        .HasColumnName("active");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Form")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("form");
+
+                    b.Property<DateTimeOffset?>("LowStockNotifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("low_stock_notified_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid?>("PriceItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("price_item_id");
+
+                    b.Property<int>("ReorderLevel")
+                        .HasColumnType("integer")
+                        .HasColumnName("reorder_level");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Unit")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("unit");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_drug_items");
+
+                    b.HasIndex("PriceItemId")
+                        .HasDatabaseName("ix_drug_items_price_item_id");
+
+                    b.HasIndex("TenantId", "Name")
+                        .IsUnique()
+                        .HasDatabaseName("ix_drug_items_tenant_id_name");
+
+                    b.HasIndex("TenantId", "PriceItemId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_drug_items_tenant_id_price_item_id")
+                        .HasFilter("price_item_id IS NOT NULL");
+
+                    b.ToTable("drug_items", (string)null);
                 });
 
             modelBuilder.Entity("Saas.Domain.Care.FluidEntry", b =>
@@ -2171,6 +2363,222 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_fluid_entries_tenant_id_admission_id_at");
 
                     b.ToTable("fluid_entries", (string)null);
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.LabAnalyte", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("LabTestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lab_test_id");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("name");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<string>("Ranges")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("ranges");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<string>("Unit")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("unit");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_lab_analytes");
+
+                    b.HasIndex("LabTestId")
+                        .HasDatabaseName("ix_lab_analytes_lab_test_id");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("ix_lab_analytes_tenant_id");
+
+                    b.ToTable("lab_analytes", (string)null);
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.LabResultValue", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("AnalyteId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("analyte_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<decimal?>("CriticalHigh")
+                        .HasPrecision(12, 4)
+                        .HasColumnType("numeric(12,4)")
+                        .HasColumnName("critical_high");
+
+                    b.Property<decimal?>("CriticalLow")
+                        .HasPrecision(12, 4)
+                        .HasColumnType("numeric(12,4)")
+                        .HasColumnName("critical_low");
+
+                    b.Property<DateTimeOffset>("EnteredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("entered_at");
+
+                    b.Property<Guid>("EnteredBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("entered_by");
+
+                    b.Property<string>("Flag")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("flag");
+
+                    b.Property<decimal?>("High")
+                        .HasPrecision(12, 4)
+                        .HasColumnType("numeric(12,4)")
+                        .HasColumnName("high");
+
+                    b.Property<decimal?>("Low")
+                        .HasPrecision(12, 4)
+                        .HasColumnType("numeric(12,4)")
+                        .HasColumnName("low");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("name");
+
+                    b.Property<decimal?>("NumericValue")
+                        .HasPrecision(12, 4)
+                        .HasColumnType("numeric(12,4)")
+                        .HasColumnName("numeric_value");
+
+                    b.Property<Guid>("PatientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("patient_id");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer")
+                        .HasColumnName("position");
+
+                    b.Property<DateTimeOffset?>("SupersededAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("superseded_at");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<Guid>("TestRequestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("test_request_id");
+
+                    b.Property<string>("TextValue")
+                        .HasColumnType("text")
+                        .HasColumnName("text_value");
+
+                    b.Property<string>("Unit")
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("unit");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_lab_result_values");
+
+                    b.HasIndex("PatientId")
+                        .HasDatabaseName("ix_lab_result_values_patient_id");
+
+                    b.HasIndex("TestRequestId")
+                        .HasDatabaseName("ix_lab_result_values_test_request_id");
+
+                    b.HasIndex("TenantId", "TestRequestId")
+                        .HasDatabaseName("ix_lab_result_values_tenant_id_test_request_id");
+
+                    b.ToTable("lab_result_values", (string)null);
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.LabTest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean")
+                        .HasColumnName("active");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("name");
+
+                    b.Property<Guid?>("PriceItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("price_item_id");
+
+                    b.Property<string>("SampleType")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("sample_type");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<int>("TurnaroundHours")
+                        .HasColumnType("integer")
+                        .HasColumnName("turnaround_hours");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_lab_tests");
+
+                    b.HasIndex("PriceItemId")
+                        .HasDatabaseName("ix_lab_tests_price_item_id");
+
+                    b.HasIndex("TenantId", "Name")
+                        .IsUnique()
+                        .HasDatabaseName("ix_lab_tests_tenant_id_name");
+
+                    b.ToTable("lab_tests", (string)null);
                 });
 
             modelBuilder.Entity("Saas.Domain.Care.MedicationDose", b =>
@@ -2928,6 +3336,144 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.ToTable("record_accesses", (string)null);
                 });
 
+            modelBuilder.Entity("Saas.Domain.Care.StockMovement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("At")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("at");
+
+                    b.Property<int>("BalanceAfter")
+                        .HasColumnType("integer")
+                        .HasColumnName("balance_after");
+
+                    b.Property<Guid>("ByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("by_user_id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid?>("DispensingId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("dispensing_id");
+
+                    b.Property<Guid>("DrugBatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("drug_batch_id");
+
+                    b.Property<Guid>("DrugItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("drug_item_id");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("kind");
+
+                    b.Property<Guid?>("PrescriptionItemId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("prescription_item_id");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer")
+                        .HasColumnName("quantity");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid?>("ReceiptId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("receipt_id");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_stock_movements");
+
+                    b.HasIndex("DispensingId")
+                        .HasDatabaseName("ix_stock_movements_dispensing_id");
+
+                    b.HasIndex("DrugBatchId")
+                        .HasDatabaseName("ix_stock_movements_drug_batch_id");
+
+                    b.HasIndex("DrugItemId")
+                        .HasDatabaseName("ix_stock_movements_drug_item_id");
+
+                    b.HasIndex("PrescriptionItemId")
+                        .HasDatabaseName("ix_stock_movements_prescription_item_id");
+
+                    b.HasIndex("TenantId", "At")
+                        .HasDatabaseName("ix_stock_movements_tenant_id_at");
+
+                    b.HasIndex("TenantId", "DrugItemId", "At")
+                        .HasDatabaseName("ix_stock_movements_tenant_id_drug_item_id_at");
+
+                    b.ToTable("stock_movements", (string)null);
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.StockReceipt", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("ReceivedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("received_by");
+
+                    b.Property<DateOnly>("ReceivedOn")
+                        .HasColumnType("date")
+                        .HasColumnName("received_on");
+
+                    b.Property<string>("Reference")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("reference");
+
+                    b.Property<string>("Supplier")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("supplier");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<long>("TotalCostMinor")
+                        .HasColumnType("bigint")
+                        .HasColumnName("total_cost_minor");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_stock_receipts");
+
+                    b.HasIndex("TenantId", "ReceivedOn")
+                        .HasDatabaseName("ix_stock_receipts_tenant_id_received_on");
+
+                    b.ToTable("stock_receipts", (string)null);
+                });
+
             modelBuilder.Entity("Saas.Domain.Care.TestRequest", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2942,6 +3488,14 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("amended_at");
 
+                    b.Property<DateTimeOffset?>("CollectedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("collected_at");
+
+                    b.Property<Guid?>("CollectedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("collected_by");
+
                     b.Property<Guid?>("ConsultationId")
                         .HasColumnType("uuid")
                         .HasColumnName("consultation_id");
@@ -2955,11 +3509,23 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("description");
 
+                    b.Property<DateTimeOffset?>("FirstResultedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_resulted_at");
+
+                    b.Property<DateTimeOffset?>("FirstReviewedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_reviewed_at");
+
                     b.Property<string>("Kind")
                         .IsRequired()
                         .HasMaxLength(8)
                         .HasColumnType("character varying(8)")
                         .HasColumnName("kind");
+
+                    b.Property<Guid?>("LabTestId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lab_test_id");
 
                     b.Property<Guid>("PatientId")
                         .HasColumnType("uuid")
@@ -3003,6 +3569,11 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("reviewed_by");
 
+                    b.Property<string>("SampleNumber")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("sample_number");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(10)
@@ -3026,6 +3597,9 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.HasIndex("ConsultationId")
                         .HasDatabaseName("ix_test_requests_consultation_id");
 
+                    b.HasIndex("LabTestId")
+                        .HasDatabaseName("ix_test_requests_lab_test_id");
+
                     b.HasIndex("PatientId")
                         .HasDatabaseName("ix_test_requests_patient_id");
 
@@ -3034,6 +3608,9 @@ namespace Saas.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TenantId", "PatientId")
                         .HasDatabaseName("ix_test_requests_tenant_id_patient_id");
+
+                    b.HasIndex("TenantId", "Status", "CreatedAt")
+                        .HasDatabaseName("ix_test_requests_tenant_id_status_created_at");
 
                     b.ToTable("test_requests", (string)null);
                 });
@@ -13887,6 +14464,30 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_discharge_summaries_tenants_tenant_id");
                 });
 
+            modelBuilder.Entity("Saas.Domain.Care.Dispensing", b =>
+                {
+                    b.HasOne("Saas.Domain.Care.Patient", null)
+                        .WithMany()
+                        .HasForeignKey("PatientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_dispensings_patients_patient_id");
+
+                    b.HasOne("Saas.Domain.Care.Prescription", null)
+                        .WithMany()
+                        .HasForeignKey("PrescriptionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_dispensings_prescriptions_prescription_id");
+
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_dispensings_tenants_tenant_id");
+                });
+
             modelBuilder.Entity("Saas.Domain.Care.DoctorSchedule", b =>
                 {
                     b.HasOne("Saas.Domain.Core.Tenant", null)
@@ -13895,6 +14496,45 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_doctor_schedules_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.DrugBatch", b =>
+                {
+                    b.HasOne("Saas.Domain.Care.DrugItem", null)
+                        .WithMany()
+                        .HasForeignKey("DrugItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_drug_batches_drug_items_drug_item_id");
+
+                    b.HasOne("Saas.Domain.Care.StockReceipt", null)
+                        .WithMany()
+                        .HasForeignKey("ReceiptId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_drug_batches_stock_receipts_receipt_id");
+
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_drug_batches_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.DrugItem", b =>
+                {
+                    b.HasOne("Saas.Domain.Care.PriceItem", null)
+                        .WithMany()
+                        .HasForeignKey("PriceItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_drug_items_price_items_price_item_id");
+
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_drug_items_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("Saas.Domain.Care.FluidEntry", b =>
@@ -13919,6 +14559,63 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_fluid_entries_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.LabAnalyte", b =>
+                {
+                    b.HasOne("Saas.Domain.Care.LabTest", null)
+                        .WithMany("Analytes")
+                        .HasForeignKey("LabTestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_lab_analytes_lab_tests_lab_test_id");
+
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_lab_analytes_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.LabResultValue", b =>
+                {
+                    b.HasOne("Saas.Domain.Care.Patient", null)
+                        .WithMany()
+                        .HasForeignKey("PatientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_lab_result_values_patients_patient_id");
+
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_lab_result_values_tenants_tenant_id");
+
+                    b.HasOne("Saas.Domain.Care.TestRequest", null)
+                        .WithMany()
+                        .HasForeignKey("TestRequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_lab_result_values_test_requests_test_request_id");
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.LabTest", b =>
+                {
+                    b.HasOne("Saas.Domain.Care.PriceItem", null)
+                        .WithMany()
+                        .HasForeignKey("PriceItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_lab_tests_price_items_price_item_id");
+
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_lab_tests_tenants_tenant_id");
                 });
 
             modelBuilder.Entity("Saas.Domain.Care.MedicationDose", b =>
@@ -14130,6 +14827,52 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasConstraintName("fk_record_accesses_tenants_tenant_id");
                 });
 
+            modelBuilder.Entity("Saas.Domain.Care.StockMovement", b =>
+                {
+                    b.HasOne("Saas.Domain.Care.Dispensing", null)
+                        .WithMany()
+                        .HasForeignKey("DispensingId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_stock_movements_dispensings_dispensing_id");
+
+                    b.HasOne("Saas.Domain.Care.DrugBatch", null)
+                        .WithMany()
+                        .HasForeignKey("DrugBatchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_movements_drug_batches_drug_batch_id");
+
+                    b.HasOne("Saas.Domain.Care.DrugItem", null)
+                        .WithMany()
+                        .HasForeignKey("DrugItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_movements_drug_items_drug_item_id");
+
+                    b.HasOne("Saas.Domain.Care.PrescriptionItem", null)
+                        .WithMany()
+                        .HasForeignKey("PrescriptionItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_stock_movements_prescription_items_prescription_item_id");
+
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_movements_tenants_tenant_id");
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.StockReceipt", b =>
+                {
+                    b.HasOne("Saas.Domain.Core.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_stock_receipts_tenants_tenant_id");
+                });
+
             modelBuilder.Entity("Saas.Domain.Care.TestRequest", b =>
                 {
                     b.HasOne("Saas.Domain.Care.Admission", null)
@@ -14143,6 +14886,12 @@ namespace Saas.Infrastructure.Persistence.Migrations
                         .HasForeignKey("ConsultationId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("fk_test_requests_consultations_consultation_id");
+
+                    b.HasOne("Saas.Domain.Care.LabTest", null)
+                        .WithMany()
+                        .HasForeignKey("LabTestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_test_requests_lab_tests_lab_test_id");
 
                     b.HasOne("Saas.Domain.Care.Patient", null)
                         .WithMany()
@@ -16457,6 +17206,11 @@ namespace Saas.Infrastructure.Persistence.Migrations
                     b.Navigation("Payments");
 
                     b.Navigation("Reminders");
+                });
+
+            modelBuilder.Entity("Saas.Domain.Care.LabTest", b =>
+                {
+                    b.Navigation("Analytes");
                 });
 
             modelBuilder.Entity("Saas.Domain.Care.Prescription", b =>

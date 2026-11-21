@@ -49,6 +49,9 @@ public interface ICarePdf
 
     /// <summary>Task 11: a payment receipt (no bill lines, nothing clinical).</summary>
     Task<byte[]> ReceiptAsync(CareReceiptData data, CancellationToken ct);
+
+    /// <summary>Wave 4: a lab sample label (70 × 35 mm): patient, sample number, test and collection time.</summary>
+    Task<byte[]> LabLabelAsync(LabLabelData data, CancellationToken ct);
 }
 
 /// <summary>Where a prescription or test request was written: the patient and the consultation (with its visit) or the admission.</summary>

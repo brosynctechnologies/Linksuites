@@ -131,6 +131,8 @@ public static class DependencyInjection
         services.AddScoped<Care.RecordTimelineService>();
         services.AddScoped<Care.PrescriptionService>();
         services.AddScoped<Care.TestService>();
+        services.AddScoped<Care.LabService>();
+        services.AddScoped<Care.PharmacyService>();
         services.AddScoped<Care.PaymentService>();
         services.AddScoped<Care.OnlinePaymentService>();
         services.AddScoped<Care.WardService>();

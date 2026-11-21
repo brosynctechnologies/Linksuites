@@ -59,9 +59,16 @@ public sealed class RecordGuard(
         public const string WardVitals = "vitals";
         /// <summary>Final review C1: a portal account read the patient's bills (their lines name drugs and tests). Written only by the portal.</summary>
         public const string Bills = "bills";
+        /// <summary>Wave 4: one lab order opened by the lab (its test, sample and results; never the rest of the record).</summary>
+        public const string Lab = "lab";
+        /// <summary>Wave 4: one prescription opened to dispense it (its drugs and quantities; never the rest of the record).</summary>
+        public const string Dispensing = "dispensing";
 
         public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
-            { Record, Consultation, Admission, Prescription, Result, Discharge, Pdf, File, Triage, NursingNotes, Fluids, WardRounds, MedicationChart, WardVitals, Bills };
+        {
+            Record, Consultation, Admission, Prescription, Result, Discharge, Pdf, File, Triage, NursingNotes, Fluids, WardRounds, MedicationChart,
+            WardVitals, Bills, Lab, Dispensing,
+        };
 
         /// <summary>
         /// What each area reads as on the director's access log (Task 16). Every area has one; the portal has its own patient-facing
@@ -84,6 +91,8 @@ public sealed class RecordGuard(
             [MedicationChart] = "Medication chart",
             [WardVitals] = "Ward vital signs",
             [Bills] = "Bills",
+            [Lab] = "Lab order",
+            [Dispensing] = "Dispensing",
         };
 
         /// <summary>The access-log label for <paramref name="area"/>; an unknown area (none is written) shows as the patient record.</summary>
@@ -161,6 +170,28 @@ public sealed class RecordGuard(
         return caller;
     }
 
+    /// <summary>
+    /// Wave 4 (ruling): a department open. The lab opening one lab order, or the pharmacy one prescription to dispense, needs no care
+    /// relationship and no reason: the order itself sends the patient to that department, and the read covers that one order only, never
+    /// the record. The caller's service has already checked the department role (<see cref="CareCaller.CanWorkLab"/> for
+    /// <see cref="Areas.Lab"/>, <see cref="CareCaller.CanDispense"/> for <see cref="Areas.Dispensing"/>; a printed label logs
+    /// <see cref="Areas.Pdf"/>). Logged like any open (never emergency), so the director's access log shows it. 404 for a patient that isn't
+    /// this clinic's. Saves immediately.
+    /// </summary>
+    public async Task<CareCaller> OpenOrderAsync(Guid patientId, string area, CancellationToken ct)
+    {
+        if (area is not (Areas.Lab or Areas.Dispensing or Areas.Pdf)) throw new ArgumentOutOfRangeException(nameof(area), area, "Not a department area.");
+        var caller = await access.CallerAsync(ct);
+        if (area == Areas.Dispensing ? !caller.CanDispense : !caller.CanWorkLab) throw new ForbiddenException();
+        if (!await db.Patients.AnyAsync(p => p.Id == patientId, ct)) throw new NotFoundException("Patient");
+        db.RecordAccesses.Add(new RecordAccess
+        {
+            StaffUserId = caller.UserId, Role = RoleLabel(caller), PatientId = patientId, Area = area, Emergency = false, At = clock.GetUtcNow(),
+        });
+        await db.SaveChangesAsync(ct);
+        return caller;
+    }
+
     /// <summary>True when the staff member has a care assignment for the patient that hasn't ended at <paramref name="now"/>.</summary>
     public static Task<bool> HasRelationshipAsync(IAppDbContext db, Guid patientId, Guid staffUserId, DateTimeOffset now, CancellationToken ct) =>
         db.CareAssignments.AnyAsync(a => a.PatientId == patientId && a.StaffUserId == staffUserId && (a.EndedAt == null || a.EndedAt > now), ct);
@@ -233,7 +264,9 @@ public sealed class RecordGuard(
     /// <summary>"Nkem W. (parent), patient portal" for a portal read; "Ada Obi, Doctor" for staff.</summary>
     public static string Who(string name, string role, bool portal) => portal ? $"{name} ({role}), patient portal" : $"{name}, {role}";
 
-    /// <summary>The clinic role label stored on the log: "Medical director", "Doctor" or "Nurse".</summary>
+    /// <summary>The clinic role label stored on the log: "Medical director", "Doctor", "Nurse", "Lab scientist" or "Pharmacist".</summary>
     public static string RoleLabel(CareCaller c) =>
-        c.MemberRole == MemberRole.Owner ? "Medical director" : c.ClinicalRole.ToString();
+        c.MemberRole == MemberRole.Owner ? "Medical director"
+        : c.ClinicalRole == ClinicalRole.LabScientist ? "Lab scientist"
+        : c.ClinicalRole.ToString();
 }

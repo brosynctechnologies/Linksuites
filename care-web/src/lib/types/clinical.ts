@@ -234,8 +234,10 @@ export interface CreateTestRequest {
   consultationId: string | null;
   admissionId: string | null;
   kind: TestKind;
-  description: string;
+  description: string | null;
   priceItemId: string | null;
+  /** Wave 4: a test from the lab catalogue (fills in the kind, the name and the charge). */
+  labTestId?: string | null;
 }
 export interface TestRequestDto {
   id: string;

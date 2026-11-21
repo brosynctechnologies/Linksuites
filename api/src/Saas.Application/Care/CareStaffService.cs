@@ -10,7 +10,8 @@ public sealed record CareStaffDto(
     string? LicenceNumber, bool HasSignature, bool IsClinical, bool IsYou);
 public sealed record CareStaffMeDto(
     Guid UserId, string FullName, MemberRole MemberRole, ClinicalRole ClinicalRole, string? Title, string? LicenceNumber,
-    bool IsClinical, bool IsLeadership, bool IsCashier, bool HasSignature = false);
+    bool IsClinical, bool IsLeadership, bool IsCashier, bool HasSignature = false, bool CanWorkLab = false, bool CanEditLabCatalogue = false,
+    bool CanDispense = false, bool CanManageStock = false);
 public sealed record SaveCareStaffRequest(ClinicalRole ClinicalRole, string? Title, string? LicenceNumber);
 
 /// <summary>Clinic staff as the clinic sees them: clinical role, title and licence. Leadership manages them; everyone reads their own.</summary>
@@ -34,7 +35,7 @@ public sealed class CareStaffService(IAppDbContext db, CareAccess access, ICurre
         var member =await db.Memberships.Include(m => m.User).FirstOrDefaultAsync(m => m.UserId == userId && m.Status == MembershipStatus.Active, ct)
             ?? throw new NotFoundException("Staff member");
 
-        if (!Enum.IsDefined(r.ClinicalRole)) throw BadRequestException.Field("clinicalRole", "Choose Doctor, Nurse, Front desk or none.");
+        if (!Enum.IsDefined(r.ClinicalRole)) throw BadRequestException.Field("clinicalRole", "Choose Doctor, Nurse, Front desk, Lab scientist, Pharmacist or none.");
         if (member.Role == MemberRole.Accountant && r.ClinicalRole != ClinicalRole.None)
             throw BadRequestException.Field("clinicalRole", CareStaff.CashierRefused);
         var title = Clean(r.Title);
@@ -67,7 +68,8 @@ public sealed class CareStaffService(IAppDbContext db, CareAccess access, ICurre
             .Select(p => new { p.Title, p.LicenceNumber, HasSignature = p.SignatureKey != null }).FirstOrDefaultAsync(ct);
         var fullName = await db.Users.Where(u => u.Id == caller.UserId).Select(u => u.FullName).FirstOrDefaultAsync(ct) ?? "";
         return new CareStaffMeDto(caller.UserId, fullName, caller.MemberRole, caller.ClinicalRole, profile?.Title, profile?.LicenceNumber,
-            caller.IsClinical, caller.IsLeadership, caller.IsCashier, profile?.HasSignature ?? false);
+            caller.IsClinical, caller.IsLeadership, caller.IsCashier, profile?.HasSignature ?? false, caller.CanWorkLab, caller.CanEditLabCatalogue,
+            caller.CanDispense, caller.CanManageStock);
     }
 
     private static string? Clean(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

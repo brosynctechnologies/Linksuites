@@ -43,6 +43,8 @@ public sealed class CareJobs(IServiceScopeFactory scopes, ILogger<CareJobs> logg
         await StepAsync(tenantId, "missed doses", ct, sp => sp.GetRequiredService<CareJobSteps>().FlagMissedDosesAsync(now, ct));
         await StepAsync(tenantId, "bed charges", ct, sp => sp.GetRequiredService<CareJobSteps>().ChargeBedDaysAsync(now, ct));
         await StepAsync(tenantId, "low deposits", ct, sp => sp.GetRequiredService<CareJobSteps>().CheckDepositsAsync(now, ct));
+        // Wave 4: pharmacy batches near expiry, and items whose usable stock fell to the reorder level as batches expired.
+        await StepAsync(tenantId, "pharmacy stock", ct, sp => sp.GetRequiredService<PharmacyService>().CheckStockAsync(now, ct));
     }
 
     /// <summary>Online-payment upkeep for one clinic: the throttled stranded-checkout recheck and retiring the previous Paystack key.</summary>

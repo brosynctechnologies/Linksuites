@@ -134,6 +134,8 @@ public sealed class PortalService(
         [RecordGuard.Areas.MedicationChart] = "The medication chart",
         [RecordGuard.Areas.WardVitals] = "Vital signs on the ward",
         [RecordGuard.Areas.Bills] = "Your bills",
+        [RecordGuard.Areas.Lab] = "A lab test",
+        [RecordGuard.Areas.Dispensing] = "A prescription at the pharmacy",
     };
 
     /// <summary>The patient-facing label of an access-log area; an area added later without a label reads as the record.</summary>
