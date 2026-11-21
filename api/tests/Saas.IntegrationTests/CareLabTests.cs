@@ -348,6 +348,75 @@ public sealed class CareLabTests(ApiFixture api)
         Assert.Contains(directorLog.EnumerateArray(), e => e.GetProperty("areaLabel").GetString() == "Lab order" && e.GetProperty("who").GetString()!.EndsWith(", Lab scientist"));
     }
 
+    private static Task<HttpResponseMessage> GetWithReasonAsync(HttpClient client, string path, string? reason)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        if (reason is not null) request.Headers.Add(RecordGuard.ReasonHeader, Uri.EscapeDataString(reason));
+        return client.SendAsync(request, Ct);
+    }
+
+    /// <summary>
+    /// Wave 4 review: the department open is the lab scientist's (and the director's). A doctor or nurse is clinical staff, so a lab order
+    /// of a patient they aren't caring for is an emergency open: a reason, an emergency row and the director's notice.
+    /// </summary>
+    [Fact]
+    public async Task A_doctor_or_nurse_without_a_care_relationship_needs_a_reason_to_open_a_lab_order()
+    {
+        var w = await WorldAsync("Lab Privacy Clinic");
+        var testId = await OrderAsync(w);
+        var (hb, mp) = await AnalytesAsync(w);
+        await Json(await w.Lab.PostAsync($"/api/care/lab/orders/{testId}/collect", null, Ct));
+        await Json(await w.Lab.PostAsJsonAsync($"/api/care/lab/orders/{testId}/results",
+            new { values = new[] { new { analyteId = hb, value = "13.4" }, new { analyteId = mp, value = "Scanty rings" } } }, Ct));
+        var ownerId = await api.WithDbAsync(db => db.Memberships.IgnoreQueryFilters()
+            .Where(m => m.TenantId == w.Clinic.TenantId && m.Role == Saas.Domain.Core.MemberRole.Owner).Select(m => m.UserId).FirstAsync(Ct));
+        Task<int> NoticesAsync() => api.WithDbAsync(db => db.UserNotifications.IgnoreQueryFilters()
+            .CountAsync(n => n.UserId == ownerId && n.TenantId == w.Clinic.TenantId && n.Kind == "care.emergency_access", Ct));
+        var (nurse, nurseId) = await kit.StaffAsync(w.Clinic, "Nurse");
+        var (otherDoctor, _) = await kit.StaffAsync(w.Clinic, "Doctor");
+        var before = (await AccessLogAsync(w.PatientId)).Count;
+
+        // Without a reason: refused, nothing logged, nobody told.
+        foreach (var client in new[] { nurse, otherDoctor })
+        {
+            await AssertProblemAsync(await client.GetAsync($"/api/care/lab/orders/{testId}", Ct), HttpStatusCode.Conflict, "emergency_reason_required");
+            await AssertProblemAsync(await client.GetAsync($"/api/care/lab/orders/{testId}/label.pdf", Ct), HttpStatusCode.Conflict, "emergency_reason_required");
+        }
+        Assert.Equal(before, (await AccessLogAsync(w.PatientId)).Count);
+        Assert.Equal(0, await NoticesAsync());
+
+        // The worklist still lists the order for them, without its result.
+        var worklist = await nurse.GetAsync("/api/care/lab/worklist", Ct);
+        var listed = await worklist.Content.ReadAsStringAsync(Ct);
+        Assert.Equal(HttpStatusCode.OK, worklist.StatusCode);
+        Assert.Contains(testId.ToString(), listed);
+        Assert.DoesNotContain("13.4", listed);
+        Assert.DoesNotContain("Scanty", listed);
+        Assert.DoesNotContain("Haemoglobin", listed);
+
+        // With a reason: opened as an emergency (reason kept, encrypted), and the director is told once.
+        var opened = await Json(await GetWithReasonAsync(nurse, $"/api/care/lab/orders/{testId}", "Covering the lab bench tonight"));
+        Assert.Equal(2, opened.GetProperty("values").GetArrayLength());
+        (await GetWithReasonAsync(nurse, $"/api/care/lab/orders/{testId}/label.pdf", "Covering the lab bench tonight")).EnsureSuccessStatusCode();
+        var log = (await AccessLogAsync(w.PatientId)).Skip(before).ToList();
+        Assert.Equal(["lab", "pdf"], log.Select(l => l.Area));
+        var clinicalText = api.Services.GetRequiredService<ClinicalText>();
+        Assert.All(log, l => Assert.Equal((nurseId, "Nurse", true, "Covering the lab bench tonight"), (l.StaffUserId, l.Role, l.Emergency, clinicalText.Read(l.Reason))));
+        Assert.Equal(1, await NoticesAsync());
+        Assert.Equal(2, await api.WithDbAsync(db => db.AuditLogs.IgnoreQueryFilters()
+            .CountAsync(a => a.TenantId == w.Clinic.TenantId && a.Action == "care.emergency_access" && a.EntityId == w.PatientId.ToString(), Ct)));
+
+        // The lab scientist (no relationship), the ordering doctor (triaged to them) and the director still open it without a reason.
+        var mark = (await AccessLogAsync(w.PatientId)).Count;
+        await Json(await w.Lab.GetAsync($"/api/care/lab/orders/{testId}", Ct));
+        await Json(await w.Doctor.GetAsync($"/api/care/lab/orders/{testId}", Ct));
+        await Json(await w.Clinic.Owner.GetAsync($"/api/care/lab/orders/{testId}", Ct));
+        var rest = (await AccessLogAsync(w.PatientId)).Skip(mark).ToList();
+        Assert.Equal([(w.LabId, "Lab scientist"), (w.DoctorId, "Doctor"), (ownerId, "Medical director")], rest.Select(l => (l.StaffUserId, l.Role)));
+        Assert.All(rest, l => Assert.Equal(("lab", false, (string?)null), (l.Area, l.Emergency, l.Reason)));
+        Assert.Equal(1, await NoticesAsync());
+    }
+
     [Fact]
     public async Task Another_clinics_lab_ids_are_404()
     {

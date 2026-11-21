@@ -8,6 +8,7 @@ import { formatDay, formatStamp } from "@/lib/format";
 import { useAction } from "@/lib/mutate";
 import { useApi } from "@/lib/use-api";
 import type { DispensePrescriptionDto, StockItemDto } from "@/lib/types/lab-pharmacy";
+import { EmergencyReason, useClinicalRead } from "@/components/emergency-reason";
 import { ApiErrorView, Badge, Button, Card, ErrorBox, Input, NoAccess, Notice, PageHeader, PageLoader, SectionTitle, Select, Wristband } from "@/components/ui";
 
 /**
@@ -17,26 +18,35 @@ import { ApiErrorView, Badge, Button, Card, ErrorBox, Input, NoAccess, Notice, P
 export default function DispensePage() {
   const { id } = useParams<{ id: string }>();
   const { access } = useCare();
-  const rx = useApi<DispensePrescriptionDto>(access.canDispense ? `/api/care/pharmacy/prescriptions/${id}` : null);
+  // A doctor or nurse not caring for the patient opens it with an emergency reason (a header, kept in memory); the pharmacist and the
+  // director open it directly.
+  const rx = useClinicalRead<DispensePrescriptionDto>(access.canDispense ? `/api/care/pharmacy/prescriptions/${encodeURIComponent(id)}` : null);
   // Pharmacists and leadership see every stock item to pick from; other dispensers use the linked item.
   const stock = useApi<StockItemDto[]>(access.canManageStock ? "/api/care/pharmacy/items?active=true" : null);
   const [qty, setQty] = useState<Record<string, string>>({});
   const [itemFor, setItemFor] = useState<Record<string, string>>({});
+  // Another stock item than the prescribed drug's is a substitution: the API needs the reason (kept on the stock movement, audited).
+  const [whyFor, setWhyFor] = useState<Record<string, string>>({});
   const { busy, error, run } = useAction();
   const [done, setDone] = useState(false);
 
   if (!access.canDispense) return <NoAccess text="Dispensing is for pharmacists, doctors and nurses." />;
-  if (rx.error) return <ApiErrorView error={rx.error} onRetry={rx.reload} />;
-  if (!rx.data) return <PageLoader />;
-  const p = rx.data;
-  const open = p.items.filter((i) => i.remaining === null || i.remaining > 0);
+  if (rx.gate.kind === "loading") return <PageLoader />;
+  if (rx.gate.kind === "reason") return <EmergencyReason onSubmit={rx.submitReason} back="/app/pharmacy/dispense" backLabel="Back to the queue" />;
+  if (rx.gate.kind === "error") return <ApiErrorView error={rx.gate.error} onRetry={rx.reload} />;
+  const p = rx.gate.data;
+  // A drug written without a quantity is dispensed once.
+  const open = p.items.filter((i) => (i.remaining === null ? i.dispensed === 0 : i.remaining > 0));
+  const chosen = (i: (typeof open)[number]) => itemFor[i.prescriptionItemId] || i.stockItemId || null;
+  const substituted = (i: (typeof open)[number]) => chosen(i) !== null && chosen(i) !== i.stockItemId;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     const lines = open
       .map((i) => ({
         prescriptionItemId: i.prescriptionItemId,
-        itemId: itemFor[i.prescriptionItemId] || i.stockItemId || null,
+        itemId: chosen(i),
+        substitutionReason: substituted(i) ? whyFor[i.prescriptionItemId]?.trim() || null : null,
         quantity: qty[i.prescriptionItemId] !== undefined ? Number(qty[i.prescriptionItemId]) || 0 : (i.remaining ?? 0),
       }))
       .filter((l) => l.quantity > 0);
@@ -80,7 +90,7 @@ export default function DispensePage() {
                     {i.durationDays ? `, ${i.durationDays} days` : ""}
                   </p>
                   <p className="text-muted">
-                    {i.quantity !== null ? `Prescribed ${i.quantity}, dispensed ${i.dispensed}` : `No quantity written; dispensed ${i.dispensed}`}
+                    {i.quantity !== null ? `Prescribed ${i.quantity}, dispensed ${i.dispensed}` : "No quantity written: enter how many to give (dispensed once)."}
                   </p>
                 </div>
                 {stock.data ? (
@@ -116,6 +126,18 @@ export default function DispensePage() {
                   error={error?.field(`lines[${n}].quantity`)}
                   className="tnum"
                 />
+                {substituted(i) && (
+                  <div className="sm:col-span-3">
+                    <Input
+                      label="Why this instead of the prescribed drug?"
+                      maxLength={250}
+                      value={whyFor[i.prescriptionItemId] ?? ""}
+                      onChange={(e) => setWhyFor((m) => ({ ...m, [i.prescriptionItemId]: e.target.value }))}
+                      error={error?.field(`lines[${n}].substitutionReason`)}
+                      hint="Kept on the stock record and audited. Don't name the patient."
+                    />
+                  </div>
+                )}
               </div>
             ))}
             <ErrorBox error={error} />

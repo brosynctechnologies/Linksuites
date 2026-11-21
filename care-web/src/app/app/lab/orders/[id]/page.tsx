@@ -7,7 +7,7 @@ import { useCare } from "@/lib/care-me";
 import { formatStamp } from "@/lib/format";
 import { flagView, labStageLabel, previewFlag } from "@/lib/lab-pharmacy";
 import { useAction } from "@/lib/mutate";
-import { useApi } from "@/lib/use-api";
+import { EmergencyReason, useClinicalRead } from "@/components/emergency-reason";
 import type { LabOrderAnalyteDto, LabOrderDto, LabResultEntryDto, LabValueDto } from "@/lib/types/lab-pharmacy";
 import {
   ApiErrorView,
@@ -33,20 +33,25 @@ import {
 export default function LabOrderPage() {
   const { id } = useParams<{ id: string }>();
   const { access } = useCare();
-  const order = useApi<LabOrderDto>(access.canWorkLab ? `/api/care/lab/orders/${id}` : null);
+  // A doctor or nurse not caring for the patient opens the order with an emergency reason (sent in a header, kept in memory); the lab
+  // scientist and the director open it directly.
+  const order = useClinicalRead<LabOrderDto>(access.canWorkLab ? `/api/care/lab/orders/${encodeURIComponent(id)}` : null);
   const collect = useAction();
   const label = useAction();
   const [amending, setAmending] = useState(false);
+  const { gate } = order;
 
   if (!access.canWorkLab) return <NoAccess text="Lab orders are for lab scientists, doctors and nurses." />;
-  if (order.error) return <ApiErrorView error={order.error} onRetry={order.reload} />;
-  if (!order.data) return <PageLoader />;
-  const o = order.data;
+  if (gate.kind === "loading") return <PageLoader />;
+  if (gate.kind === "reason") return <EmergencyReason onSubmit={order.submitReason} back="/app/lab" backLabel="Back to the lab" />;
+  if (gate.kind === "error") return <ApiErrorView error={gate.error} onRetry={order.reload} />;
+  const o = gate.data;
   const current = o.values.filter((v) => !v.superseded);
   const earlier = o.values.filter((v) => v.superseded);
 
   return (
     <div className="space-y-5">
+      {order.dialog}
       <PageHeader
         back="/app/lab"
         title={o.testName ?? "Lab test"}
@@ -81,7 +86,9 @@ export default function LabOrderPage() {
             <Button
               variant="secondary"
               loading={label.busy}
-              onClick={() => label.run(() => downloadFile(`/api/care/lab/orders/${o.id}/label.pdf`, `label-${o.sampleNumber}.pdf`))}
+              onClick={() =>
+                label.run(() => order.run((headers) => downloadFile(`/api/care/lab/orders/${o.id}/label.pdf`, `label-${o.sampleNumber}.pdf`, { headers })))
+              }
             >
               Print label
             </Button>

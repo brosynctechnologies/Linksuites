@@ -288,12 +288,12 @@ public sealed class LabService(
     /// (or one that isn't a lab order), then the department open (area lab, logged). The ranges shown are those for the patient's sex and
     /// age on the day the sample was collected (today before that).
     /// </summary>
-    public async Task<LabOrderDto> GetOrderAsync(Guid id, CancellationToken ct)
+    public async Task<LabOrderDto> GetOrderAsync(Guid id, string? reason, CancellationToken ct)
     {
         access.EnsureLab(await access.CallerAsync(ct));
         var patientId = await LabOrders(db).AsNoTracking().Where(t => t.Id == id).Select(t => (Guid?)t.PatientId).FirstOrDefaultAsync(ct)
             ?? throw new NotFoundException("Lab order");
-        await guard.OpenOrderAsync(patientId, RecordGuard.Areas.Lab, ct);
+        await guard.OpenOrderAsync(patientId, RecordGuard.Areas.Lab, reason, ct);
 
         var test = await db.TestRequests.AsNoTracking().FirstAsync(t => t.Id == id, ct);
         var patient = await db.Patients.AsNoTracking().FirstAsync(p => p.Id == patientId, ct);
@@ -349,13 +349,13 @@ public sealed class LabService(
     /// The sample label as a PDF (70 × 35 mm): lab roles; 404 as for opening; 409 <c>sample_not_collected</c> before collection. A logged
     /// department read (area pdf): the label names the patient and the test.
     /// </summary>
-    public async Task<(byte[] Pdf, string FileName)> LabelAsync(Guid id, CancellationToken ct)
+    public async Task<(byte[] Pdf, string FileName)> LabelAsync(Guid id, string? reason, CancellationToken ct)
     {
         access.EnsureLab(await access.CallerAsync(ct));
         var row = await LabOrders(db).AsNoTracking().Where(t => t.Id == id)
             .Select(t => new { t.PatientId, t.SampleNumber, t.CollectedAt, t.LabTestId }).FirstOrDefaultAsync(ct) ?? throw new NotFoundException("Lab order");
         if (row.SampleNumber is null || row.CollectedAt is null) throw new ConflictException(NotCollected, "sample_not_collected");
-        await guard.OpenOrderAsync(row.PatientId, RecordGuard.Areas.Pdf, ct);
+        await guard.OpenOrderAsync(row.PatientId, RecordGuard.Areas.Pdf, reason, ct);
         var patient = await db.Patients.AsNoTracking().FirstAsync(p => p.Id == row.PatientId, ct);
         var lab = row.LabTestId is { } labId ? await db.LabTests.AsNoTracking().Where(l => l.Id == labId).Select(l => new { l.Name, l.SampleType }).FirstOrDefaultAsync(ct) : null;
         var clinic = await db.ClinicProfiles.AsNoTracking().Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";

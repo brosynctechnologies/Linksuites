@@ -810,7 +810,8 @@ public sealed partial class CareAccessTests(ApiFixture api)
         }, Ct)).EnsureSuccessStatusCode();
         var rxItem = await api.WithDbAsync(db => db.PrescriptionItems.IgnoreQueryFilters().Where(i => i.PrescriptionId == ids["prescription"]).Select(i => i.Id).FirstAsync(Ct));
         (await clinic.Owner.PostAsJsonAsync($"/api/care/pharmacy/prescriptions/{ids["prescription"]}/dispense",
-            new { lines = new[] { new { prescriptionItemId = rxItem, itemId = ids["stockItem"], quantity = 2 } } }, Ct)).EnsureSuccessStatusCode();
+            new { lines = new[] { new { prescriptionItemId = rxItem, itemId = ids["stockItem"], quantity = 2, substitutionReason = "Stock item on hand" } } }, Ct))
+            .EnsureSuccessStatusCode(); // the walk's drug sells under another price item: a substitution (wave 4 review)
 
         // Task 8: the visit's doctor admits the patient (clinical reason and diagnosis); the director assigns a bed with a deposit; a
         // second patient waits for a bed (the bed board's waiting list).

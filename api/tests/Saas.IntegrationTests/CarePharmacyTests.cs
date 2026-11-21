@@ -247,6 +247,107 @@ public sealed class CarePharmacyTests(ApiFixture api)
         Assert.Equal("1 batch expires within 90 days.", expiry[0].Body);
     }
 
+    /// <summary>
+    /// Wave 4 review: dispensing from a stock item that isn't the prescribed drug (another price item) needs a substitution reason, kept on
+    /// the movement and audited; a drug prescribed without a quantity needs one at the counter and is dispensed once.
+    /// </summary>
+    [Fact]
+    public async Task Substitutes_need_a_reason_and_an_open_ended_drug_is_dispensed_once()
+    {
+        var w = await WorldAsync("Pharmacy Substitute Clinic");
+        await ReceiveAsync(w, ("AMX-1", Today.AddDays(200), 30));
+        var otherPrice = await kit.PriceItemAsync(w.Clinic, "Ampiclox 500 mg caps", "Drug", 6_000);
+        var otherItem = Id(await Json(await w.Pharmacist.PostAsJsonAsync("/api/care/pharmacy/items",
+            new { name = "Ampiclox 500 mg", form = "Capsule", unit = "capsule", priceItemId = otherPrice, reorderLevel = 0 }, Ct)));
+        await Json(await w.Pharmacist.PostAsJsonAsync("/api/care/pharmacy/receipts", new
+        {
+            lines = new[] { new { itemId = otherItem, batchNumber = "AMP-1", expiresOn = Today.AddDays(200), quantity = 30, unitCostMinor = 2_000L } },
+        }, Ct));
+        var (rx, rxItem) = await PrescribeAsync(w, 6);
+
+        // Another drug without a reason: refused, nothing taken.
+        await AssertProblemAsync(await w.Pharmacist.PostAsJsonAsync($"/api/care/pharmacy/prescriptions/{rx}/dispense",
+            new { lines = new[] { new { prescriptionItemId = rxItem, itemId = otherItem, quantity = 6 } } }, Ct), HttpStatusCode.BadRequest, field: "lines[0].substitutionReason");
+        await AssertProblemAsync(await w.Pharmacist.PostAsJsonAsync($"/api/care/pharmacy/prescriptions/{rx}/dispense",
+            new { lines = new[] { new { prescriptionItemId = rxItem, itemId = otherItem, quantity = 6, substitutionReason = new string('x', 301) } } }, Ct),
+            HttpStatusCode.BadRequest, field: "lines[0].substitutionReason");
+        Assert.Equal(30, (await BatchesAsync(otherItem)).Sum(b => b.QuantityOnHand));
+        // The prescribed drug's own stock item needs no reason (named or by default).
+        await Json(await w.Pharmacist.PostAsJsonAsync($"/api/care/pharmacy/prescriptions/{rx}/dispense",
+            new { lines = new[] { new { prescriptionItemId = rxItem, itemId = w.ItemId, quantity = 2 } } }, Ct));
+        // With a reason: dispensed, the reason on the movement, and audited (ids only).
+        await Json(await w.Pharmacist.PostAsJsonAsync($"/api/care/pharmacy/prescriptions/{rx}/dispense",
+            new { lines = new[] { new { prescriptionItemId = rxItem, itemId = otherItem, quantity = 4, substitutionReason = "Amoxicillin batch on hold" } } }, Ct));
+        var movement = await api.WithDbAsync(db => db.StockMovements.IgnoreQueryFilters().SingleAsync(m => m.DrugItemId == otherItem && m.Kind == StockMovementKind.Dispense, Ct));
+        Assert.Equal((-4, "Substituted for the prescribed drug: Amoxicillin batch on hold"), (movement.Quantity, movement.Reason));
+        var audit = await api.WithDbAsync(db => db.AuditLogs.IgnoreQueryFilters().SingleAsync(a => a.TenantId == w.Clinic.TenantId && a.Action == "care.dispense_substituted", Ct));
+        Assert.Contains(otherItem.ToString(), audit.AfterJson);
+        Assert.Contains(rxItem.ToString(), audit.AfterJson);
+        Assert.DoesNotContain("on hold", audit.AfterJson);
+
+        // A drug written without a quantity: the counter must say how many, and it is dispensed once.
+        var open = await Json(await w.Doctor.PostAsJsonAsync("/api/care/prescriptions", new
+        {
+            patientId = w.PatientId, consultationId = w.ConsultationId, allergyAcknowledged = false,
+            items = new[] { new { drug = "Amoxicillin", strength = "500 mg", dose = "1 capsule", frequency = "TDS", durationDays = 5, quantity = (int?)null, priceItemId = w.PriceItemId } },
+        }, Ct));
+        var (openRx, openItem) = (Id(open), Id(open.GetProperty("items")[0]));
+        await AssertProblemAsync(await w.Pharmacist.PostAsJsonAsync($"/api/care/pharmacy/prescriptions/{openRx}/dispense",
+            new { lines = new[] { new { prescriptionItemId = openItem } } }, Ct), HttpStatusCode.BadRequest, field: "lines[0].quantity");
+        await Json(await w.Pharmacist.PostAsJsonAsync($"/api/care/pharmacy/prescriptions/{openRx}/dispense",
+            new { lines = new[] { new { prescriptionItemId = openItem, quantity = 15 } } }, Ct));
+        await AssertProblemAsync(await w.Pharmacist.PostAsJsonAsync($"/api/care/pharmacy/prescriptions/{openRx}/dispense",
+            new { lines = new[] { new { prescriptionItemId = openItem, quantity = 15 } } }, Ct), HttpStatusCode.Conflict, "over_dispense");
+        Assert.Equal(30 - 2 - 15, (await BatchesAsync(w.ItemId)).Sum(b => b.QuantityOnHand));
+    }
+
+    private static Task<HttpResponseMessage> GetWithReasonAsync(HttpClient client, string path, string? reason)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        if (reason is not null) request.Headers.Add(RecordGuard.ReasonHeader, Uri.EscapeDataString(reason));
+        return client.SendAsync(request, Ct);
+    }
+
+    /// <summary>
+    /// Wave 4 review: the department open is the pharmacist's (and the director's). A doctor or nurse without a care relationship opens a
+    /// prescription to dispense only as an emergency: a reason, an emergency row and the director's notice.
+    /// </summary>
+    [Fact]
+    public async Task A_doctor_or_nurse_without_a_care_relationship_needs_a_reason_to_open_a_prescription()
+    {
+        var w = await WorldAsync("Pharmacy Privacy Clinic");
+        var (rx, _) = await PrescribeAsync(w, 3);
+        var ownerId = await api.WithDbAsync(db => db.Memberships.IgnoreQueryFilters()
+            .Where(m => m.TenantId == w.Clinic.TenantId && m.Role == Saas.Domain.Core.MemberRole.Owner).Select(m => m.UserId).FirstAsync(Ct));
+        Task<int> NoticesAsync() => api.WithDbAsync(db => db.UserNotifications.IgnoreQueryFilters()
+            .CountAsync(n => n.UserId == ownerId && n.TenantId == w.Clinic.TenantId && n.Kind == "care.emergency_access", Ct));
+        Task<List<RecordAccess>> LogAsync() => api.WithDbAsync(db => db.RecordAccesses.IgnoreQueryFilters()
+            .Where(a => a.PatientId == w.PatientId && a.Area == "dispensing").OrderBy(a => a.At).ToListAsync(Ct));
+        var (nurse, nurseId) = await kit.StaffAsync(w.Clinic, "Nurse");
+        var (otherDoctor, _) = await kit.StaffAsync(w.Clinic, "Doctor");
+
+        foreach (var client in new[] { nurse, otherDoctor })
+            await AssertProblemAsync(await client.GetAsync($"/api/care/pharmacy/prescriptions/{rx}", Ct), HttpStatusCode.Conflict, "emergency_reason_required");
+        Assert.Empty(await LogAsync());
+        Assert.Equal(0, await NoticesAsync());
+
+        var opened = await Json(await GetWithReasonAsync(nurse, $"/api/care/pharmacy/prescriptions/{rx}", "Night cover, pharmacy closed"));
+        Assert.Equal("Amoxicillin", opened.GetProperty("items")[0].GetProperty("drug").GetString());
+        var row = Assert.Single(await LogAsync());
+        Assert.Equal((nurseId, "Nurse", true), (row.StaffUserId, row.Role, row.Emergency));
+        Assert.Equal("Night cover, pharmacy closed", api.Services.GetRequiredService<ClinicalText>().Read(row.Reason));
+        Assert.Equal(1, await NoticesAsync());
+
+        // The pharmacist (no relationship), the prescribing doctor and the director open it without a reason.
+        await Json(await w.Pharmacist.GetAsync($"/api/care/pharmacy/prescriptions/{rx}", Ct));
+        await Json(await w.Doctor.GetAsync($"/api/care/pharmacy/prescriptions/{rx}", Ct));
+        await Json(await w.Clinic.Owner.GetAsync($"/api/care/pharmacy/prescriptions/{rx}", Ct));
+        var rest = (await LogAsync()).Skip(1).ToList();
+        Assert.Equal([(w.PharmacistId, "Pharmacist"), (w.DoctorId, "Doctor"), (ownerId, "Medical director")], rest.Select(l => (l.StaffUserId, l.Role)));
+        Assert.All(rest, l => Assert.Equal((false, (string?)null), (l.Emergency, l.Reason)));
+        Assert.Equal(1, await NoticesAsync());
+    }
+
     [Fact]
     public async Task Roles_logging_and_isolation()
     {

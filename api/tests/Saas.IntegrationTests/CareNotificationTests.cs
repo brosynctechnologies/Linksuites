@@ -226,7 +226,7 @@ public sealed class CareNotificationTests(ApiFixture api)
         var rx = await api.WithDbAsync(db => db.PrescriptionItems.IgnoreQueryFilters().Where(i => i.TenantId == tenantId)
             .Select(i => new { i.PrescriptionId, i.Id }).FirstAsync(Ct));
         await Json(await owner.PostAsJsonAsync($"/api/care/pharmacy/prescriptions/{rx.PrescriptionId}/dispense",
-            new { lines = new[] { new { prescriptionItemId = rx.Id, itemId = stockItem, quantity = 4 } } }, Ct));
+            new { lines = new[] { new { prescriptionItemId = rx.Id, itemId = stockItem, quantity = 4, substitutionReason = "Stock item on hand" } } }, Ct)); // unlinked stock: a substitution
         Assert.Equal(1, await AsClinicAsync(host, tenantId, sp => sp.GetRequiredService<PharmacyService>().CheckStockAsync(DateTimeOffset.UtcNow, Ct)));
 
         await Json(await desk.PostAsJsonAsync($"/api/care/visits/{visitId}/stage", new { stage = "WaitingPayment" }, Ct));
